@@ -251,6 +251,7 @@ export class AppDatabase {
     `);
 
     this.ensureColumn("runtimes", "archived_at", "integer");
+    this.ensureColumn("runtimes", "ended_at", "integer");
   }
 
   private ensureColumn(tableName: string, columnName: string, columnType: string): void {
@@ -261,13 +262,42 @@ export class AppDatabase {
   }
 
   private markOrphanedRuntimesCrashed(): void {
-    this.db
-      .prepare(
-        `update runtimes
-         set status = 'crashed', pid = null, updated_at = ?
-         where status in ('starting', 'running')`,
-      )
-      .run(Date.now());
+    const orphaned = this.db
+      .prepare("select * from runtimes where status in ('starting', 'running')")
+      .all() as RuntimeRow[];
+    if (orphaned.length === 0) return;
+
+    const timestamp = Date.now();
+    const updateRuntimes = this.db.prepare(
+      `update runtimes
+       set status = 'crashed', pid = null, ended_at = coalesce(ended_at, ?), updated_at = ?
+       where status in ('starting', 'running')`,
+    );
+    const insertEvent = this.db.prepare(
+      `insert into events (runtime_id, project_id, timestamp, kind, payload)
+       values (?, ?, ?, ?, ?)`,
+    );
+
+    this.db.transaction((rows: RuntimeRow[]) => {
+      updateRuntimes.run(timestamp, timestamp);
+      for (const row of rows) {
+        const crashedRuntime = runtimeFromRow({ ...row, status: "crashed", pid: null });
+        insertEvent.run(row.id, row.project_id, timestamp, "runtime_status", JSON.stringify(crashedRuntime));
+        insertEvent.run(
+          row.id,
+          row.project_id,
+          timestamp,
+          "error",
+          JSON.stringify({
+            message: "GUI server restarted while this runtime was running; the previous Pi RPC process cannot be reattached.",
+            reason: "orphaned_runtime_on_startup",
+            previousStatus: row.status,
+            previousPid: row.pid,
+            status: "crashed",
+          }),
+        );
+      }
+    })(orphaned);
   }
 }
 
