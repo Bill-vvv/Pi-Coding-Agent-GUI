@@ -1,5 +1,4 @@
 import type { Runtime } from "@pi-gui/shared";
-import { messageRoleLabel } from "../domain/conversation";
 import type { ConversationMessage } from "../types";
 
 type ChatViewProps = {
@@ -26,7 +25,6 @@ export function ChatView({ lastError, activeRuntime, messages }: ChatViewProps) 
           <div className="message-list">
             {messages.map((message) => (
               <article className={`chat-message ${message.role}`} key={message.id}>
-                <div className="message-role">{messageRoleLabel(message.role)}</div>
                 <pre>{message.text}</pre>
               </article>
             ))}
