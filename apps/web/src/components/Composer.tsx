@@ -1,6 +1,7 @@
 import type { FormEventHandler } from "react";
 import type { ModelSummary, Project, ResponseMode, Runtime, ThinkingLevel } from "@pi-gui/shared";
-import type { ConnectionState } from "../types";
+import type { ConnectionState, ConversationContextUsage } from "../types";
+import { ContextIndicator } from "./ContextIndicator";
 import { Icon } from "./Icon";
 import { ModelPicker } from "./ModelPicker";
 
@@ -14,6 +15,7 @@ type ComposerProps = {
   availableThinkingLevels: ThinkingLevel[];
   responseMode: ResponseMode;
   modelPickerOpen: boolean;
+  contextUsage?: ConversationContextUsage;
   connection: ConnectionState;
   activeRuntime?: Runtime;
   activeRuntimeIsBusy: boolean;
@@ -37,6 +39,7 @@ export function Composer({
   availableThinkingLevels,
   responseMode,
   modelPickerOpen,
+  contextUsage,
   connection,
   activeRuntime,
   activeRuntimeIsBusy,
@@ -61,16 +64,15 @@ export function Composer({
               event.currentTarget.form?.requestSubmit();
             }
           }}
-          placeholder="向当前对话发送提示词，Shift+Enter 换行"
         />
         <button
-          className="composer-action send-action"
+          className="send-action"
           type="submit"
-          title="发送"
-          aria-label="发送"
+          title="发送（回车）"
+          aria-label="发送（回车）"
           disabled={!prompt.trim() || connection !== "open"}
         >
-          <Icon name="send" />
+          <span aria-hidden="true">↵</span>
         </button>
         {activeRuntime?.status === "running" && activeRuntimeIsBusy ? (
           <button
@@ -91,18 +93,21 @@ export function Composer({
           <span>{projectCwd || selectedProject?.cwd || "选择项目文件夹"}</span>
         </button>
 
-        <ModelPicker
-          models={models}
-          selectedModel={selectedModel}
-          selectedThinkingLevel={selectedThinkingLevel}
-          availableThinkingLevels={availableThinkingLevels}
-          responseMode={responseMode}
-          open={modelPickerOpen}
-          onToggleOpen={onToggleModelPicker}
-          onChooseModel={onChooseModel}
-          onChooseThinkingLevel={onChooseThinkingLevel}
-          onChooseResponseMode={onChooseResponseMode}
-        />
+        <div className="composer-runtime-controls">
+          <ModelPicker
+            models={models}
+            selectedModel={selectedModel}
+            selectedThinkingLevel={selectedThinkingLevel}
+            availableThinkingLevels={availableThinkingLevels}
+            responseMode={responseMode}
+            open={modelPickerOpen}
+            onToggleOpen={onToggleModelPicker}
+            onChooseModel={onChooseModel}
+            onChooseThinkingLevel={onChooseThinkingLevel}
+            onChooseResponseMode={onChooseResponseMode}
+          />
+          <ContextIndicator usage={contextUsage} activeRuntime={activeRuntime} />
+        </div>
       </div>
     </form>
   );

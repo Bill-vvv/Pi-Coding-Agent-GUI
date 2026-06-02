@@ -348,6 +348,7 @@ function modelSummaryFromRpcModel(value: unknown): ModelSummary | undefined {
     supportedThinkingLevels,
     supportsImages: input.includes("image"),
     supportsFast: supportsPriorityServiceTier(value),
+    contextWindow: numberOrUndefined(value.contextWindow),
   };
 }
 

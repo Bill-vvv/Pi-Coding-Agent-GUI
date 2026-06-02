@@ -1,6 +1,6 @@
 import type { GuiEvent } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
-import type { ConversationMessage } from "../types";
+import type { ConversationContextUsage, ConversationMessage } from "../types";
 
 export function isRuntimeBusy(events: GuiEvent[]): boolean {
   let busy = false;
@@ -10,6 +10,57 @@ export function isRuntimeBusy(events: GuiEvent[]): boolean {
     if (event.payload.type === "agent_end") busy = false;
   }
   return busy;
+}
+
+export function buildConversationContextUsage(events: GuiEvent[], initial?: ConversationContextUsage): ConversationContextUsage | undefined {
+  let contextWindow = initial?.contextWindow;
+  let latest = initial;
+
+  for (const event of events) {
+    if (event.kind !== "pi_event" || !isRecord(event.payload)) continue;
+
+    const payload = event.payload;
+    if (payload.type !== "response" || payload.success !== true) continue;
+
+    const command = typeof payload.command === "string" ? payload.command : undefined;
+    const data = isRecord(payload.data) ? payload.data : undefined;
+
+    if (command === "get_state") {
+      const model = isRecord(data?.model) ? data.model : undefined;
+      const nextContextWindow = numberOrUndefined(model?.contextWindow) ?? numberOrUndefined(model?.context_window);
+      if (nextContextWindow !== undefined) {
+        contextWindow = nextContextWindow;
+        latest = latest ? withContextWindow(latest, contextWindow) : { contextWindow, updatedAt: event.timestamp };
+      }
+      continue;
+    }
+
+    if (command === "set_model") {
+      const nextContextWindow = numberOrUndefined(data?.contextWindow) ?? numberOrUndefined(data?.context_window);
+      if (nextContextWindow !== undefined) {
+        contextWindow = nextContextWindow;
+        latest = latest ? withContextWindow(latest, contextWindow) : { contextWindow, updatedAt: event.timestamp };
+      }
+      continue;
+    }
+
+    if (command !== "get_session_stats") continue;
+
+    const contextUsage = isRecord(data?.contextUsage) ? data.contextUsage : undefined;
+    const tokens = nullableNumber(contextUsage?.tokens);
+    const nextContextWindow = nullableNumber(contextUsage?.contextWindow) ?? contextWindow;
+    const reportedPercent = nullableNumber(contextUsage?.percent);
+
+    if (nextContextWindow !== undefined) contextWindow = nextContextWindow;
+    latest = {
+      tokens,
+      contextWindow: nextContextWindow,
+      percent: percentFromUsage(tokens, nextContextWindow, reportedPercent),
+      updatedAt: event.timestamp,
+    };
+  }
+
+  return latest;
 }
 
 export function buildConversationMessages(events: GuiEvent[]): ConversationMessage[] {
@@ -70,12 +121,39 @@ export function buildConversationMessages(events: GuiEvent[]): ConversationMessa
       continue;
     }
 
-    if (payload.type === "response" && payload.success === false) {
+    if (payload.type === "response" && payload.success === false && !isInternalRpcResponse(payload)) {
       messages.push({ id: `response-error-${event.id}`, role: "error", text: typeof payload.error === "string" ? payload.error : formatPayload(payload), timestamp: event.timestamp });
     }
   }
 
   return messages.filter((message) => message.text.trim().length > 0);
+}
+
+function isInternalRpcResponse(payload: Record<string, unknown>): boolean {
+  return payload.command === "get_state" || payload.command === "get_session_stats";
+}
+
+function withContextWindow(usage: ConversationContextUsage, contextWindow: number): ConversationContextUsage {
+  return {
+    ...usage,
+    contextWindow,
+    percent: percentFromUsage(usage.tokens, contextWindow, usage.percent),
+  };
+}
+
+function percentFromUsage(tokens: number | undefined, contextWindow: number | undefined, reportedPercent?: number): number | undefined {
+  if (tokens !== undefined && contextWindow !== undefined && contextWindow > 0) {
+    return (tokens / contextWindow) * 100;
+  }
+  return reportedPercent;
+}
+
+function nullableNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return nullableNumber(value);
 }
 
 function textFromMessage(message: Record<string, unknown>): string {

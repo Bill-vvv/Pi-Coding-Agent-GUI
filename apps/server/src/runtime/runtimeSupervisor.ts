@@ -10,6 +10,7 @@ type ManagedRuntime = {
   client: PiRpcClient;
   serviceTierConfigFile?: string;
   stateRequestId?: string;
+  statsRequestId?: string;
 };
 
 type Broadcast = (event: ServerEvent) => void;
@@ -80,8 +81,8 @@ export class RuntimeSupervisor {
       };
       managed.runtime = runtime;
       this.publishRuntimeStatus(runtime);
-      managed.stateRequestId = `gui-${randomUUID()}`;
-      client.send({ id: managed.stateRequestId, type: "get_state" });
+      this.requestRuntimeState(managed);
+      this.requestSessionStats(managed);
       return runtime;
     } catch (error) {
       runtime = { ...runtime, status: "crashed", pid: undefined };
@@ -156,16 +157,30 @@ export class RuntimeSupervisor {
     if (!managed) return;
 
     const maybeRecord = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : undefined;
-    if (maybeRecord?.type === "response" && managed.stateRequestId && maybeRecord.id === managed.stateRequestId) {
-      managed.stateRequestId = undefined;
-      if (maybeRecord.success === true) {
-        const data = maybeRecord.data as Record<string, unknown> | undefined;
-        const sessionId = typeof data?.sessionId === "string" ? data.sessionId : undefined;
-        if (sessionId && managed.runtime.sessionId !== sessionId) {
-          managed.runtime = { ...managed.runtime, sessionId };
-          this.publishRuntimeStatus(managed.runtime);
+    if (maybeRecord?.type === "response") {
+      if (managed.stateRequestId && maybeRecord.id === managed.stateRequestId) {
+        managed.stateRequestId = undefined;
+        if (maybeRecord.success === true) {
+          const data = maybeRecord.data as Record<string, unknown> | undefined;
+          const sessionId = typeof data?.sessionId === "string" ? data.sessionId : undefined;
+          if (sessionId && managed.runtime.sessionId !== sessionId) {
+            managed.runtime = { ...managed.runtime, sessionId };
+            this.publishRuntimeStatus(managed.runtime);
+          }
         }
       }
+
+      if (managed.statsRequestId && maybeRecord.id === managed.statsRequestId) {
+        managed.statsRequestId = undefined;
+      }
+
+      if (maybeRecord.command === "set_model" && maybeRecord.success === true) {
+        this.requestSessionStats(managed);
+      }
+    }
+
+    if (maybeRecord?.type === "agent_end" || maybeRecord?.type === "compaction_end") {
+      this.requestSessionStats(managed);
     }
 
     this.publishGuiEvent(runtimeId, "pi_event", payload);
@@ -198,6 +213,28 @@ export class RuntimeSupervisor {
       throw new Error(`Runtime is not running or not managed by this server: ${runtimeId}`);
     }
     return managed;
+  }
+
+  private requestRuntimeState(managed: ManagedRuntime): void {
+    if (managed.stateRequestId) return;
+    managed.stateRequestId = `gui-state-${randomUUID()}`;
+    try {
+      managed.client.send({ id: managed.stateRequestId, type: "get_state" });
+    } catch (error) {
+      managed.stateRequestId = undefined;
+      this.publishGuiEvent(managed.runtime.id, "error", { message: (error as Error).message });
+    }
+  }
+
+  private requestSessionStats(managed: ManagedRuntime): void {
+    if (managed.statsRequestId) return;
+    managed.statsRequestId = `gui-stats-${randomUUID()}`;
+    try {
+      managed.client.send({ id: managed.statsRequestId, type: "get_session_stats" });
+    } catch (error) {
+      managed.statsRequestId = undefined;
+      this.publishGuiEvent(managed.runtime.id, "error", { message: (error as Error).message });
+    }
   }
 
   private publishRuntimeStatus(runtime: Runtime): void {

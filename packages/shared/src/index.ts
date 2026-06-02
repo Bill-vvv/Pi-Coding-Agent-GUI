@@ -57,6 +57,7 @@ export type ModelSummary = {
   supportedThinkingLevels?: ThinkingLevel[];
   supportsImages: boolean;
   supportsFast: boolean;
+  contextWindow?: number;
 };
 
 export type ClientCommand =

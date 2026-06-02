@@ -7,11 +7,11 @@ import { Composer } from "./components/Composer";
 import { PathPickerModal } from "./components/PathPickerModal";
 import { Sidebar } from "./components/Sidebar";
 import { appendEvent, upsertById } from "./domain/collections";
-import { buildConversationMessages, isRuntimeBusy } from "./domain/conversation";
+import { buildConversationContextUsage, buildConversationMessages, isRuntimeBusy } from "./domain/conversation";
 import { FALLBACK_MODELS, modelKey, selectedModelKeyFor, THINKING_LEVELS } from "./domain/models";
 import { firstVisibleRuntime } from "./domain/runtime";
 import { usePathPicker } from "./hooks/usePathPicker";
-import type { ConnectionState, PendingProjectStart, PendingPrompt } from "./types";
+import type { ConnectionState, ConversationContextUsage, PendingProjectStart, PendingPrompt } from "./types";
 
 export function App() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -19,6 +19,7 @@ export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [runtimes, setRuntimes] = useState<Runtime[]>([]);
   const [events, setEvents] = useState<GuiEvent[]>([]);
+  const [contextUsageByRuntime, setContextUsageByRuntime] = useState<Record<string, ConversationContextUsage>>({});
   const [selectedProjectId, setSelectedProjectId] = useState<string | undefined>();
   const [selectedRuntimeId, setSelectedRuntimeId] = useState<string | undefined>();
   const [projectCwd, setProjectCwd] = useState("");
@@ -103,6 +104,8 @@ export function App() {
     [events, activeRuntime],
   );
   const conversationMessages = useMemo(() => buildConversationMessages(visibleEvents), [visibleEvents]);
+  const conversationContextUsage = useMemo(() => buildConversationContextUsage(visibleEvents), [visibleEvents]);
+  const activeRuntimeContextUsage = activeRuntime ? contextUsageByRuntime[activeRuntime.id] ?? conversationContextUsage : undefined;
   const activeRuntimeIsBusy = useMemo(() => isRuntimeBusy(visibleEvents), [visibleEvents]);
 
   function handleServerEvent(event: ServerEvent) {
@@ -111,6 +114,7 @@ export function App() {
         setProjects(event.projects);
         setRuntimes(event.runtimes);
         setEvents(event.recentEvents);
+        setContextUsageByRuntime(contextUsageMapFromEvents(event.recentEvents));
         applySettingsState(event.settings);
         setSelectedProjectId((current) => current ?? event.projects[0]?.id);
         setSelectedRuntimeId((current) => current ?? firstVisibleRuntime(event.runtimes)?.id);
@@ -142,12 +146,14 @@ export function App() {
         break;
       case "gui.event":
         setEvents((current) => appendEvent(current, event.event));
+        setContextUsageByRuntime((current) => updateContextUsageMap(current, event.event));
         break;
       case "command.result":
         if (!event.success) {
           setLastError(event.error ?? "命令执行失败");
         } else if (event.command === "runtime.start" && isRecord(event.data) && isRecord(event.data.runtime) && typeof event.data.runtime.id === "string") {
           setSelectedRuntimeId(event.data.runtime.id);
+          if (typeof event.data.runtime.projectId === "string") setSelectedProjectId(event.data.runtime.projectId);
         } else if (event.command === "runtime.archive") {
           setSelectedRuntimeId(undefined);
         }
@@ -326,6 +332,7 @@ export function App() {
           availableThinkingLevels={availableThinkingLevels}
           responseMode={responseMode}
           modelPickerOpen={modelPickerOpen}
+          contextUsage={activeRuntimeContextUsage}
           connection={connection}
           activeRuntime={activeRuntime}
           activeRuntimeIsBusy={activeRuntimeIsBusy}
@@ -353,6 +360,16 @@ export function App() {
       />
     </main>
   );
+}
+
+function contextUsageMapFromEvents(events: GuiEvent[]): Record<string, ConversationContextUsage> {
+  return events.reduce<Record<string, ConversationContextUsage>>((usageByRuntime, event) => updateContextUsageMap(usageByRuntime, event), {});
+}
+
+function updateContextUsageMap(current: Record<string, ConversationContextUsage>, event: GuiEvent): Record<string, ConversationContextUsage> {
+  const nextUsage = buildConversationContextUsage([event], current[event.runtimeId]);
+  if (!nextUsage || nextUsage === current[event.runtimeId]) return current;
+  return { ...current, [event.runtimeId]: nextUsage };
 }
 
 function wsUrl(): string {
