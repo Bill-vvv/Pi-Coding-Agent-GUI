@@ -20,6 +20,7 @@ type WsClient = {
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 8787);
+const initialEventReplayLimit = boundedIntegerEnv("PI_GUI_INITIAL_EVENT_REPLAY_LIMIT", 20_000, 1_000, 50_000);
 const allowedCorsOrigins = [
   /^http:\/\/localhost(?::\d+)?$/,
   /^http:\/\/127\.0\.0\.1(?::\d+)?$/,
@@ -65,7 +66,7 @@ fastify.get("/ws", { websocket: true }, (socket: WsClient) => {
     serverTime: Date.now(),
     projects: db.listProjects(),
     runtimes: supervisor.listRuntimes(),
-    recentEvents: db.recentEvents(1000),
+    recentEvents: db.recentEvents(initialEventReplayLimit),
     settings: db.getSettings(),
   });
 
@@ -439,6 +440,14 @@ function thinkingLevelOrUndefined(value: unknown): ThinkingLevel | undefined {
 
 function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function boundedIntegerEnv(name: string, fallback: number, min: number, max: number): number {
+  const rawValue = process.env[name];
+  if (!rawValue) return fallback;
+  const value = Number(rawValue);
+  if (!Number.isInteger(value)) return fallback;
+  return Math.max(min, Math.min(max, value));
 }
 
 function responseModeOrUndefined(value: unknown): "normal" | "fast" | undefined {
