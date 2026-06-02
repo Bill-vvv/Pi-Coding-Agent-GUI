@@ -1,0 +1,37 @@
+.app-shell {
+  display: grid;
+  grid-template-columns: 332px minmax(0, 1fr);
+  gap: 0;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 52% 0%, rgb(90 75 62 / 14%), transparent 34rem),
+    var(--color-bg-app);
+  padding: var(--app-shell-padding);
+}
+
+.left-sidebar {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--color-surface-sidebar);
+  backdrop-filter: blur(18px);
+  z-index: 2;
+  height: calc(100dvh - var(--app-shell-padding) - var(--app-shell-padding));
+  min-height: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-sidebar);
+}
+
+.main-chat {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: calc(100dvh - var(--app-shell-padding) - var(--app-shell-padding));
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  border-radius: 18px;
+}

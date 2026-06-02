@@ -1,0 +1,47 @@
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  padding: 0;
+}
+
+.icon-button svg,
+.composer-action svg,
+.path-picker-trigger svg { flex: 0 0 auto; }
+
+.brand,
+.brand-actions,
+.section-title,
+.event-row header,
+.project-row,
+.path-picker-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sidebar-section,
+.session-list,
+.path-picker,
+.directory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.muted,
+.project-select small,
+.directory-item small,
+.event-row header {
+  color: var(--color-text-muted);
+}
+
+.muted,
+.project-select small,
+.directory-item small {
+  font-size: var(--text-meta);
+  line-height: var(--line-control);
+}

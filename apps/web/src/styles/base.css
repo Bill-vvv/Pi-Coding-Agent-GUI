@@ -1,0 +1,162 @@
+:root {
+  height: 100%;
+  overflow: hidden;
+  color-scheme: dark;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Geist", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Geist", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  --font-mono: "SF Mono", "Geist Mono", "JetBrains Mono", "Cascadia Code", "Menlo", "Consolas", monospace;
+
+  --app-shell-padding: 12px;
+  --panel-float-gap: 12px;
+  --chat-header-top-offset: var(--panel-float-gap);
+  --composer-bottom-offset: var(--panel-float-gap);
+
+  --text-root: 15px;
+  --text-caption: 0.74rem;
+  --text-meta: 0.82rem;
+  --text-control: 0.9rem;
+  --text-body: 1rem;
+  --line-control: 1.35;
+  --line-body: 1.75;
+
+  --weight-medium: 500;
+  --weight-semibold: 620;
+  --weight-bold: 700;
+  --tracking-tight: -0.01em;
+  --tracking-label: 0.08em;
+
+  --color-bg-app: #1b1b1a;
+  --color-surface: #343433;
+  --color-surface-hover: #44413d;
+  --color-surface-panel: rgb(45 45 43 / 82%);
+  --color-surface-sidebar: rgb(36 36 35 / 82%);
+  --color-surface-input: #2b2b2a;
+  --color-surface-input-focus: #323231;
+  --color-surface-dark: rgb(20 20 19 / 46%);
+  --color-text-primary: #f1eee8;
+  --color-text-body: #f0ece4;
+  --color-text-soft: #c9c3b8;
+  --color-text-muted: #969087;
+  --color-text-project: var(--color-text-soft);
+  --color-text-project-selected: var(--color-text-primary);
+  --color-border: #55514b;
+  --color-border-hover: #66605a;
+  --color-border-input: #44413d;
+  --color-border-subtle: rgb(181 170 156 / 13%);
+  --color-border-panel: rgb(181 170 156 / 16%);
+  --color-border-focus: rgb(181 170 156 / 22%);
+  --color-border-divider: rgb(181 170 156 / 10%);
+  --color-hover-subtle: rgb(181 170 156 / 9%);
+  --color-hover-muted: rgb(181 170 156 / 8%);
+  --color-focus-ring: rgb(181 170 156 / 8%);
+  --color-focus-outline: rgb(181 170 156 / 26%);
+  --color-error-border: #5a2a24;
+  --color-error-bg: #3d201c;
+  --color-error-text: #f1b6a7;
+  --color-warning-text: #e6c981;
+  --color-overlay: rgb(18 18 17 / 72%);
+
+  --radius-control: 10px;
+  --radius-panel: 16px;
+  --radius-composer: 24px;
+  --radius-pill: 999px;
+
+  --shadow-sidebar: 0 20px 70px rgb(0 0 0 / 18%), inset 0 1px 0 rgb(255 255 255 / 4%);
+  --shadow-composer: 0 18px 60px rgb(0 0 0 / 28%), inset 0 1px 0 rgb(255 255 255 / 5%);
+  --shadow-popover: 0 24px 80px rgb(0 0 0 / 42%), inset 0 1px 0 rgb(255 255 255 / 6%);
+
+  font-family: var(--font-ui);
+  background: var(--color-bg-app);
+  color: var(--color-text-primary);
+}
+
+* { box-sizing: border-box; }
+
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-root);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea,
+select { font: inherit; }
+
+label { cursor: default; }
+
+button {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  padding: 0.6rem 0.8rem;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, opacity 140ms ease, transform 140ms ease;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+  background: var(--color-surface-hover);
+}
+
+button:active:not(:disabled) { transform: translateY(1px); }
+
+button:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-focus-outline);
+  outline-offset: 2px;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-input);
+  color: var(--color-text-primary);
+  padding: 0.7rem;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+input:hover,
+textarea:hover,
+select:hover { border-color: var(--color-border); }
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--color-border-hover);
+  background: var(--color-surface-input-focus);
+  box-shadow: 0 0 0 3px rgb(181 170 156 / 10%);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+textarea {
+  min-height: 72px;
+  resize: vertical;
+}

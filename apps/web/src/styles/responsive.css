@@ -1,0 +1,37 @@
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    --app-shell-padding: 8px;
+    padding: var(--app-shell-padding);
+  }
+
+  .left-sidebar {
+    height: auto;
+    margin-top: 0;
+    max-height: 38dvh;
+    min-height: 0;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 14px;
+  }
+
+  .sidebar-content {
+    height: auto;
+    max-height: 38dvh;
+  }
+
+  .main-chat {
+    height: auto;
+    min-height: 0;
+  }
+
+  .composer-input-row { grid-template-columns: 1fr; }
+
+  .composer-meta-row,
+  .composer-runtime-controls,
+  .composer-model-controls,
+  .path-picker-actions { flex-wrap: wrap; }
+
+  .composer-project-trigger { max-width: 100%; }
+  .context-copy { display: none; }
+}

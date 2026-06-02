@@ -1,0 +1,167 @@
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  width: min(860px, calc(100% - 2.5rem));
+  margin: 0 auto var(--composer-bottom-offset);
+  border: 1px solid var(--color-border-panel);
+  border-radius: var(--radius-composer);
+  background: var(--color-surface-panel);
+  box-shadow: var(--shadow-composer);
+  backdrop-filter: blur(18px);
+  padding: 0.55rem;
+}
+
+.composer:focus-within { border-color: var(--color-border-panel); }
+
+.composer-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  padding: 0.05rem;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.composer-input-row:has(.abort-action) { grid-template-columns: minmax(0, 1fr) auto auto; }
+
+.composer-input-row:focus-within {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+.composer textarea {
+  max-height: 180px;
+  min-height: 48px;
+  border: none;
+  border-radius: 18px;
+  background: transparent;
+  font-size: var(--text-body);
+  line-height: var(--line-body);
+  padding: 0.8rem 0.9rem;
+  resize: none;
+}
+
+.composer textarea:focus {
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer-input-row textarea:focus-visible,
+.composer-input-row button:focus-visible {
+  outline: none;
+}
+
+.composer-action {
+  display: inline-grid;
+  place-items: center;
+  align-self: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-pill);
+  padding: 0;
+}
+
+.send-action {
+  display: inline-grid;
+  place-items: center;
+  align-self: center;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-soft);
+  font-size: 1.25rem;
+  font-weight: var(--weight-medium);
+  line-height: 1;
+  padding: 0;
+}
+
+.send-action:hover:not(:disabled) {
+  background: var(--color-hover-subtle);
+  color: var(--color-text-primary);
+}
+
+.send-action:active:not(:disabled) { transform: none; }
+
+.abort-action {
+  border-color: var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+.abort-action:hover:not(:disabled) {
+  border-color: var(--color-border-focus);
+  background: rgb(181 170 156 / 10%);
+}
+
+.composer-meta-row {
+  --composer-meta-font-size: var(--text-control);
+  --composer-meta-line-height: var(--line-control);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 0.15rem 0.1rem 0.45rem;
+}
+
+.path-picker-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem;
+  width: 100%;
+  min-width: 0;
+  border-color: var(--color-border-input);
+  background: var(--color-surface-input);
+  color: var(--color-text-muted);
+  padding: 0.7rem;
+  text-align: left;
+}
+
+.path-picker-trigger.has-value { color: var(--color-text-primary); }
+
+.path-picker-trigger:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+  background: var(--color-surface-input-focus);
+}
+
+.path-picker-trigger span {
+  color: inherit;
+  font-size: var(--composer-meta-font-size);
+  font-weight: var(--weight-medium);
+  line-height: var(--composer-meta-line-height);
+}
+
+.path-picker-trigger span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-project-trigger {
+  position: relative;
+  align-items: baseline;
+  align-self: baseline;
+  width: auto;
+  max-width: min(340px, 48%);
+  border: none;
+  background: transparent;
+  font-size: var(--composer-meta-font-size);
+  line-height: var(--composer-meta-line-height);
+  padding: 0.35rem 0.45rem 0.35rem calc(0.45rem + 18px + 0.55rem);
+}
+
+.composer-project-trigger:hover:not(:disabled) { background: var(--color-hover-subtle); }
+.composer-project-trigger:active:not(:disabled) { transform: none; }
+
+.composer-project-trigger svg {
+  position: absolute;
+  left: 0.45rem;
+  top: 50%;
+  transform: translateY(-50%);
+}

@@ -1,0 +1,58 @@
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--color-overlay);
+  padding: 1rem;
+  z-index: 10;
+}
+
+.path-picker {
+  width: min(760px, 100%);
+  max-height: min(760px, 90vh);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: #242424;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+  padding: 1rem;
+}
+
+.path-picker header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.path-picker h2,
+.path-picker p { margin: 0; }
+
+.path-picker h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  line-height: var(--line-control);
+}
+
+.path-picker p {
+  margin-top: 0.35rem;
+  color: var(--color-text-muted);
+  font-size: var(--text-meta);
+  line-height: var(--line-control);
+  overflow-wrap: anywhere;
+}
+
+.directory-list { overflow: auto; }
+
+.directory-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: var(--text-control);
+  line-height: var(--line-control);
+  text-align: left;
+  width: 100%;
+}
+
+.directory-item small { overflow-wrap: anywhere; }

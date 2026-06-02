@@ -1,0 +1,29 @@
+.event-row {
+  border-top: 1px solid var(--color-border-divider);
+  background: transparent;
+  padding: 0.75rem 0;
+}
+
+.event-row header {
+  font-size: var(--text-meta);
+  line-height: var(--line-control);
+  margin-bottom: 0.5rem;
+}
+
+.event-row pre {
+  max-width: none;
+  min-height: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+  background: var(--color-surface-dark);
+  color: var(--color-text-body);
+  font-family: var(--font-mono);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.event-row.stderr { border-top-color: rgb(217 169 77 / 34%); }
+.event-row.error { border-top-color: rgb(223 122 101 / 38%); }
