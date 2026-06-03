@@ -1,0 +1,164 @@
+import assert from "node:assert/strict";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { PiRpcClient } from "../src/runtime/piRpcClient.js";
+
+function createFakePiBin(script: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "pi-gui-fake-pi-"));
+  const bin = join(dir, "pi");
+  writeFileSync(bin, script, "utf8");
+  chmodSync(bin, 0o755);
+  return dir;
+}
+
+function withPathPrefix<T>(prefix: string, run: () => Promise<T>): Promise<T> {
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${prefix}${previousPath ? `:${previousPath}` : ""}`;
+  return run().finally(() => {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  });
+}
+
+function onceClientEvent<T extends unknown[]>(client: PiRpcClient, event: "event" | "stderr" | "error" | "exit"): Promise<T> {
+  return new Promise((resolve) => client.once(event, (...args) => resolve(args as T)));
+}
+
+function waitForPiEvent(client: PiRpcClient, predicate: (payload: unknown) => boolean): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for Pi RPC event"));
+    }, 2000);
+
+    const onEvent = (payload: unknown) => {
+      if (!predicate(payload)) return;
+      cleanup();
+      resolve(payload);
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      client.off("event", onEvent);
+      client.off("error", onError);
+    };
+
+    client.on("event", onEvent);
+    client.on("error", onError);
+  });
+}
+
+test("PiRpcClient starts pi --mode rpc with cwd and option args, and keeps stderr separate", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+process.stderr.write("fake-stderr\\n");
+process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");
+process.stdin.resume();
+`);
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-pi-cwd-"));
+
+  await withPathPrefix(fakeBin, async () => {
+    const client = new PiRpcClient(cwd, { session: "session-abc", model: "openai:gpt-5", thinkingLevel: "high" });
+    const stderrPromise = onceClientEvent<[string]>(client, "stderr");
+    const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
+
+    client.start();
+    const started = (await startedPromise) as { argv: string[]; cwd: string };
+    const [stderr] = await stderrPromise;
+
+    assert.deepEqual(started.argv, ["--mode", "rpc", "--session", "session-abc", "--model", "openai:gpt-5", "--thinking", "high"]);
+    assert.equal(started.cwd, cwd);
+    assert.equal(stderr, "fake-stderr\n");
+
+    client.stop();
+    await onceClientEvent(client, "exit");
+  });
+});
+
+test("PiRpcClient writes commands to stdin as LF-delimited JSONL", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) !== -1) {
+    const line = buffer.slice(0, index);
+    buffer = buffer.slice(index + 1);
+    process.stdout.write(JSON.stringify({ type: "stdin_line", line }) + "\\n");
+  }
+});
+process.stdin.resume();
+`);
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-pi-cwd-"));
+
+  await withPathPrefix(fakeBin, async () => {
+    const client = new PiRpcClient(cwd);
+    const linePromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "stdin_line");
+
+    client.start();
+    client.send({ id: "req-1", type: "prompt", message: "hello" });
+
+    const payload = (await linePromise) as { line: string };
+    assert.equal(payload.line, JSON.stringify({ id: "req-1", type: "prompt", message: "hello" }));
+
+    client.stop();
+    await onceClientEvent(client, "exit");
+  });
+});
+
+test("PiRpcClient reports process exit codes without mixing stderr into JSONL events", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+process.stderr.write("fatal stderr\\n");
+process.stdout.write(JSON.stringify({ type: "before_exit" }) + "\\n");
+process.exit(7);
+`);
+
+  await withPathPrefix(fakeBin, async () => {
+    const client = new PiRpcClient(process.cwd());
+    const stderrPromise = onceClientEvent<[string]>(client, "stderr");
+    const eventPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "before_exit");
+    const exitPromise = onceClientEvent<[number | null, NodeJS.Signals | null]>(client, "exit");
+
+    client.start();
+
+    assert.deepEqual(await eventPromise, { type: "before_exit" });
+    assert.equal((await stderrPromise)[0], "fatal stderr\n");
+    assert.deepEqual(await exitPromise, [7, null]);
+  });
+});
+
+test("PiRpcClient turns set_service_tier into config file updates and synthetic responses", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+process.stdin.resume();
+`);
+  const serviceTierConfigFile = join(mkdtempSync(join(tmpdir(), "pi-gui-tier-")), "service-tier.json");
+
+  await withPathPrefix(fakeBin, async () => {
+    const client = new PiRpcClient(process.cwd(), { serviceTierConfigFile });
+    const responsePromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { command?: unknown }).command === "set_service_tier");
+
+    client.start();
+    client.send({ id: "tier-1", type: "set_service_tier", serviceTier: "priority" });
+
+    assert.deepEqual(JSON.parse(readText(serviceTierConfigFile)), { serviceTier: "priority" });
+    assert.deepEqual(await responsePromise, {
+      id: "tier-1",
+      type: "response",
+      command: "set_service_tier",
+      success: true,
+      data: { serviceTier: "priority" },
+    });
+
+    client.stop();
+    await onceClientEvent(client, "exit");
+  });
+});
+
+function readText(path: string): string {
+  return readFileSync(path, "utf8");
+}

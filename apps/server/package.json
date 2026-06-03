@@ -8,6 +8,8 @@
     "dev:watch": "tsx watch --exclude=../../packages/shared/dist/** --exclude=dist/** src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/**/*.test.ts",
+    "smoke:pi-rpc": "tsx scripts/pi-rpc-smoke.ts",
     "start": "node dist/index.js"
   },
   "dependencies": {

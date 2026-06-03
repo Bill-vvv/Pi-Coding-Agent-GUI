@@ -11,6 +11,22 @@ npm run dev
 
 Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 
+Useful checks:
+
+```bash
+npm test
+npm run typecheck
+npm run build
+```
+
+Optional real Pi RPC smoke test, which starts `pi --mode rpc` in the current directory and sends `get_state` only:
+
+```bash
+npm run smoke:pi-rpc
+```
+
+You can override the working directory with `PI_GUI_SMOKE_CWD=/path/to/project`.
+
 Backend binds to `127.0.0.1:8787` by default and exposes WebSocket `/ws`.
 
 ## Architecture
