@@ -14,7 +14,6 @@
 .brand,
 .brand-actions,
 .section-title,
-.event-row header,
 .project-row,
 .path-picker-actions {
   display: flex;
@@ -34,8 +33,7 @@
 
 .muted,
 .project-select small,
-.directory-item small,
-.event-row header {
+.directory-item small {
   color: var(--color-text-muted);
 }
 

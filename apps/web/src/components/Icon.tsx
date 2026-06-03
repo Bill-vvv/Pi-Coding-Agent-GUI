@@ -1,4 +1,4 @@
-export type IconName = "archive" | "folder" | "plus" | "send" | "settings" | "stop" | "x";
+export type IconName = "archive" | "folder" | "play" | "plus" | "send" | "settings" | "stop" | "x";
 
 export function Icon({ name }: { name: IconName }) {
   const common = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", xmlns: "http://www.w3.org/2000/svg", "aria-hidden": true };
@@ -16,6 +16,12 @@ export function Icon({ name }: { name: IconName }) {
       return (
         <svg {...common}>
           <path d="M3.75 7.75A2.75 2.75 0 0 1 6.5 5h3.2c.72 0 1.39.34 1.82.92l.78 1.05c.24.32.61.51 1.01.51h5.19A2.75 2.75 0 0 1 21.25 10.23v5.52A3.25 3.25 0 0 1 18 19H6a3.25 3.25 0 0 1-3.25-3.25v-8Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        </svg>
+      );
+    case "play":
+      return (
+        <svg {...common}>
+          <path d="M8 5.75v12.5l10-6.25-10-6.25Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
         </svg>
       );
     case "plus":

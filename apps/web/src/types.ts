@@ -1,3 +1,5 @@
+export type { ConversationContextUsage, ConversationMessage } from "@pi-gui/shared";
+
 export type ConnectionState = "connecting" | "open" | "closed";
 
 export type DirectoryEntry = {
@@ -8,10 +10,3 @@ export type DirectoryEntry = {
 
 export type PendingPrompt = { projectId: string; message: string };
 export type PendingProjectStart = { cwd: string; message?: string };
-export type ConversationMessage = { id: string; role: "user" | "assistant" | "error" | "log"; text: string; timestamp?: number };
-export type ConversationContextUsage = {
-  tokens?: number;
-  contextWindow?: number;
-  percent?: number;
-  updatedAt?: number;
-};

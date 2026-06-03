@@ -1,6 +1,6 @@
 import type { DragEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
-import type { Project, Runtime } from "@pi-gui/shared";
+import type { Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
 import type { ConnectionState } from "../types";
 import { Icon } from "./Icon";
 
@@ -15,8 +15,10 @@ type SidebarProps = {
   activeRuntime?: Runtime;
   showArchived: boolean;
   activeRuntimeIsBusy: boolean;
+  conversationSummaries: Record<string, RuntimeConversationSummary>;
   onStartRuntime: () => void;
   onStartRuntimeForProject: (projectId: string) => void;
+  onResumeRuntime: (runtimeId: string) => void;
   onSelectProject: (projectId: string) => void;
   onSelectRuntime: (projectId: string, runtimeId: string) => void;
   onArchiveRuntime: (runtimeId: string) => void;
@@ -30,8 +32,10 @@ export function Sidebar({
   activeRuntime,
   showArchived,
   activeRuntimeIsBusy,
+  conversationSummaries,
   onStartRuntime,
   onStartRuntimeForProject,
+  onResumeRuntime,
   onSelectProject,
   onSelectRuntime,
   onArchiveRuntime,
@@ -177,17 +181,37 @@ export function Sidebar({
                 </div>
                 {!collapsed ? (
                   <div className="session-list">
-                    {projectRuntimes.map((runtime) => (
+                    {projectRuntimes.map((runtime) => {
+                      const summary = conversationSummaries[runtime.id];
+                      const title = sessionTitle(runtime, summary);
+                      const detail = sessionDetail(runtime, summary);
+                      return (
                       <div className={`session-row ${runtime.id === activeRuntime?.id ? "selected" : ""}`} key={runtime.id}>
                         <button
                           className="session-item"
                           type="button"
+                          title={detail ? `${title}\n${detail}` : title}
                           onClick={() => onSelectRuntime(project.id, runtime.id)}
                         >
                           <span className={`status-dot ${runtime.status}`} />
-                          <span>对话 {runtime.id.slice(0, 8)}</span>
-                          {runtime.archivedAt ? <small>归档</small> : null}
+                          <span className="session-text">
+                            <span className="session-title">{title}</span>
+                            {detail ? <small className="session-detail">{detail}</small> : null}
+                          </span>
+                          {runtime.archivedAt ? <small className="session-badge">归档</small> : null}
                         </button>
+                        {!runtime.archivedAt && (runtime.status === "stopped" || runtime.status === "crashed") ? (
+                          <button
+                            className="session-resume icon-button"
+                            type="button"
+                            title={runtime.sessionId ? "恢复对话" : "没有可恢复的 Pi session"}
+                            aria-label={`恢复对话 ${runtime.id.slice(0, 8)}`}
+                            onClick={() => onResumeRuntime(runtime.id)}
+                            disabled={connection !== "open" || !runtime.sessionId}
+                          >
+                            <Icon name="play" />
+                          </button>
+                        ) : null}
                         {!runtime.archivedAt ? (
                           <button
                             className="session-archive icon-button"
@@ -201,7 +225,8 @@ export function Sidebar({
                           </button>
                         ) : null}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : null}
               </article>
@@ -217,6 +242,20 @@ export function Sidebar({
       </div>
     </aside>
   );
+}
+
+function sessionTitle(runtime: Runtime, summary: RuntimeConversationSummary | undefined): string {
+  if (summary?.title) return summary.title;
+  if (runtime.status === "running" || runtime.status === "starting") return "新对话";
+  if (runtime.sessionId) return "已保存对话";
+  return `对话 ${runtime.id.slice(0, 8)}`;
+}
+
+function sessionDetail(runtime: Runtime, summary: RuntimeConversationSummary | undefined): string | undefined {
+  if (summary?.detail) return summary.detail;
+  if (summary?.messageCount) return `${summary.messageCount} 条消息`;
+  if (runtime.sessionId) return `Session ${runtime.sessionId.slice(0, 8)}`;
+  return undefined;
 }
 
 function readStringArray(key: string): string[] {

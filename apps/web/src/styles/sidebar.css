@@ -180,29 +180,45 @@
   text-align: left;
 }
 
-.session-item span:nth-child(2) {
+.session-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.08rem;
+  overflow: hidden;
+}
+
+.session-title,
+.session-detail {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.session-item small {
-  margin-left: auto;
+.session-title { font-weight: var(--weight-medium); }
+
+.session-detail,
+.session-badge {
   color: var(--color-text-muted);
   font-size: var(--text-caption);
 }
 
-.session-item:hover:not(:disabled) { background: transparent; }
+.session-badge {
+  margin-left: auto;
+  flex: none;
+}
 
-.session-item span:nth-child(2) { font-weight: var(--weight-medium); }
+.session-item:hover:not(:disabled) { background: transparent; }
 
 .session-row:hover .session-item,
 .session-row.selected .session-item { color: var(--color-text-primary); }
 
-.session-row.selected .session-item span:nth-child(2) { font-weight: var(--weight-semibold); }
+.session-row.selected .session-title { font-weight: var(--weight-semibold); }
 
-.session-archive {
+.session-archive,
+.session-resume {
   width: 28px;
   min-width: 28px;
   height: 28px;
@@ -213,16 +229,22 @@
   opacity: 0;
 }
 
-.session-row:hover .session-archive,
-.session-archive:focus-visible { opacity: 1; }
+.session-resume { margin-right: 0; }
 
-.session-archive:hover:not(:disabled) {
+.session-row:hover .session-archive,
+.session-row:hover .session-resume,
+.session-archive:focus-visible,
+.session-resume:focus-visible { opacity: 1; }
+
+.session-archive:hover:not(:disabled),
+.session-resume:hover:not(:disabled) {
   border-color: var(--color-border-subtle);
   background: var(--color-hover-subtle);
   color: var(--color-text-primary);
 }
 
 .status-dot {
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: var(--radius-pill);

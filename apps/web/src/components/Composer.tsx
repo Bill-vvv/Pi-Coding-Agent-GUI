@@ -24,6 +24,7 @@ type ComposerProps = {
   onOpenPathPicker: () => void | Promise<void>;
   onAbortRuntime: (runtimeId: string) => void;
   onToggleModelPicker: () => void;
+  onCloseModelPicker: () => void;
   onChooseModel: (model: ModelSummary) => void;
   onChooseThinkingLevel: (level: ThinkingLevel) => void;
   onChooseResponseMode: (mode: ResponseMode) => void;
@@ -48,6 +49,7 @@ export function Composer({
   onOpenPathPicker,
   onAbortRuntime,
   onToggleModelPicker,
+  onCloseModelPicker,
   onChooseModel,
   onChooseThinkingLevel,
   onChooseResponseMode,
@@ -102,6 +104,7 @@ export function Composer({
             responseMode={responseMode}
             open={modelPickerOpen}
             onToggleOpen={onToggleModelPicker}
+            onClose={onCloseModelPicker}
             onChooseModel={onChooseModel}
             onChooseThinkingLevel={onChooseThinkingLevel}
             onChooseResponseMode={onChooseResponseMode}

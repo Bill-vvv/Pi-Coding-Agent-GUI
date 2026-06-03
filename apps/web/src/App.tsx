@@ -1,90 +1,53 @@
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { AppSettings, ClientCommand, GuiEvent, ModelSummary, Project, ResponseMode, Runtime, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import type { AppSettings, ModelSummary, ResponseMode, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
 import { ChatView } from "./components/ChatView";
 import { Composer } from "./components/Composer";
 import { PathPickerModal } from "./components/PathPickerModal";
 import { Sidebar } from "./components/Sidebar";
-import { appendEvent, upsertById } from "./domain/collections";
-import { buildConversationContextUsage, buildConversationMessages, isRuntimeBusy } from "./domain/conversation";
-import { FALLBACK_MODELS, modelKey, selectedModelKeyFor, THINKING_LEVELS } from "./domain/models";
-import { firstVisibleRuntime } from "./domain/runtime";
+import { mergeConversationSummaries } from "./domain/conversationSummary";
+import { modelKey, selectedModelKeyFor, THINKING_LEVELS } from "./domain/models";
+import { useGuiSocket } from "./hooks/useGuiSocket";
+import { useModelCatalog } from "./hooks/useModelCatalog";
 import { usePathPicker } from "./hooks/usePathPicker";
-import type { ConnectionState, ConversationContextUsage, PendingProjectStart, PendingPrompt } from "./types";
+import { appReducer, initialAppState } from "./state/appReducer";
+import type { PendingProjectStart, PendingPrompt } from "./types";
 
 export function App() {
-  const wsRef = useRef<WebSocket | null>(null);
-  const [connection, setConnection] = useState<ConnectionState>("connecting");
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [runtimes, setRuntimes] = useState<Runtime[]>([]);
-  const [events, setEvents] = useState<GuiEvent[]>([]);
-  const [contextUsageByRuntime, setContextUsageByRuntime] = useState<Record<string, ConversationContextUsage>>({});
-  const [selectedProjectId, setSelectedProjectId] = useState<string | undefined>();
-  const [selectedRuntimeId, setSelectedRuntimeId] = useState<string | undefined>();
-  const [projectCwd, setProjectCwd] = useState("");
-  const [settings, setSettings] = useState<AppSettings>({});
-  const [models, setModels] = useState<ModelSummary[]>(FALLBACK_MODELS);
-  const [selectedModelKey, setSelectedModelKey] = useState("");
-  const [selectedThinkingLevel, setSelectedThinkingLevel] = useState<ThinkingLevel>("medium");
-  const [responseMode, setResponseMode] = useState<ResponseMode>("normal");
-  const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const [prompt, setPrompt] = useState("");
-  const [lastError, setLastError] = useState<string | undefined>();
-  const [showArchived] = useState(false);
-  const pathPicker = usePathPicker();
+  const openedRuntimeIdsRef = useRef<Set<string>>(new Set());
   const pendingPromptRef = useRef<PendingPrompt | undefined>(undefined);
   const pendingProjectStartRef = useRef<PendingProjectStart | undefined>(undefined);
+  const [state, dispatch] = useReducer(appReducer, initialAppState);
+  const models = useModelCatalog();
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [prompt, setPrompt] = useState("");
+  const pathPicker = usePathPicker();
 
-  useEffect(() => {
-    let reconnectTimer: number | undefined;
-    let closedByEffect = false;
+  const {
+    projects,
+    runtimes,
+    messagesByRuntime,
+    persistedConversationSummaries,
+    contextUsageByRuntime,
+    busyByRuntime,
+    selectedProjectId,
+    selectedRuntimeId,
+    projectCwd,
+    settings,
+    selectedModelKey,
+    selectedThinkingLevel,
+    responseMode,
+    lastError,
+    showArchived,
+  } = state;
 
-    const connect = () => {
-      setConnection("connecting");
-      const ws = new WebSocket(wsUrl());
-      wsRef.current = ws;
-
-      ws.addEventListener("open", () => {
-        setConnection("open");
-        setLastError(undefined);
-      });
-
-      ws.addEventListener("message", (message) => {
-        const event = JSON.parse(message.data as string) as ServerEvent;
-        handleServerEvent(event);
-      });
-
-      ws.addEventListener("close", () => {
-        if (wsRef.current === ws) wsRef.current = null;
-        setConnection("closed");
-        if (!closedByEffect) reconnectTimer = window.setTimeout(connect, 1500);
-      });
-
-      ws.addEventListener("error", () => {
-        setLastError("WebSocket 连接错误");
-      });
-    };
-
-    connect();
-
-    return () => {
-      closedByEffect = true;
-      if (reconnectTimer) window.clearTimeout(reconnectTimer);
-      wsRef.current?.close();
-    };
-  }, []);
-
-  useEffect(() => {
-    void fetch("/api/models")
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("读取模型失败"))))
-      .then((data: { models?: ModelSummary[] }) => {
-        if (data.models?.length) setModels(data.models);
-      })
-      .catch(() => {
-        setModels(FALLBACK_MODELS);
-      });
-  }, []);
+  const { connection, send } = useGuiSocket({
+    onEvent: handleServerEvent,
+    onError: (message) => dispatch({ type: "set.lastError", error: message }),
+    onOpen: () => dispatch({ type: "set.lastError", error: undefined }),
+    onClose: () => openedRuntimeIdsRef.current.clear(),
+  });
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? projects[0];
   const selectedProjectRuntimes = useMemo(
@@ -99,87 +62,55 @@ export function App() {
   const activeRuntime = selectedRuntime ?? visibleProjectRuntimes.find((runtime) => runtime.status === "running") ?? visibleProjectRuntimes[0];
   const selectedModel = models.find((model) => modelKey(model) === selectedModelKey) ?? models[0];
   const availableThinkingLevels = selectedModel?.supportedThinkingLevels ?? THINKING_LEVELS.map((level) => level.value);
-  const visibleEvents = useMemo(
-    () => events.filter((event) => !activeRuntime || event.runtimeId === activeRuntime.id),
-    [events, activeRuntime],
+  const conversationMessages = activeRuntime ? messagesByRuntime[activeRuntime.id] ?? [] : [];
+  const conversationSummaries = useMemo(
+    () => mergeConversationSummaries(persistedConversationSummaries, messagesByRuntime),
+    [persistedConversationSummaries, messagesByRuntime],
   );
-  const conversationMessages = useMemo(() => buildConversationMessages(visibleEvents), [visibleEvents]);
-  const conversationContextUsage = useMemo(() => buildConversationContextUsage(visibleEvents), [visibleEvents]);
-  const activeRuntimeContextUsage = activeRuntime ? contextUsageByRuntime[activeRuntime.id] ?? conversationContextUsage : undefined;
-  const activeRuntimeIsBusy = useMemo(() => isRuntimeBusy(visibleEvents), [visibleEvents]);
+  const activeRuntimeConversationSummary = activeRuntime ? conversationSummaries[activeRuntime.id] : undefined;
+  const activeRuntimeContextUsage = activeRuntime ? contextUsageByRuntime[activeRuntime.id] : undefined;
+  const activeRuntimeIsBusy = activeRuntime ? busyByRuntime[activeRuntime.id] ?? false : false;
+
+  useEffect(() => {
+    if (connection !== "open" || !activeRuntime) return;
+    if (openedRuntimeIdsRef.current.has(activeRuntime.id)) return;
+    openedRuntimeIdsRef.current.add(activeRuntime.id);
+    send({ type: "conversation.open", runtimeId: activeRuntime.id, limit: 120 });
+  }, [connection, activeRuntime?.id, send]);
 
   function handleServerEvent(event: ServerEvent) {
-    switch (event.type) {
-      case "hello":
-        setProjects(event.projects);
-        setRuntimes(event.runtimes);
-        setEvents(event.recentEvents);
-        setContextUsageByRuntime(contextUsageMapFromEvents(event.recentEvents));
-        applySettingsState(event.settings);
-        setSelectedProjectId((current) => current ?? event.projects[0]?.id);
-        setSelectedRuntimeId((current) => current ?? firstVisibleRuntime(event.runtimes)?.id);
-        break;
-      case "project.list":
-        setProjects(event.projects);
-        setSelectedProjectId((current) => current ?? event.projects[0]?.id);
-        break;
-      case "project.created":
-        setProjects((current) => upsertById(current, event.project));
-        setSelectedProjectId(event.project.id);
-        if (pendingProjectStartRef.current) {
-          const pending = pendingProjectStartRef.current;
-          pendingProjectStartRef.current = undefined;
-          setProjectCwd("");
-          startRuntimeForProject(event.project.id, pending.message);
-        }
-        break;
-      case "settings.updated":
-        applySettingsState(event.settings);
-        break;
-      case "runtime.status":
-        setRuntimes((current) => upsertById(current, event.runtime));
-        if (event.runtime.status === "running" && pendingPromptRef.current?.projectId === event.runtime.projectId) {
-          const pending = pendingPromptRef.current;
-          pendingPromptRef.current = undefined;
-          send({ type: "runtime.prompt", runtimeId: event.runtime.id, message: pending.message });
-        }
-        break;
-      case "gui.event":
-        setEvents((current) => appendEvent(current, event.event));
-        setContextUsageByRuntime((current) => updateContextUsageMap(current, event.event));
-        break;
-      case "command.result":
-        if (!event.success) {
-          setLastError(event.error ?? "命令执行失败");
-        } else if (event.command === "runtime.start" && isRecord(event.data) && isRecord(event.data.runtime) && typeof event.data.runtime.id === "string") {
-          setSelectedRuntimeId(event.data.runtime.id);
-          if (typeof event.data.runtime.projectId === "string") setSelectedProjectId(event.data.runtime.projectId);
-        } else if (event.command === "runtime.archive") {
-          setSelectedRuntimeId(undefined);
-        }
-        break;
-    }
+    dispatch({ type: "server.event", event, fallbackModelKey: selectedModelKeyFor(models[0]) });
+    handleServerSideEffects(event);
   }
 
-  function applySettingsState(nextSettings: AppSettings) {
-    setSettings(nextSettings);
-    setSelectedModelKey(nextSettings.defaultModel ?? selectedModelKeyFor(models[0]) ?? "");
-    setSelectedThinkingLevel(nextSettings.defaultThinkingLevel ?? "medium");
-    setResponseMode(nextSettings.responseMode ?? "normal");
-  }
-
-  function send(command: ClientCommand) {
-    if (wsRef.current?.readyState !== WebSocket.OPEN) {
-      setLastError("WebSocket 未连接");
+  function handleServerSideEffects(event: ServerEvent) {
+    if (event.type === "project.created" && pendingProjectStartRef.current) {
+      const pending = pendingProjectStartRef.current;
+      pendingProjectStartRef.current = undefined;
+      dispatch({ type: "set.projectCwd", cwd: "" });
+      startRuntimeForProject(event.project.id, pending.message);
       return;
     }
-    wsRef.current.send(JSON.stringify({ requestId: crypto.randomUUID(), ...command }));
+
+    if (event.type !== "command.result" || !event.success) return;
+
+    if ((event.command === "runtime.start" || event.command === "runtime.resume") && isRecord(event.data) && isRecord(event.data.runtime) && typeof event.data.runtime.id === "string") {
+      const runtime = event.data.runtime as { id: string; projectId?: unknown };
+      const runtimeId = runtime.id;
+      const projectId = typeof runtime.projectId === "string" ? runtime.projectId : undefined;
+      openedRuntimeIdsRef.current.delete(runtimeId);
+      if (projectId && pendingPromptRef.current?.projectId === projectId) {
+        const pending = pendingPromptRef.current;
+        pendingPromptRef.current = undefined;
+        send({ type: "runtime.prompt", runtimeId, message: pending.message });
+      }
+    }
   }
 
   function createProjectFromCwd(cwd: string, message?: string) {
     const existingProject = projects.find((project) => project.cwd === cwd);
     if (existingProject) {
-      setSelectedProjectId(existingProject.id);
+      dispatch({ type: "select.project", projectId: existingProject.id });
       startRuntimeForProject(existingProject.id, message);
       return;
     }
@@ -192,7 +123,7 @@ export function App() {
   }
 
   function choosePickerCwd() {
-    setProjectCwd(pathPicker.cwd);
+    dispatch({ type: "set.projectCwd", cwd: pathPicker.cwd });
     pathPicker.closePicker();
   }
 
@@ -203,12 +134,27 @@ export function App() {
       projectId,
       model: selectedModel ? modelKey(selectedModel) : undefined,
       thinkingLevel: selectedThinkingLevel,
+      responseMode,
     });
   }
 
   function startRuntimeForSidebarProject(projectId: string) {
-    setSelectedProjectId(projectId);
+    dispatch({ type: "select.project", projectId });
     startRuntimeForProject(projectId);
+  }
+
+  function resumeRuntime(runtimeId: string, message?: string) {
+    const runtime = runtimes.find((item) => item.id === runtimeId);
+    if (!runtime) return;
+    if (message?.trim()) pendingPromptRef.current = { projectId: runtime.projectId, message };
+    dispatch({ type: "select.project", projectId: runtime.projectId });
+    send({
+      type: "runtime.resume",
+      runtimeId,
+      model: selectedModel ? modelKey(selectedModel) : undefined,
+      thinkingLevel: selectedThinkingLevel,
+      responseMode,
+    });
   }
 
   function startRuntime() {
@@ -243,7 +189,7 @@ export function App() {
     send({ type: "settings.update", settings: merged });
   }
 
-  function configureActiveRuntime(next: { model?: ModelSummary; thinkingLevel?: ThinkingLevel }) {
+  function configureActiveRuntime(next: { model?: ModelSummary; thinkingLevel?: ThinkingLevel; responseMode?: ResponseMode }) {
     if (!activeRuntime || activeRuntime.status !== "running") return;
     send({
       type: "runtime.configure",
@@ -251,26 +197,27 @@ export function App() {
       modelProvider: next.model?.provider,
       modelId: next.model?.id,
       thinkingLevel: next.thinkingLevel,
+      responseMode: next.responseMode,
     });
   }
 
   function chooseModel(nextModel: ModelSummary) {
     const nextResponseMode = nextModel.supportsFast ? responseMode : "normal";
-    setSelectedModelKey(modelKey(nextModel));
-    if (nextResponseMode !== responseMode) setResponseMode(nextResponseMode);
+    dispatch({ type: "select.model", modelKey: modelKey(nextModel), responseMode: nextResponseMode });
     updateModelSettings({ defaultModel: modelKey(nextModel), responseMode: nextResponseMode });
-    configureActiveRuntime({ model: nextModel });
+    configureActiveRuntime({ model: nextModel, responseMode: nextResponseMode });
   }
 
   function chooseThinkingLevel(nextLevel: ThinkingLevel) {
-    setSelectedThinkingLevel(nextLevel);
+    dispatch({ type: "select.thinkingLevel", thinkingLevel: nextLevel });
     updateModelSettings({ defaultThinkingLevel: nextLevel });
     configureActiveRuntime({ thinkingLevel: nextLevel });
   }
 
   function chooseResponseMode(nextMode: ResponseMode) {
-    setResponseMode(nextMode);
+    dispatch({ type: "select.responseMode", responseMode: nextMode });
     updateModelSettings({ responseMode: nextMode });
+    configureActiveRuntime({ responseMode: nextMode });
   }
 
   function submitPrompt(event: FormEvent<HTMLFormElement>) {
@@ -279,7 +226,7 @@ export function App() {
     if (!message) return;
 
     if (activeRuntime?.status === "running") {
-      send({ type: "runtime.prompt", runtimeId: activeRuntime.id, message });
+      send({ type: "runtime.prompt", runtimeId: activeRuntime.id, message, streamingBehavior: activeRuntimeIsBusy ? "followUp" : undefined });
       setPrompt("");
       return;
     }
@@ -290,13 +237,19 @@ export function App() {
       return;
     }
 
+    if (activeRuntime && (activeRuntime.status === "stopped" || activeRuntime.status === "crashed") && activeRuntime.sessionId) {
+      resumeRuntime(activeRuntime.id, message);
+      setPrompt("");
+      return;
+    }
+
     if (selectedProject) {
       startRuntimeForProject(selectedProject.id, message);
       setPrompt("");
       return;
     }
 
-    setLastError("请先在输入框下方选择项目文件夹");
+    dispatch({ type: "set.lastError", error: "请先在输入框下方选择项目文件夹" });
   }
 
   return (
@@ -311,16 +264,21 @@ export function App() {
         activeRuntimeIsBusy={activeRuntimeIsBusy}
         onStartRuntime={startRuntime}
         onStartRuntimeForProject={startRuntimeForSidebarProject}
-        onSelectProject={setSelectedProjectId}
-        onSelectRuntime={(projectId, runtimeId) => {
-          setSelectedProjectId(projectId);
-          setSelectedRuntimeId(runtimeId);
-        }}
+        onResumeRuntime={resumeRuntime}
+        onSelectProject={(projectId) => dispatch({ type: "select.project", projectId })}
+        onSelectRuntime={(projectId, runtimeId) => dispatch({ type: "select.runtime", projectId, runtimeId })}
         onArchiveRuntime={archiveRuntime}
+        conversationSummaries={conversationSummaries}
       />
 
       <section className="main-chat">
-        <ChatView lastError={lastError} activeRuntime={activeRuntime} messages={conversationMessages} />
+        <ChatView
+          lastError={lastError}
+          activeRuntime={activeRuntime}
+          conversationSummary={activeRuntimeConversationSummary}
+          messages={conversationMessages}
+          activeRuntimeIsBusy={activeRuntimeIsBusy}
+        />
 
         <Composer
           prompt={prompt}
@@ -341,6 +299,7 @@ export function App() {
           onOpenPathPicker={openPathPicker}
           onAbortRuntime={(runtimeId) => send({ type: "runtime.abort", runtimeId })}
           onToggleModelPicker={() => setModelPickerOpen((value) => !value)}
+          onCloseModelPicker={() => setModelPickerOpen(false)}
           onChooseModel={chooseModel}
           onChooseThinkingLevel={chooseThinkingLevel}
           onChooseResponseMode={chooseResponseMode}
@@ -360,20 +319,4 @@ export function App() {
       />
     </main>
   );
-}
-
-function contextUsageMapFromEvents(events: GuiEvent[]): Record<string, ConversationContextUsage> {
-  return events.reduce<Record<string, ConversationContextUsage>>((usageByRuntime, event) => updateContextUsageMap(usageByRuntime, event), {});
-}
-
-function updateContextUsageMap(current: Record<string, ConversationContextUsage>, event: GuiEvent): Record<string, ConversationContextUsage> {
-  const nextUsage = buildConversationContextUsage([event], current[event.runtimeId]);
-  if (!nextUsage || nextUsage === current[event.runtimeId]) return current;
-  return { ...current, [event.runtimeId]: nextUsage };
-}
-
-function wsUrl(): string {
-  if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL;
-  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${protocol}://${window.location.host}/ws`;
 }

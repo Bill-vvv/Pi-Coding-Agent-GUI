@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { ModelSummary, ResponseMode, ThinkingLevel } from "@pi-gui/shared";
 import { compactModelLabel, modelKey, THINKING_LEVELS, thinkingLabel } from "../domain/models";
 
@@ -9,6 +10,7 @@ type ModelPickerProps = {
   responseMode: ResponseMode;
   open: boolean;
   onToggleOpen: () => void;
+  onClose: () => void;
   onChooseModel: (model: ModelSummary) => void;
   onChooseThinkingLevel: (level: ThinkingLevel) => void;
   onChooseResponseMode: (mode: ResponseMode) => void;
@@ -22,12 +24,36 @@ export function ModelPicker({
   responseMode,
   open,
   onToggleOpen,
+  onClose,
   onChooseModel,
   onChooseThinkingLevel,
   onChooseResponseMode,
 }: ModelPickerProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && rootRef.current?.contains(target)) return;
+      onClose();
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, open]);
+
   return (
-    <div className="composer-model-controls">
+    <div className="composer-model-controls" ref={rootRef}>
       <button
         className="model-picker-button"
         type="button"
