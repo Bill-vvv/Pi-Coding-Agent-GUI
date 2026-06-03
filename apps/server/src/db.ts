@@ -1,45 +1,30 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { AppSettings, GuiEvent, GuiEventKind, Project, Runtime, RuntimeStatus } from "@pi-gui/shared";
-
-type ProjectRow = {
-  id: string;
-  name: string;
-  cwd: string;
-  last_opened_at: number;
-  default_model: string | null;
-};
-
-type RuntimeRow = {
-  id: string;
-  project_id: string;
-  cwd: string;
-  status: RuntimeStatus;
-  pid: number | null;
-  session_id: string | null;
-  started_at: number | null;
-  archived_at: number | null;
-};
-
-type EventRow = {
-  id: number;
-  runtime_id: string;
-  project_id: string;
-  timestamp: number;
-  kind: GuiEventKind;
-  payload: string;
-};
+import type { AppSettings, ConversationContextUsage, ConversationMessage, GuiEvent, GuiSession, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
+import { ConversationStore } from "./db/conversations.js";
+import { EventLogStore } from "./db/events.js";
+import { parseThinkingLevel, projectFromRow, runtimeFromRow, sessionFromRow } from "./db/mappers.js";
+import type { ProjectRow, RuntimeRow, SessionRow } from "./db/rows.js";
+import { migrateDatabase } from "./db/schema.js";
 
 export class AppDatabase {
-  private db: Database.Database;
+  private readonly db: Database.Database;
+  private readonly conversations: ConversationStore;
+  private readonly eventLog: EventLogStore;
 
   constructor(filePath = defaultDbPath()) {
     mkdirSync(dirname(filePath), { recursive: true });
     this.db = new Database(filePath);
     this.db.pragma("journal_mode = WAL");
-    this.migrate();
+    migrateDatabase(this.db);
+    this.conversations = new ConversationStore(this.db);
+    this.eventLog = new EventLogStore(this.db);
     this.markOrphanedRuntimesCrashed();
+  }
+
+  close(): void {
+    this.db.close();
   }
 
   listProjects(): Project[] {
@@ -139,43 +124,95 @@ export class AppDatabase {
     return this.getRuntime(id);
   }
 
-  appendEvent(input: Omit<GuiEvent, "id" | "timestamp"> & { timestamp?: number }): GuiEvent {
-    const timestamp = input.timestamp ?? Date.now();
-    const payload = JSON.stringify(input.payload);
-    if (payload === undefined) {
-      throw new Error("Event payload must be JSON-serializable");
-    }
+  listSessions(projectId?: string, limit = 200): GuiSession[] {
+    const boundedLimit = Math.max(1, Math.min(limit, 1000));
+    const rows = projectId
+      ? (this.db
+          .prepare("select * from sessions where project_id = ? order by updated_at desc limit ?")
+          .all(projectId, boundedLimit) as SessionRow[])
+      : (this.db.prepare("select * from sessions order by updated_at desc limit ?").all(boundedLimit) as SessionRow[]);
+    return rows.map(sessionFromRow);
+  }
 
-    const result = this.db
+  getSession(id: string): GuiSession | undefined {
+    const row = this.db.prepare("select * from sessions where id = ?").get(id) as SessionRow | undefined;
+    return row ? sessionFromRow(row) : undefined;
+  }
+
+  upsertSession(session: GuiSession): GuiSession {
+    this.db
       .prepare(
-        `insert into events (runtime_id, project_id, timestamp, kind, payload)
-         values (?, ?, ?, ?, ?)`,
+        `insert into sessions (id, project_id, pi_session_file, title, created_at, updated_at, runtime_id)
+         values (@id, @projectId, @piSessionFile, @title, @createdAt, @updatedAt, @runtimeId)
+         on conflict(id) do update set
+           project_id = excluded.project_id,
+           pi_session_file = excluded.pi_session_file,
+           title = coalesce(excluded.title, sessions.title),
+           updated_at = excluded.updated_at,
+           runtime_id = excluded.runtime_id`,
       )
-      .run(input.runtimeId, input.projectId, timestamp, input.kind, payload);
+      .run({
+        id: session.id,
+        projectId: session.projectId,
+        piSessionFile: session.piSessionFile,
+        title: session.title ?? null,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        runtimeId: session.runtimeId ?? null,
+      });
+    return this.getSession(session.id) ?? session;
+  }
 
-    return {
-      id: Number(result.lastInsertRowid),
-      runtimeId: input.runtimeId,
-      projectId: input.projectId,
-      timestamp,
-      kind: input.kind,
-      payload: input.payload,
-    };
+  upsertConversationMessage(message: ConversationMessage): ConversationMessage {
+    return this.conversations.upsertConversationMessage(message);
+  }
+
+  getConversationMessage(runtimeId: string, messageId: string): ConversationMessage | undefined {
+    return this.conversations.getConversationMessage(runtimeId, messageId);
+  }
+
+  listConversationMessages(runtimeId: string, limit = 100): ConversationMessage[] {
+    return this.conversations.listConversationMessages(runtimeId, limit);
+  }
+
+  listRuntimeConversationSummaries(limit = 100): RuntimeConversationSummary[] {
+    return this.conversations.listRuntimeConversationSummaries(limit);
+  }
+
+  replaceConversationMessages(runtimeId: string, messages: ConversationMessage[]): void {
+    this.conversations.replaceConversationMessages(runtimeId, messages);
+  }
+
+  getConversationContext(runtimeId: string): ConversationContextUsage | undefined {
+    return this.conversations.getConversationContext(runtimeId);
+  }
+
+  updateConversationContext(runtimeId: string, projectId: string, usage: ConversationContextUsage): ConversationContextUsage {
+    return this.conversations.updateConversationContext(runtimeId, projectId, usage);
+  }
+
+  getConversationBusy(runtimeId: string): boolean {
+    return this.conversations.getConversationBusy(runtimeId);
+  }
+
+  setConversationBusy(runtimeId: string, projectId: string, busy: boolean, timestamp = Date.now()): boolean {
+    return this.conversations.setConversationBusy(runtimeId, projectId, busy, timestamp);
+  }
+
+  lastEventId(): number {
+    return this.eventLog.lastEventId();
+  }
+
+  appendEvent(input: Omit<GuiEvent, "id" | "timestamp"> & { timestamp?: number }): GuiEvent {
+    return this.eventLog.appendEvent(input);
   }
 
   listEvents(afterEventId = 0, limit = 500): GuiEvent[] {
-    const boundedLimit = Math.max(1, Math.min(limit, 2000));
-    const rows = this.db
-      .prepare("select * from events where id > ? order by id asc limit ?")
-      .all(afterEventId, boundedLimit) as EventRow[];
-    return rows.map(eventFromRow);
+    return this.eventLog.listEvents(afterEventId, limit);
   }
 
-  recentEvents(limit = 200): GuiEvent[] {
-    const rows = this.db
-      .prepare("select * from events order by id desc limit ?")
-      .all(limit) as EventRow[];
-    return rows.reverse().map(eventFromRow);
+  recentEvents(limit = 200, maxPayloadBytes?: number): GuiEvent[] {
+    return this.eventLog.recentEvents(limit, maxPayloadBytes);
   }
 
   private upsertSetting(key: string, value: string, timestamp: number): void {
@@ -189,75 +226,6 @@ export class AppDatabase {
         .run(key, value, timestamp);
     } else {
       this.db.prepare("delete from settings where key = ?").run(key);
-    }
-  }
-
-  private migrate(): void {
-    this.db.exec(`
-      create table if not exists projects (
-        id text primary key,
-        name text not null,
-        cwd text not null unique,
-        last_opened_at integer not null,
-        default_model text
-      );
-
-      create table if not exists runtimes (
-        id text primary key,
-        project_id text not null,
-        cwd text not null,
-        status text not null,
-        pid integer,
-        session_id text,
-        started_at integer,
-        archived_at integer,
-        ended_at integer,
-        created_at integer not null,
-        updated_at integer not null,
-        foreign key(project_id) references projects(id)
-      );
-
-      create index if not exists runtimes_project_id_idx on runtimes(project_id);
-      create index if not exists runtimes_status_idx on runtimes(status);
-
-      create table if not exists sessions (
-        id text primary key,
-        project_id text not null,
-        pi_session_file text not null unique,
-        title text,
-        created_at integer not null,
-        updated_at integer not null,
-        runtime_id text,
-        foreign key(project_id) references projects(id)
-      );
-
-      create table if not exists events (
-        id integer primary key autoincrement,
-        runtime_id text not null,
-        project_id text not null,
-        timestamp integer not null,
-        kind text not null,
-        payload text not null
-      );
-
-      create index if not exists events_runtime_id_idx on events(runtime_id, id);
-      create index if not exists events_project_id_idx on events(project_id, id);
-
-      create table if not exists settings (
-        key text primary key,
-        value text not null,
-        updated_at integer not null
-      );
-    `);
-
-    this.ensureColumn("runtimes", "archived_at", "integer");
-    this.ensureColumn("runtimes", "ended_at", "integer");
-  }
-
-  private ensureColumn(tableName: string, columnName: string, columnType: string): void {
-    const columns = this.db.prepare(`pragma table_info(${tableName})`).all() as Array<{ name: string }>;
-    if (!columns.some((column) => column.name === columnName)) {
-      this.db.prepare(`alter table ${tableName} add column ${columnName} ${columnType}`).run();
     }
   }
 
@@ -277,11 +245,17 @@ export class AppDatabase {
       `insert into events (runtime_id, project_id, timestamp, kind, payload)
        values (?, ?, ?, ?, ?)`,
     );
+    const clearBusy = this.db.prepare(
+      `update runtime_conversation_state
+       set busy = 0, updated_at = ?
+       where runtime_id = ?`,
+    );
 
     this.db.transaction((rows: RuntimeRow[]) => {
       updateRuntimes.run(timestamp, timestamp);
       for (const row of rows) {
         const crashedRuntime = runtimeFromRow({ ...row, status: "crashed", pid: null });
+        clearBusy.run(timestamp, row.id);
         insertEvent.run(row.id, row.project_id, timestamp, "runtime_status", JSON.stringify(crashedRuntime));
         insertEvent.run(
           row.id,
@@ -303,50 +277,4 @@ export class AppDatabase {
 
 function defaultDbPath(): string {
   return resolve(process.env.PI_GUI_DATA_DIR ?? ".pi-gui", "pi-gui.sqlite");
-}
-
-function projectFromRow(row: ProjectRow): Project {
-  return {
-    id: row.id,
-    name: row.name,
-    cwd: row.cwd,
-    lastOpenedAt: row.last_opened_at,
-    defaultModel: row.default_model ?? undefined,
-  };
-}
-
-function parseThinkingLevel(value: string): AppSettings["defaultThinkingLevel"] {
-  return value === "off" || value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh"
-    ? value
-    : undefined;
-}
-
-function runtimeFromRow(row: RuntimeRow): Runtime {
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    cwd: row.cwd,
-    status: row.status,
-    pid: row.pid ?? undefined,
-    sessionId: row.session_id ?? undefined,
-    startedAt: row.started_at ?? undefined,
-    archivedAt: row.archived_at ?? undefined,
-  };
-}
-
-function eventFromRow(row: EventRow): GuiEvent {
-  let payload: unknown;
-  try {
-    payload = JSON.parse(row.payload);
-  } catch (error) {
-    throw new Error(`Failed to parse event payload JSON for event ${row.id}: ${(error as Error).message}`);
-  }
-  return {
-    id: row.id,
-    runtimeId: row.runtime_id,
-    projectId: row.project_id,
-    timestamp: row.timestamp,
-    kind: row.kind,
-    payload,
-  };
 }

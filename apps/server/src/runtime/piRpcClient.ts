@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StringDecoder } from "node:string_decoder";
+import { LfJsonlParser } from "./jsonlFraming.js";
 
 type PiRpcClientEvents = {
   event: [payload: unknown];
@@ -13,12 +14,11 @@ type PiRpcClientEvents = {
 };
 
 const DEFAULT_STOP_GRACE_MS = 2500;
-const MAX_UNTERMINATED_JSONL_PREVIEW_CHARS = 120;
 const SERVICE_TIER_EXTENSION_PATH = resolveSiblingExtensionPath();
 
 export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
   private proc?: ChildProcessWithoutNullStreams;
-  private stdoutBuffer = "";
+  private stdoutParser = new LfJsonlParser();
   private stdoutDecoder = new StringDecoder("utf8");
   private stderrDecoder = new StringDecoder("utf8");
   private stopping = false;
@@ -26,7 +26,7 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
 
   constructor(
     private readonly cwd: string,
-    private readonly options: { model?: string; thinkingLevel?: string; serviceTierConfigFile?: string } = {},
+    private readonly options: { model?: string; thinkingLevel?: string; serviceTierConfigFile?: string; session?: string } = {},
   ) {
     super();
   }
@@ -45,6 +45,9 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
     }
 
     const args = ["--mode", "rpc"];
+    if (this.options.session) {
+      args.push("--session", this.options.session);
+    }
     if (this.options.model) {
       args.push("--model", this.options.model);
     }
@@ -69,12 +72,7 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
     this.proc.on("error", (error) => this.emit("error", error));
     this.proc.on("exit", (code, signal) => {
       this.exited = true;
-      const tail = this.stdoutDecoder.end();
-      if (tail) this.stdoutBuffer += tail;
-      if (this.stdoutBuffer.length > 0) {
-        this.emit("error", new Error(formatUnterminatedJsonlError(this.stdoutBuffer)));
-        this.stdoutBuffer = "";
-      }
+      this.emitBatch(this.stdoutParser.end(this.stdoutDecoder.end()));
       const stderrTail = this.stderrDecoder.end();
       if (stderrTail) this.emit("stderr", stderrTail);
       this.emit("exit", code, signal);
@@ -120,26 +118,12 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
   }
 
   private handleStdout(chunk: Buffer): void {
-    this.stdoutBuffer += this.stdoutDecoder.write(chunk);
-
-    while (true) {
-      const newlineIndex = this.stdoutBuffer.indexOf("\n");
-      if (newlineIndex === -1) break;
-
-      let line = this.stdoutBuffer.slice(0, newlineIndex);
-      this.stdoutBuffer = this.stdoutBuffer.slice(newlineIndex + 1);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
-      this.parseLine(line);
-    }
+    this.emitBatch(this.stdoutParser.push(this.stdoutDecoder.write(chunk)));
   }
 
-  private parseLine(line: string): void {
-    if (line.length === 0) return;
-    try {
-      this.emit("event", JSON.parse(line));
-    } catch (error) {
-      this.emit("error", new Error(`Failed to parse Pi RPC JSONL record: ${(error as Error).message}`));
-    }
+  private emitBatch(batch: { records: unknown[]; errors: Error[] }): void {
+    for (const record of batch.records) this.emit("event", record);
+    for (const error of batch.errors) this.emit("error", error);
   }
 }
 
@@ -157,10 +141,3 @@ function normalizeServiceTier(serviceTier: unknown): "default" | "flex" | "scale
   return serviceTier === "default" || serviceTier === "flex" || serviceTier === "scale" || serviceTier === "priority" ? serviceTier : undefined;
 }
 
-function formatUnterminatedJsonlError(buffer: string): string {
-  const preview =
-    buffer.length > MAX_UNTERMINATED_JSONL_PREVIEW_CHARS
-      ? `${buffer.slice(0, MAX_UNTERMINATED_JSONL_PREVIEW_CHARS)}…`
-      : buffer;
-  return `Pi RPC stdout ended with an unterminated JSONL record (${buffer.length} chars): ${JSON.stringify(preview)}`;
-}
