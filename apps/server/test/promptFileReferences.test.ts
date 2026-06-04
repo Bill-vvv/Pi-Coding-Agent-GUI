@@ -35,19 +35,14 @@ test("expandPromptFileReferences preserves quoted text references with spaces", 
   assert.deepEqual(expanded, { message: 'Use @"with space.md"' });
 });
 
-test("expandPromptFileReferences attaches supported images without rewriting prompt text", async (t) => {
+test("expandPromptFileReferences preserves supported image references as paths", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "pi-gui-prompt-files-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const png = minimalPngBuffer();
-  await writeFile(join(cwd, "image.png"), png);
+  await writeFile(join(cwd, "image.png"), minimalPngBuffer());
 
   const expanded = await expandPromptFileReferences("Describe @image.png", cwd);
 
-  assert.equal(expanded.message, "Describe @image.png");
-  assert.equal(expanded.images?.length, 1);
-  assert.equal(expanded.images?.[0]?.type, "image");
-  assert.equal(expanded.images?.[0]?.mimeType, "image/png");
-  assert.equal(expanded.images?.[0]?.data, png.toString("base64"));
+  assert.deepEqual(expanded, { message: "Describe @image.png" });
 });
 
 test("expandPromptFileReferences leaves non-file mentions and slash commands unchanged", async (t) => {

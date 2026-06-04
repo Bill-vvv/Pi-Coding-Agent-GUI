@@ -52,7 +52,6 @@ export async function sendPrompt(managed: ManagedRuntime, message: string, strea
     type: "prompt",
     message: expanded.message,
   };
-  if (expanded.images) command.images = expanded.images;
   if (streamingBehavior) command.streamingBehavior = streamingBehavior;
   managed.client.send(command);
 }
