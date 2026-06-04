@@ -8,6 +8,7 @@
 @import "./styles/command-menu.css";
 @import "./styles/model-picker.css";
 @import "./styles/settings.css";
+@import "./styles/token-usage.css";
 @import "./styles/session-history.css";
 @import "./styles/checkpoints.css";
 @import "./styles/thinking-animation.css";

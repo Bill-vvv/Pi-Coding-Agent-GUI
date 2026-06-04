@@ -5,6 +5,7 @@ import { AppDatabase } from "./db.js";
 import { registerEnvironmentRoutes } from "./routes/environmentRoutes.js";
 import { registerFsRoutes } from "./routes/fsRoutes.js";
 import { registerImportRoutes } from "./routes/importRoutes.js";
+import { registerUsageRoutes } from "./routes/usageRoutes.js";
 import { RuntimeSupervisor } from "./runtime/runtimeSupervisor.js";
 import { listPiModels } from "./services/modelService.js";
 import { indexKnownPiSessions } from "./services/sessionIndexService.js";
@@ -36,6 +37,7 @@ await fastify.register(websocket);
 await registerFsRoutes(fastify);
 await registerImportRoutes(fastify);
 await registerEnvironmentRoutes(fastify);
+await registerUsageRoutes(fastify, { db });
 
 fastify.get("/health", async () => ({ ok: true, time: Date.now() }));
 

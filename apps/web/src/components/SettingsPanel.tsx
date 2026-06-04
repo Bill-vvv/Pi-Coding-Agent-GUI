@@ -15,6 +15,7 @@ type SettingsPanelProps = {
   onClose: () => void;
   onChangePreferences: (preferences: UiPreferences) => void;
   onOpenArchivedRuntime: (runtimeId: string) => void;
+  onOpenUsageOverview: () => void;
 };
 
 const UI_FONT_OPTIONS: Array<{ value: UiFontSize; label: string; disabled?: boolean }> = [
@@ -56,6 +57,7 @@ export function SettingsPanel({
   onClose,
   onChangePreferences,
   onOpenArchivedRuntime,
+  onOpenUsageOverview,
 }: SettingsPanelProps) {
   const [selectedArchivedRuntimeId, setSelectedArchivedRuntimeId] = useState<string | undefined>();
   const {
@@ -154,6 +156,14 @@ export function SettingsPanel({
                 ))}
               </div>
             </div>
+
+            <button className="settings-setting-row settings-navigation-row" type="button" onClick={onOpenUsageOverview}>
+              <span className="settings-setting-copy">
+                <span>Overview</span>
+                <small>查看 token usage 统计</small>
+              </span>
+              <Icon name="arrow-right" />
+            </button>
 
             <div className={`settings-setting-row ${desktopNotificationToggleDisabled ? "disabled" : ""}`}>
               <span className="settings-setting-copy">

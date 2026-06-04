@@ -233,6 +233,56 @@ export type ModelSummary = {
   contextWindow?: number;
 };
 
+export type TokenUsageRange = "all" | "30d" | "7d";
+export type TokenUsageQuality = "recorded" | "partial" | "empty";
+
+export type TokenUsageBreakdown = {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  total: number;
+  cost?: number;
+};
+
+export type TokenUsageDay = {
+  day: string;
+  tokens: TokenUsageBreakdown;
+  sessions: number;
+  assistantMessages: number;
+  models: Array<{ provider?: string; model: string; totalTokens: number }>;
+};
+
+export type TokenUsageOverview = {
+  range: TokenUsageRange;
+  projectId?: string;
+  generatedAt: number;
+  days: TokenUsageDay[];
+  summary: {
+    sessions: number;
+    messages: number;
+    totalTokens: number;
+    activeDays: number;
+    currentStreakDays: number;
+    longestStreakDays: number;
+    peakHour?: number;
+    favoriteModel?: string;
+    quality: TokenUsageQuality;
+  };
+  coverage: {
+    scannedFiles: number;
+    cachedFiles: number;
+    assistantMessages: number;
+    recordedUsageMessages: number;
+    missingUsageMessages: number;
+    skippedMissingTimestamp: number;
+    malformedLines: number;
+    truncatedLines: number;
+    scanLimited: boolean;
+  };
+  models: Array<{ provider?: string; model: string; totalTokens: number; messages: number; activeDays: number }>;
+};
+
 export type EnvironmentDiagnostics = {
   checkedAt: number;
   platform: string;
