@@ -241,7 +241,7 @@ function PiLogoFullOverlay({ bounds }: { bounds: OverlayBounds }) {
             <rect x="0" y="24" width="36" height="18" />
           </clipPath>
           <clipPath id="pi-logo-slice-i">
-            <rect x="36" y="0" width="20" height="42" />
+            <rect x="36" y="0" width="22" height="42" />
           </clipPath>
         </defs>
         <g className="pi-logo-overlay-position" transform={`translate(${wordmarkOffsetX} ${wordmarkOffsetY})`}>
@@ -283,10 +283,13 @@ function PiWordmarkBody() {
         fontFamily="Georgia, 'Times New Roman', serif"
         fontSize="42"
         fontWeight="700"
-        letterSpacing="-2"
       >
-        Pı
+        P
       </text>
+      <path
+        className="pi-logo-letter-i"
+        d="M37.9 36V32.35H40.15V18.45H38.25V14.85H47.05V18.45H45.15V32.35H47.4V36H37.9Z"
+      />
     </g>
   );
 }
