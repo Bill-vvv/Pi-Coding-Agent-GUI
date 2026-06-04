@@ -1,8 +1,8 @@
 import { useRef, useState, type Dispatch } from "react";
-import type { ClientCommand, ConversationMessage, Project, ResponseMode, Runtime, RuntimeConversationSummary, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
+import type { ConversationMessage, Project, ResponseMode, Runtime, RuntimeConversationSummary, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
 import type { AppAction } from "../state/appReducer";
-import type { PendingProjectStart, PendingPrompt } from "../types";
+import type { GuiSocketSend, PendingProjectStart, PendingPrompt } from "../types";
 
 type UseProjectRuntimeActionsOptions = {
   projects: Project[];
@@ -17,7 +17,7 @@ type UseProjectRuntimeActionsOptions = {
   defaultThinkingLevel: ThinkingLevel;
   defaultResponseMode: ResponseMode;
   dispatch: Dispatch<AppAction>;
-  send: (command: ClientCommand) => boolean;
+  send: GuiSocketSend;
   markRuntimeConversationStale: (runtimeId: string) => void;
 };
 
@@ -42,69 +42,116 @@ export function useProjectRuntimeActions({
   const [prompt, setPrompt] = useState("");
 
   function handleProjectRuntimeServerEvent(event: ServerEvent) {
-    if (event.type === "project.created" && pendingProjectStartRef.current) {
-      const pending = pendingProjectStartRef.current;
-      pendingProjectStartRef.current = undefined;
-      dispatch({ type: "set.projectCwd", cwd: "" });
-      startRuntimeForProject(event.project.id, pending.message);
+    if (event.type === "hello") {
+      reconcilePendingActionsAfterReconnect(event);
       return;
     }
 
-    if (event.type !== "command.result" || !event.success) return;
+    if (event.type === "project.created" && pendingProjectStartRef.current?.cwd === event.project.cwd) {
+      const pending = pendingProjectStartRef.current;
+      pendingProjectStartRef.current = undefined;
+      dispatch({ type: "set.projectCwd", cwd: "" });
+      if (!startRuntimeForProject(event.project.id, pending.message)) restorePendingMessage(pending.message);
+      return;
+    }
+
+    if (event.type !== "command.result") return;
+
+    if (!event.success) {
+      if (event.command === "project.create" && pendingProjectStartRef.current && event.requestId === pendingProjectStartRef.current.requestId) {
+        const pending = pendingProjectStartRef.current;
+        pendingProjectStartRef.current = undefined;
+        restorePendingMessage(pending.message);
+      }
+      if (isRuntimeLaunchCommand(event.command) && pendingPromptRef.current && event.requestId === pendingPromptRef.current.requestId) {
+        const pending = pendingPromptRef.current;
+        pendingPromptRef.current = undefined;
+        restorePendingMessage(pending.message);
+      }
+      return;
+    }
 
     if (isRuntimeLaunchCommand(event.command) && isRecord(event.data) && isRecord(event.data.runtime) && typeof event.data.runtime.id === "string") {
       const runtime = event.data.runtime as { id: string; projectId?: unknown };
       const runtimeId = runtime.id;
       const projectId = typeof runtime.projectId === "string" ? runtime.projectId : undefined;
       markRuntimeConversationStale(runtimeId);
-      if (projectId && pendingPromptRef.current?.projectId === projectId) {
+      if (pendingPromptRef.current && event.requestId === pendingPromptRef.current.requestId && projectId === pendingPromptRef.current.projectId) {
         const pending = pendingPromptRef.current;
         pendingPromptRef.current = undefined;
-        send({ type: "runtime.prompt", runtimeId, message: pending.message });
+        if (!send({ type: "runtime.prompt", runtimeId, message: pending.message })) restorePendingMessage(pending.message);
       }
     }
   }
 
-  function createProjectFromCwd(cwd: string, message?: string) {
+  function reconcilePendingActionsAfterReconnect(event: Extract<ServerEvent, { type: "hello" }>) {
+    const pendingPrompt = pendingPromptRef.current;
+    pendingPromptRef.current = undefined;
+    restorePendingMessage(pendingPrompt?.message);
+
+    const pendingProjectStart = pendingProjectStartRef.current;
+    if (!pendingProjectStart) return;
+    pendingProjectStartRef.current = undefined;
+    const project = event.projects.find((item) => item.cwd === pendingProjectStart.cwd);
+    if (!project) {
+      restorePendingMessage(pendingProjectStart.message);
+      return;
+    }
+    dispatch({ type: "set.projectCwd", cwd: "" });
+    if (!startRuntimeForProject(project.id, pendingProjectStart.message)) restorePendingMessage(pendingProjectStart.message);
+  }
+
+  function restorePendingMessage(message?: string) {
+    if (!message?.trim()) return;
+    setPrompt((current) => (current.trim() ? current : message));
+  }
+
+  function createProjectFromCwd(cwd: string, message?: string): boolean {
     const existingProject = projects.find((project) => project.cwd === cwd);
     if (existingProject) {
       dispatch({ type: "select.project", projectId: existingProject.id });
-      startRuntimeForProject(existingProject.id, message);
-      return;
+      return startRuntimeForProject(existingProject.id, message);
     }
-    pendingProjectStartRef.current = { cwd, message };
-    send({ type: "project.create", cwd });
+    const requestId = crypto.randomUUID();
+    if (!send({ type: "project.create", requestId, cwd })) return false;
+    pendingProjectStartRef.current = { cwd, message, requestId };
+    return true;
   }
 
-  function createProjectOnly(cwd: string) {
+  function createProjectOnly(cwd: string): boolean {
     const normalizedCwd = cwd.trim();
-    if (!normalizedCwd) return;
+    if (!normalizedCwd) return false;
     const existingProject = projects.find((project) => project.cwd === normalizedCwd);
-    dispatch({ type: "set.projectCwd", cwd: "" });
     if (existingProject) {
+      dispatch({ type: "set.projectCwd", cwd: "" });
       dispatch({ type: "select.project", projectId: existingProject.id });
-      return;
+      return true;
     }
-    send({ type: "project.create", cwd: normalizedCwd });
+    if (!send({ type: "project.create", cwd: normalizedCwd })) return false;
+    dispatch({ type: "set.projectCwd", cwd: "" });
+    return true;
   }
 
-  function startRuntimeForProject(projectId: string, message?: string) {
+  function startRuntimeForProject(projectId: string, message?: string): boolean {
     if (!message?.trim()) {
       const emptyRuntime = findEmptyRuntimeForProject(projectId);
       if (emptyRuntime) {
         dispatch({ type: "select.runtime", projectId, runtimeId: emptyRuntime.id });
-        return;
+        return true;
       }
     }
 
-    if (message?.trim()) pendingPromptRef.current = { projectId, message };
-    send({
+    const requestId = crypto.randomUUID();
+    const sent = send({
       type: "runtime.start",
+      requestId,
       projectId,
       model: defaultRuntimeModelKey(),
       thinkingLevel: defaultThinkingLevel,
       responseMode: defaultResponseMode,
     });
+    if (sent && message?.trim()) pendingPromptRef.current = { projectId, message, requestId };
+    return sent;
   }
 
   function startRuntimeForSidebarProject(projectId: string) {
@@ -112,29 +159,37 @@ export function useProjectRuntimeActions({
     startRuntimeForProject(projectId);
   }
 
-  function resumeRuntime(runtimeId: string, message?: string) {
+  function resumeRuntime(runtimeId: string, message?: string): boolean {
     const runtime = runtimes.find((item) => item.id === runtimeId);
-    if (!runtime) return;
-    if (message?.trim()) pendingPromptRef.current = { projectId: runtime.projectId, message };
-    dispatch({ type: "select.project", projectId: runtime.projectId });
-    send({
+    if (!runtime) return false;
+    const requestId = crypto.randomUUID();
+    const sent = send({
       type: "runtime.resume",
+      requestId,
       runtimeId,
     });
+    if (!sent) return false;
+    if (message?.trim()) pendingPromptRef.current = { projectId: runtime.projectId, message, requestId };
+    dispatch({ type: "select.project", projectId: runtime.projectId });
+    return true;
   }
 
-  function restartRuntime(runtimeId: string, message?: string) {
+  function restartRuntime(runtimeId: string, message?: string): boolean {
     const runtime = runtimes.find((item) => item.id === runtimeId);
-    if (!runtime) return;
-    if (message?.trim()) pendingPromptRef.current = { projectId: runtime.projectId, message };
-    dispatch({ type: "select.project", projectId: runtime.projectId });
-    send({
+    if (!runtime) return false;
+    const requestId = crypto.randomUUID();
+    const sent = send({
       type: "runtime.restart",
+      requestId,
       runtimeId,
       model: runtime.model ?? defaultRuntimeModelKey(),
       thinkingLevel: runtime.thinkingLevel ?? defaultThinkingLevel,
       responseMode: runtime.responseMode ?? defaultResponseMode,
     });
+    if (!sent) return false;
+    if (message?.trim()) pendingPromptRef.current = { projectId: runtime.projectId, message, requestId };
+    dispatch({ type: "select.project", projectId: runtime.projectId });
+    return true;
   }
 
   function stopRuntime() {
@@ -159,21 +214,18 @@ export function useProjectRuntimeActions({
     }
 
     if (projectCwd.trim()) {
-      createProjectFromCwd(projectCwd.trim(), message);
-      setPrompt("");
+      if (createProjectFromCwd(projectCwd.trim(), message)) setPrompt("");
       return;
     }
 
     if (activeRuntime && (activeRuntime.status === "stopped" || activeRuntime.status === "crashed")) {
-      if (activeRuntime.sessionId) resumeRuntime(activeRuntime.id, message);
-      else restartRuntime(activeRuntime.id, message);
-      setPrompt("");
+      const sent = activeRuntime.sessionId ? resumeRuntime(activeRuntime.id, message) : restartRuntime(activeRuntime.id, message);
+      if (sent) setPrompt("");
       return;
     }
 
     if (selectedProject) {
-      startRuntimeForProject(selectedProject.id, message);
-      setPrompt("");
+      if (startRuntimeForProject(selectedProject.id, message)) setPrompt("");
       return;
     }
 

@@ -8,6 +8,7 @@ import { ThinkingStatus } from "./ThinkingAnimation";
 
 type ChatViewProps = {
   lastError?: string;
+  connectionWarning?: string;
   activeRuntime?: Runtime;
   conversationSummary?: RuntimeConversationSummary;
   messages: ConversationMessage[];
@@ -15,11 +16,14 @@ type ChatViewProps = {
   displayMode?: ConversationDisplayMode;
 };
 
-export function ChatView({ lastError, activeRuntime, conversationSummary, messages, activeRuntimeIsBusy, displayMode = "normal" }: ChatViewProps) {
+export function ChatView({ lastError, connectionWarning, activeRuntime, conversationSummary, messages, activeRuntimeIsBusy, displayMode = "normal" }: ChatViewProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoFollowRef = useRef(true);
   const blocks = buildConversationDisplayBlocks(messages, displayMode, { activeRuntimeIsBusy });
+  const transportError = isTransportConnectionError(lastError) ? lastError : undefined;
+  const operationError = transportError ? undefined : lastError;
+  const connectionStatusMessage = connectionWarning ?? transportError;
 
   useLayoutEffect(() => {
     shouldAutoFollowRef.current = true;
@@ -38,15 +42,24 @@ export function ChatView({ lastError, activeRuntime, conversationSummary, messag
 
   return (
     <>
-      {lastError ? <div className="error-banner floating-error">{lastError}</div> : null}
+      {operationError ? (
+        <div className="floating-error error-stack">
+          <div className="error-banner">{operationError}</div>
+        </div>
+      ) : null}
 
       <div className="conversation-surface" ref={surfaceRef} onScroll={handleConversationScroll}>
-        {activeRuntime ? (
+        {activeRuntime || connectionStatusMessage ? (
           <div className="conversation-header">
-            <strong title={conversationSummary?.title}>{conversationSummary?.title ?? `对话 ${activeRuntime.id.slice(0, 8)}`}</strong>
-            {conversationSummary?.detail ? <small className="conversation-header-detail">{conversationSummary.detail}</small> : null}
-            {activeRuntime.sessionId ? <small className="conversation-header-session">Session {activeRuntime.sessionId.slice(0, 8)}</small> : null}
-            {activeRuntime.archivedAt ? <small>已归档</small> : null}
+            {activeRuntime ? (
+              <>
+                <strong title={conversationSummary?.title}>{conversationSummary?.title ?? `对话 ${activeRuntime.id.slice(0, 8)}`}</strong>
+                {conversationSummary?.detail ? <small className="conversation-header-detail">{conversationSummary.detail}</small> : null}
+                {activeRuntime.sessionId ? <small className="conversation-header-session">Session {activeRuntime.sessionId.slice(0, 8)}</small> : null}
+                {activeRuntime.archivedAt ? <small>已归档</small> : null}
+              </>
+            ) : null}
+            {connectionStatusMessage ? <small className="connection-status-warning">{connectionStatusMessage}</small> : null}
           </div>
         ) : null}
 
@@ -64,6 +77,10 @@ export function ChatView({ lastError, activeRuntime, conversationSummary, messag
       </div>
     </>
   );
+}
+
+function isTransportConnectionError(message?: string): boolean {
+  return message === "WebSocket 未连接" || message === "WebSocket 连接错误";
 }
 
 function renderBlock(block: ConversationDisplayBlock) {

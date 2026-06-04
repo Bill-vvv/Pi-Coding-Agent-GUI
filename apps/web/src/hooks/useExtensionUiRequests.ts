@@ -1,10 +1,11 @@
 import { useState, type Dispatch } from "react";
-import type { ClientCommand, ExtensionUiRequest, ExtensionUiResponse, ServerEvent } from "@pi-gui/shared";
+import type { ExtensionUiRequest, ExtensionUiResponse, ServerEvent } from "@pi-gui/shared";
 import type { AppAction } from "../state/appReducer";
+import type { GuiSocketSend } from "../types";
 
 type UseExtensionUiRequestsOptions = {
   dispatch: Dispatch<AppAction>;
-  send: (command: ClientCommand) => boolean;
+  send: GuiSocketSend;
   setPrompt: (prompt: string) => void;
 };
 

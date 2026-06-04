@@ -1,11 +1,12 @@
 import { useState } from "react";
-import type { ClientCommand, ResponseMode, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
+import type { ResponseMode, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
+import type { GuiSocketSend } from "../types";
 
 type UseSessionRestoreActionsOptions = {
   defaultRuntimeModelKey: () => string | undefined;
   defaultThinkingLevel: ThinkingLevel;
   defaultResponseMode: ResponseMode;
-  send: (command: ClientCommand) => boolean;
+  send: GuiSocketSend;
 };
 
 export function useSessionRestoreActions({

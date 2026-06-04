@@ -6,7 +6,7 @@ type PathPickerMode = "composer" | "addProject";
 
 type UsePathPickerFlowOptions = {
   projectCwd: string;
-  createProjectOnly: (cwd: string) => void;
+  createProjectOnly: (cwd: string) => boolean;
   dispatch: Dispatch<AppAction>;
 };
 
@@ -21,8 +21,7 @@ export function usePathPickerFlow({ projectCwd, createProjectOnly, dispatch }: U
 
   function choosePickerCwd() {
     if (pathPickerMode === "addProject") {
-      createProjectOnly(pathPicker.cwd);
-      pathPicker.closePicker();
+      if (createProjectOnly(pathPicker.cwd)) pathPicker.closePicker();
       return;
     }
 

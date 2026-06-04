@@ -1,6 +1,14 @@
+import type { ClientCommand } from "@pi-gui/shared";
+
 export type { ConversationContextUsage, ConversationMessage } from "@pi-gui/shared";
 
 export type ConnectionState = "connecting" | "open" | "closed";
+
+export type GuiSocketSendOptions = {
+  notifyOnDisconnected?: boolean;
+};
+
+export type GuiSocketSend = (command: ClientCommand, options?: GuiSocketSendOptions) => boolean;
 
 export type DirectoryEntry = {
   name: string;
@@ -8,8 +16,8 @@ export type DirectoryEntry = {
   type: "directory";
 };
 
-export type PendingPrompt = { projectId: string; message: string };
-export type PendingProjectStart = { cwd: string; message?: string };
+export type PendingPrompt = { projectId: string; message: string; requestId: string };
+export type PendingProjectStart = { cwd: string; message?: string; requestId: string };
 
 export type UiFontSize = "small" | "medium" | "large";
 export type ChatFontSize = "small" | "medium" | "large";

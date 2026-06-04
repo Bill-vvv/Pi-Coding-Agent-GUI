@@ -64,6 +64,7 @@ export const initialAppState: AppState = {
 export type AppAction =
   | { type: "server.event"; event: ServerEvent; fallbackModelKey?: string }
   | { type: "set.lastError"; error?: string }
+  | { type: "clear.transportError" }
   | { type: "set.projectCwd"; cwd: string }
   | { type: "select.project"; projectId?: string }
   | { type: "select.runtime"; projectId: string; runtimeId: string }
@@ -78,6 +79,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return applyServerEvent(state, action.event, action.fallbackModelKey);
     case "set.lastError":
       return { ...state, lastError: action.error };
+    case "clear.transportError":
+      return isTransportConnectionError(state.lastError) ? { ...state, lastError: undefined } : state;
     case "set.projectCwd":
       return { ...state, projectCwd: action.cwd };
     case "select.project":
@@ -114,6 +117,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "select.responseMode":
       return { ...state, responseMode: action.responseMode };
   }
+}
+
+function isTransportConnectionError(message?: string): boolean {
+  return message === "WebSocket 未连接" || message === "WebSocket 连接错误";
 }
 
 function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?: string): AppState {

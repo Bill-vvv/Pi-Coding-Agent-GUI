@@ -1,7 +1,8 @@
 import type { Dispatch } from "react";
-import type { ClientCommand, PiRpcCommand, Project, Runtime } from "@pi-gui/shared";
+import type { PiRpcCommand, Project, Runtime } from "@pi-gui/shared";
 import type { ComposerCommandOption } from "../components/Composer";
 import type { AppAction } from "../state/appReducer";
+import type { GuiSocketSend } from "../types";
 
 type UseComposerCommandsOptions = {
   activeRuntime?: Runtime;
@@ -9,7 +10,7 @@ type UseComposerCommandsOptions = {
   selectedProject?: Project;
   lastAssistantText?: string;
   dispatch: Dispatch<AppAction>;
-  send: (command: ClientCommand) => boolean;
+  send: GuiSocketSend;
   setPrompt: (prompt: string) => void;
   setModelPickerOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;

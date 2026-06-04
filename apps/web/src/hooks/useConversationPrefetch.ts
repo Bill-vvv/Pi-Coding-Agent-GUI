@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { ClientCommand, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
-import type { ConnectionState } from "../types";
+import type { Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
+import type { ConnectionState, GuiSocketSend } from "../types";
 
 const SIDEBAR_CONVERSATION_PREFETCH_LIMIT = 120;
 const SIDEBAR_CONVERSATION_PREFETCH_MAX = 80;
@@ -12,7 +12,7 @@ type UseConversationPrefetchOptions = {
   busyByRuntime: Record<string, boolean>;
   conversationSummaries: Record<string, RuntimeConversationSummary>;
   showArchived: boolean;
-  send: (command: ClientCommand) => boolean;
+  send: GuiSocketSend;
 };
 
 export function useConversationPrefetch({
@@ -45,7 +45,9 @@ export function useConversationPrefetch({
     if (connection !== "open" || !activeRuntime) return;
     if (openedRuntimeIdsRef.current.has(activeRuntime.id)) return;
     openedRuntimeIdsRef.current.add(activeRuntime.id);
-    send({ type: "conversation.open", runtimeId: activeRuntime.id, limit: 120 });
+    if (!send({ type: "conversation.open", runtimeId: activeRuntime.id, limit: 120 }, { notifyOnDisconnected: false })) {
+      openedRuntimeIdsRef.current.delete(activeRuntime.id);
+    }
   }, [connection, activeRuntime?.id, send]);
 
   useEffect(() => {
@@ -60,7 +62,7 @@ export function useConversationPrefetch({
 
     for (const runtime of candidates) {
       if (prefetchedRuntimeIdsRef.current.has(runtime.id)) continue;
-      if (send({ type: "conversation.open", runtimeId: runtime.id, limit: SIDEBAR_CONVERSATION_PREFETCH_LIMIT })) {
+      if (send({ type: "conversation.open", runtimeId: runtime.id, limit: SIDEBAR_CONVERSATION_PREFETCH_LIMIT }, { notifyOnDisconnected: false })) {
         prefetchedRuntimeIdsRef.current.add(runtime.id);
       }
     }

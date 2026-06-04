@@ -1,7 +1,8 @@
 import type { Dispatch } from "react";
-import type { AppSettings, ClientCommand, ModelSummary, ResponseMode, Runtime, ThinkingLevel } from "@pi-gui/shared";
+import type { AppSettings, ModelSummary, ResponseMode, Runtime, ThinkingLevel } from "@pi-gui/shared";
 import { modelKey } from "../domain/models";
 import type { AppAction } from "../state/appReducer";
+import type { GuiSocketSend } from "../types";
 
 type UseModelRuntimeSettingsOptions = {
   models: ModelSummary[];
@@ -12,7 +13,7 @@ type UseModelRuntimeSettingsOptions = {
   activeRuntime?: Runtime;
   responseMode: ResponseMode;
   dispatch: Dispatch<AppAction>;
-  send: (command: ClientCommand) => boolean;
+  send: GuiSocketSend;
 };
 
 export function useModelRuntimeSettings({

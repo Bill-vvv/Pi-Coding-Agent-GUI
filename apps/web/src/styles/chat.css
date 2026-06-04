@@ -93,8 +93,14 @@
   white-space: nowrap;
 }
 
-.conversation-header-session {
+.conversation-header-session,
+.connection-status-warning {
   flex: none;
+}
+
+.connection-status-warning {
+  margin-left: auto;
+  color: var(--color-text-muted);
 }
 
 .message-list {
