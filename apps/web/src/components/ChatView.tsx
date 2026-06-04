@@ -1,28 +1,43 @@
 import { useLayoutEffect, useRef } from "react";
 import type { Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
 import type { ConversationMessage } from "../types";
+import { isTransportConnectionError } from "../domain/connection";
 import { messageRoleLabel } from "../domain/conversation";
 import { buildConversationDisplayBlocks, type ConversationDisplayBlock, type ConversationDisplayMode } from "../domain/conversationDisplay";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ThinkingStatus } from "./ThinkingAnimation";
 
 type ChatViewProps = {
-  lastError?: string;
+  operationError?: string;
+  notice?: string;
   connectionWarning?: string;
   activeRuntime?: Runtime;
   conversationSummary?: RuntimeConversationSummary;
   messages: ConversationMessage[];
   activeRuntimeIsBusy: boolean;
   displayMode?: ConversationDisplayMode;
+  onDismissOperationError?: () => void;
+  onDismissNotice?: () => void;
 };
 
-export function ChatView({ lastError, connectionWarning, activeRuntime, conversationSummary, messages, activeRuntimeIsBusy, displayMode = "normal" }: ChatViewProps) {
+export function ChatView({
+  operationError,
+  notice,
+  connectionWarning,
+  activeRuntime,
+  conversationSummary,
+  messages,
+  activeRuntimeIsBusy,
+  displayMode = "normal",
+  onDismissOperationError,
+  onDismissNotice,
+}: ChatViewProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoFollowRef = useRef(true);
   const blocks = buildConversationDisplayBlocks(messages, displayMode, { activeRuntimeIsBusy });
-  const transportError = isTransportConnectionError(lastError) ? lastError : undefined;
-  const operationError = transportError ? undefined : lastError;
+  const transportError = isTransportConnectionError(operationError) ? operationError : undefined;
+  const visibleOperationError = transportError ? undefined : operationError;
   const connectionStatusMessage = connectionWarning ?? transportError;
 
   useLayoutEffect(() => {
@@ -42,9 +57,10 @@ export function ChatView({ lastError, connectionWarning, activeRuntime, conversa
 
   return (
     <>
-      {operationError ? (
-        <div className="floating-error error-stack">
-          <div className="error-banner">{operationError}</div>
+      {visibleOperationError || notice ? (
+        <div className="floating-feedback error-stack">
+          {visibleOperationError ? <DismissibleBanner className="error-banner" message={visibleOperationError} onDismiss={onDismissOperationError} /> : null}
+          {notice ? <DismissibleBanner className="notice-banner" message={notice} onDismiss={onDismissNotice} /> : null}
         </div>
       ) : null}
 
@@ -79,8 +95,17 @@ export function ChatView({ lastError, connectionWarning, activeRuntime, conversa
   );
 }
 
-function isTransportConnectionError(message?: string): boolean {
-  return message === "WebSocket 未连接" || message === "WebSocket 连接错误";
+function DismissibleBanner({ className, message, onDismiss }: { className: string; message: string; onDismiss?: () => void }) {
+  return (
+    <div className={className}>
+      <span>{message}</span>
+      {onDismiss ? (
+        <button className="feedback-dismiss" type="button" aria-label="关闭提示" onClick={onDismiss}>
+          ×
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 function renderBlock(block: ConversationDisplayBlock) {

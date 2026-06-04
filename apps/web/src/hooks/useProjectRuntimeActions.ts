@@ -229,7 +229,7 @@ export function useProjectRuntimeActions({
       return;
     }
 
-    dispatch({ type: "set.lastError", error: "请先在输入框下方选择项目文件夹" });
+    dispatch({ type: "set.operationError", error: "请先在输入框下方选择项目文件夹" });
   }
 
   function findEmptyRuntimeForProject(projectId: string) {

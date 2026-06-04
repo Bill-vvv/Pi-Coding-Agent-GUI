@@ -3,15 +3,12 @@ import type { ServerEvent } from "@pi-gui/shared";
 import { AppModals } from "./components/AppModals";
 import { ChatView } from "./components/ChatView";
 import { Composer } from "./components/Composer";
-import { ModelDebugPage } from "./components/ModelDebugPage";
 import { Sidebar } from "./components/Sidebar";
-import { ThinkingAnimationLab } from "./components/ThinkingAnimationLab";
 import { useActiveRuntimeView } from "./hooks/useActiveRuntimeView";
 import { useAppModalState } from "./hooks/useAppModalState";
 import { useCommandMenuHotkey } from "./hooks/useCommandMenuHotkey";
 import { useComposerCommands } from "./hooks/useComposerCommands";
 import { useConversationPrefetch } from "./hooks/useConversationPrefetch";
-import { useDebugRoutes } from "./hooks/useDebugRoutes";
 import { useExtensionUiRequests } from "./hooks/useExtensionUiRequests";
 import { useGuiSocket } from "./hooks/useGuiSocket";
 import { useModelCatalog } from "./hooks/useModelCatalog";
@@ -29,7 +26,6 @@ export function App() {
   const { modelPickerOpen, setModelPickerOpen, settingsOpen, setSettingsOpen, toggleModelPicker, closeModelPicker, closeSettings } = useAppModalState();
   const commandMenuOpenSignal = useCommandMenuHotkey();
   const { uiPreferences, setUiPreferences } = useUiPreferences();
-  const { debugRoute, showThinkingPreview } = useDebugRoutes();
 
   const {
     projects,
@@ -42,13 +38,13 @@ export function App() {
     selectedModelKey: defaultModelKey,
     selectedThinkingLevel: defaultThinkingLevel,
     responseMode: defaultResponseMode,
-    lastError,
-    showArchived,
+    operationError,
+    notice,
   } = state;
 
   const { connection, send, connectionWarning } = useGuiSocket({
     onEvent: handleServerEvent,
-    onError: (message) => dispatch({ type: "set.lastError", error: message }),
+    onError: (message) => dispatch({ type: "set.operationError", error: message }),
     onOpen: () => dispatch({ type: "clear.transportError" }),
   });
   const {
@@ -72,7 +68,6 @@ export function App() {
     runtimes,
     busyByRuntime,
     conversationSummaries,
-    showArchived,
     send,
   });
   const { defaultRuntimeModelKey, chooseModel, chooseThinkingLevel, chooseResponseMode } = useModelRuntimeSettings({
@@ -149,9 +144,6 @@ export function App() {
   });
   useRuntimeCommandRefresh({ connection, activeRuntime, send });
 
-  if (debugRoute) return <ModelDebugPage />;
-  if (showThinkingPreview) return <ThinkingAnimationLab />;
-
   function handleServerEvent(event: ServerEvent) {
     dispatch({ type: "server.event", event });
     handleServerSideEffects(event);
@@ -172,7 +164,6 @@ export function App() {
         sessions={sessions}
         selectedProject={selectedProject}
         activeRuntime={activeRuntime}
-        showArchived={showArchived}
         activeRuntimeIsBusy={activeRuntimeIsBusy}
         busyByRuntime={busyByRuntime}
         messagesByRuntime={messagesByRuntime}
@@ -188,12 +179,15 @@ export function App() {
 
       <section className="main-chat">
         <ChatView
-          lastError={lastError}
+          operationError={operationError}
+          notice={notice}
           connectionWarning={connectionWarning}
           activeRuntime={activeRuntime}
           conversationSummary={activeRuntimeConversationSummary}
           messages={conversationMessages}
           activeRuntimeIsBusy={activeRuntimeIsBusy}
+          onDismissOperationError={() => dispatch({ type: "clear.operationError" })}
+          onDismissNotice={() => dispatch({ type: "clear.notice" })}
         />
 
         <Composer
@@ -231,8 +225,14 @@ export function App() {
         onRespondExtensionUi={sendExtensionUiResponse}
         settingsOpen={settingsOpen}
         preferences={uiPreferences}
+        projects={projects}
+        conversationSummaries={conversationSummaries}
+        messagesByRuntime={messagesByRuntime}
         onCloseSettings={closeSettings}
         onChangePreferences={setUiPreferences}
+        onOpenArchivedRuntime={(runtimeId: string) => {
+          send({ type: "conversation.open", runtimeId, limit: 200 }, { notifyOnDisconnected: false });
+        }}
         sessionHistoryProject={sessionHistoryProject}
         sessions={sessions}
         runtimes={runtimes}

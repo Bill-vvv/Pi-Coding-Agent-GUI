@@ -4,9 +4,8 @@
 @import "./styles/sidebar.css";
 @import "./styles/chat.css";
 @import "./styles/composer.css";
-@import "./styles/command-palette.css";
+@import "./styles/command-menu.css";
 @import "./styles/model-picker.css";
-@import "./styles/model-debug.css";
 @import "./styles/settings.css";
 @import "./styles/session-history.css";
 @import "./styles/thinking-animation.css";

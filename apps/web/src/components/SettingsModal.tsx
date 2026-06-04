@@ -1,11 +1,19 @@
+import { useState } from "react";
+import type { ConversationMessage, GuiSession, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
 import type { AccentColor, ChatFontSize, ThemeMode, UiFontSize, UiPreferences } from "../types";
 import { Icon } from "./Icon";
 
 type SettingsModalProps = {
   open: boolean;
   preferences: UiPreferences;
+  projects: Project[];
+  sessions: GuiSession[];
+  runtimes: Runtime[];
+  conversationSummaries: Record<string, RuntimeConversationSummary>;
+  messagesByRuntime: Record<string, ConversationMessage[]>;
   onClose: () => void;
   onChangePreferences: (preferences: UiPreferences) => void;
+  onOpenArchivedRuntime: (runtimeId: string) => void;
 };
 
 const UI_FONT_OPTIONS: Array<{ value: UiFontSize; label: string; description: string }> = [
@@ -32,8 +40,26 @@ const ACCENT_OPTIONS: Array<{ value: AccentColor; label: string }> = [
   { value: "rose", label: "玫瑰" },
 ];
 
-export function SettingsModal({ open, preferences, onClose, onChangePreferences }: SettingsModalProps) {
+export function SettingsModal({
+  open,
+  preferences,
+  projects,
+  sessions,
+  runtimes,
+  conversationSummaries,
+  messagesByRuntime,
+  onClose,
+  onChangePreferences,
+  onOpenArchivedRuntime,
+}: SettingsModalProps) {
+  const [selectedArchivedRuntimeId, setSelectedArchivedRuntimeId] = useState<string | undefined>();
   if (!open) return null;
+
+  const archivedRuntimes = runtimes.filter((runtime) => runtime.archivedAt).sort((left, right) => (right.archivedAt ?? 0) - (left.archivedAt ?? 0));
+  const projectsById = new Map(projects.map((project) => [project.id, project]));
+  const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+  const selectedArchivedRuntime = archivedRuntimes.find((runtime) => runtime.id === selectedArchivedRuntimeId) ?? archivedRuntimes[0];
+  const selectedArchivedMessages = selectedArchivedRuntime ? messagesByRuntime[selectedArchivedRuntime.id] ?? [] : [];
 
   function update(next: Partial<UiPreferences>) {
     onChangePreferences({ ...preferences, ...next });
@@ -117,10 +143,89 @@ export function SettingsModal({ open, preferences, onClose, onChangePreferences 
               </div>
             </div>
           </section>
+
+          <section className="settings-section" aria-labelledby="settings-archive-title">
+            <div className="settings-section-header">
+              <div>
+                <h3 id="settings-archive-title">已归档对话</h3>
+                <p>这里集中查看从左侧导航归档的对话。归档内容不会出现在普通对话导航中。</p>
+              </div>
+              <span className="settings-archive-count">{archivedRuntimes.length}</span>
+            </div>
+
+            {archivedRuntimes.length > 0 ? (
+              <>
+                <div className="settings-archive-list">
+                  {archivedRuntimes.map((runtime) => {
+                    const project = projectsById.get(runtime.projectId);
+                    const session = runtime.sessionId ? sessionsById.get(runtime.sessionId) : undefined;
+                    const summary = conversationSummaries[runtime.id];
+                    return (
+                      <button
+                        className={`settings-archive-item ${runtime.id === selectedArchivedRuntime?.id ? "selected" : ""}`}
+                        type="button"
+                        key={runtime.id}
+                        onClick={() => {
+                          setSelectedArchivedRuntimeId(runtime.id);
+                          onOpenArchivedRuntime(runtime.id);
+                        }}
+                      >
+                        <div className="settings-archive-item-main">
+                          <strong>{summary?.title ?? session?.title ?? `对话 ${runtime.id.slice(0, 8)}`}</strong>
+                          <small>{summary?.detail ?? (runtime.sessionId ? `Session ${runtime.sessionId.slice(0, 8)}` : "无关联 Pi session")}</small>
+                        </div>
+                        <div className="settings-archive-meta">
+                          <span>{project?.name ?? runtime.cwd}</span>
+                          <span>{runtime.archivedAt ? formatSettingsDate(runtime.archivedAt) : "已归档"}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <ArchivedConversationPreview runtime={selectedArchivedRuntime} messages={selectedArchivedMessages} onLoad={onOpenArchivedRuntime} />
+              </>
+            ) : (
+              <p className="settings-empty-state">暂无已归档对话。</p>
+            )}
+          </section>
         </div>
       </section>
     </div>
   );
+}
+
+function ArchivedConversationPreview({ runtime, messages, onLoad }: { runtime?: Runtime; messages: ConversationMessage[]; onLoad: (runtimeId: string) => void }) {
+  if (!runtime) return null;
+  const visibleMessages = messages.filter((message) => message.role === "user" || message.role === "assistant" || message.role === "error").slice(-30);
+  return (
+    <section className="settings-archive-preview" aria-label="已归档对话内容">
+      <header>
+        <strong>对话内容预览</strong>
+        <button type="button" onClick={() => onLoad(runtime.id)}>加载/刷新内容</button>
+      </header>
+      {visibleMessages.length > 0 ? (
+        <div className="settings-archive-messages">
+          {visibleMessages.map((message) => (
+            <article className={`settings-archive-message ${message.role}`} key={message.id}>
+              <span>{message.role === "user" ? "用户" : message.role === "assistant" ? "Assistant" : "错误"}</span>
+              <p>{message.text || message.thinking || "（空消息）"}</p>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="settings-empty-state">尚未加载此归档对话内容，点击“加载/刷新内容”。</p>
+      )}
+    </section>
+  );
+}
+
+function formatSettingsDate(timestamp: number): string {
+  try {
+    return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
+  } catch {
+    return "未知时间";
+  }
 }
 
 function SettingsOptionGroup<T extends string>({

@@ -7,6 +7,7 @@ import { Icon } from "./Icon";
 const PROJECT_ORDER_STORAGE_KEY = "pi-gui.projectOrder";
 const SESSION_ORDER_STORAGE_KEY = "pi-gui.sessionOrder";
 const COLLAPSED_PROJECTS_STORAGE_KEY = "pi-gui.collapsedProjects";
+const RUNTIME_READ_TIMESTAMPS_STORAGE_KEY = "pi-gui.runtimeReadTimestamps";
 const PROJECT_DRAG_MIME = "application/x-pi-gui-project";
 const SESSION_DRAG_MIME = "application/x-pi-gui-session";
 const SESSION_DOT_BREATHE_DURATION_MS = 1350;
@@ -24,7 +25,6 @@ type SidebarProps = {
   sessions: GuiSession[];
   selectedProject?: Project;
   activeRuntime?: Runtime;
-  showArchived: boolean;
   activeRuntimeIsBusy: boolean;
   busyByRuntime: Record<string, boolean>;
   messagesByRuntime: Record<string, ConversationMessage[]>;
@@ -45,7 +45,6 @@ export function Sidebar({
   sessions,
   selectedProject,
   activeRuntime,
-  showArchived,
   activeRuntimeIsBusy,
   busyByRuntime,
   messagesByRuntime,
@@ -61,6 +60,7 @@ export function Sidebar({
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set(readStringArray(COLLAPSED_PROJECTS_STORAGE_KEY)));
   const [projectOrder, setProjectOrder] = useState<string[]>(() => readStringArray(PROJECT_ORDER_STORAGE_KEY));
   const [sessionOrderByProject, setSessionOrderByProject] = useState<Record<string, string[]>>(() => readStringArrayRecord(SESSION_ORDER_STORAGE_KEY));
+  const [readTimestampsByRuntime, setReadTimestampsByRuntime] = useState<Record<string, number>>(() => readNumberRecord(RUNTIME_READ_TIMESTAMPS_STORAGE_KEY));
   const [draggingProjectId, setDraggingProjectId] = useState<string | undefined>();
   const [draggingSession, setDraggingSession] = useState<DraggingSession | undefined>();
   const [dragTarget, setDragTarget] = useState<DragTarget | undefined>();
@@ -114,6 +114,18 @@ export function Sidebar({
   useEffect(() => {
     writeStringArrayRecord(SESSION_ORDER_STORAGE_KEY, sessionOrderByProject);
   }, [sessionOrderByProject]);
+
+  useEffect(() => {
+    writeNumberRecord(RUNTIME_READ_TIMESTAMPS_STORAGE_KEY, readTimestampsByRuntime);
+  }, [readTimestampsByRuntime]);
+
+  useEffect(() => {
+    const runtimeIds = new Set(runtimes.map((runtime) => runtime.id));
+    setReadTimestampsByRuntime((current) => {
+      const entries = Object.entries(current).filter(([runtimeId]) => runtimeIds.has(runtimeId));
+      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
+    });
+  }, [runtimes]);
 
   useEffect(() => {
     writeStringArray(COLLAPSED_PROJECTS_STORAGE_KEY, [...collapsedProjectIds]);
@@ -181,6 +193,12 @@ export function Sidebar({
     return [...ordered, ...projects.filter((project) => !orderedIds.has(project.id))];
   }, [projectOrder, projects]);
   const sessionById = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
+  const activeRuntimeCompletedAt = activeRuntime ? completedAssistantReplyAt(conversationSummaries[activeRuntime.id], messagesByRuntime[activeRuntime.id]) : undefined;
+
+  useEffect(() => {
+    if (!activeRuntime || !activeRuntimeCompletedAt) return;
+    markRuntimeConversationRead(activeRuntime.id, activeRuntimeCompletedAt);
+  }, [activeRuntime?.id, activeRuntimeCompletedAt]);
 
   function toggleProjectCollapsed(projectId: string) {
     setCollapsedProjectIds((current) => {
@@ -188,6 +206,14 @@ export function Sidebar({
       if (next.has(projectId)) next.delete(projectId);
       else next.add(projectId);
       return next;
+    });
+  }
+
+  function markRuntimeConversationRead(runtimeId: string, completedAt: number | undefined) {
+    if (!completedAt) return;
+    setReadTimestampsByRuntime((current) => {
+      if ((current[runtimeId] ?? 0) >= completedAt) return current;
+      return { ...current, [runtimeId]: Math.max(Date.now(), completedAt) };
     });
   }
 
@@ -324,7 +350,7 @@ export function Sidebar({
             const selected = project.id === selectedProject?.id;
             const projectRuntimes = orderedRuntimesForProject(
               project.id,
-              runtimes.filter((runtime) => runtime.projectId === project.id && (showArchived || !runtime.archivedAt)),
+              runtimes.filter((runtime) => runtime.projectId === project.id && !runtime.archivedAt),
             );
             const projectSessions = sessions.filter((session) => session.projectId === project.id);
             return (
@@ -373,7 +399,9 @@ export function Sidebar({
                       const linkedSession = runtime.sessionId ? sessionById.get(runtime.sessionId) : undefined;
                       const title = sessionTitle(runtime, summary, linkedSession);
                       const detail = sessionDetail(runtime, summary, linkedSession);
-                      const dotState = sessionDotState(busyByRuntime[runtime.id] ?? false, summary, messagesByRuntime[runtime.id]);
+                      const completedAt = completedAssistantReplyAt(summary, messagesByRuntime[runtime.id]);
+                      const hasUnreadReply = Boolean(completedAt && completedAt > (readTimestampsByRuntime[runtime.id] ?? 0));
+                      const dotState = sessionDotState(busyByRuntime[runtime.id] ?? false, hasUnreadReply);
                       return (
                         <div
                           className={`session-row ${runtime.id === activeRuntime?.id ? "selected" : ""} ${draggingSession?.runtimeId === runtime.id ? "dragging" : ""} ${sessionDropClass(project.id, runtime.id)}`}
@@ -387,7 +415,10 @@ export function Sidebar({
                             type="button"
                             draggable
                             title={detail ? `${title}\n${detail}\n拖动排序` : `${title}\n拖动排序`}
-                            onClick={() => onSelectRuntime(project.id, runtime.id)}
+                            onClick={() => {
+                              markRuntimeConversationRead(runtime.id, completedAt);
+                              onSelectRuntime(project.id, runtime.id);
+                            }}
                             onDragStart={(event) => handleSessionDragStart(event, project.id, runtime.id)}
                             onDragEnd={clearDragState}
                           >
@@ -442,29 +473,35 @@ export function Sidebar({
   );
 }
 
-type SessionDotState = "task-idle" | "task-busy" | "task-complete";
+type SessionDotState = "task-idle" | "task-busy" | "task-unread";
 
-function sessionDotState(
-  busy: boolean,
-  summary: RuntimeConversationSummary | undefined,
-  messages: ConversationMessage[] | undefined,
-): SessionDotState {
+function sessionDotState(busy: boolean, hasUnreadReply: boolean): SessionDotState {
   if (busy) return "task-busy";
-  if (hasCompletedAssistantReply(summary, messages)) return "task-complete";
+  if (hasUnreadReply) return "task-unread";
   return "task-idle";
 }
 
-function hasCompletedAssistantReply(summary: RuntimeConversationSummary | undefined, messages: ConversationMessage[] | undefined): boolean {
-  if (messages && messages.length > 0) {
-    return messages.some((message) => message.role === "assistant" && !message.isStreaming && Boolean(message.text.trim() || message.thinking?.trim()));
+function completedAssistantReplyAt(summary: RuntimeConversationSummary | undefined, messages: ConversationMessage[] | undefined): number | undefined {
+  const assistantMessage = latestCompletedAssistantMessage(messages);
+  const assistantUpdatedAt = assistantMessage?.updatedAt ?? assistantMessage?.timestamp;
+  if (assistantUpdatedAt) return assistantUpdatedAt;
+  if (!assistantMessage && (summary?.messageCount ?? 0) < 2) return undefined;
+  return summary?.updatedAt;
+}
+
+function latestCompletedAssistantMessage(messages: ConversationMessage[] | undefined): ConversationMessage | undefined {
+  if (!messages) return undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant" && !message.isStreaming && Boolean(message.text.trim() || message.thinking?.trim())) return message;
   }
-  return (summary?.messageCount ?? 0) >= 2;
+  return undefined;
 }
 
 function sessionDotTitle(state: SessionDotState): string {
   if (state === "task-busy") return "Agent 正在生成回复";
-  if (state === "task-complete") return "回复已完成";
-  return "暂无正在执行的对话任务";
+  if (state === "task-unread") return "有未读回复，点击查看";
+  return "无未读回复";
 }
 
 function sessionTitle(runtime: Runtime, summary: RuntimeConversationSummary | undefined, session: GuiSession | undefined): string {
@@ -539,6 +576,24 @@ function readStringArrayRecord(key: string): Record<string, string[]> {
   }
 }
 
+function readNumberRecord(key: string): Record<string, number> {
+  try {
+    const value = window.localStorage.getItem(key);
+    if (!value) return {};
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([recordKey, recordValue]) => {
+        if (typeof recordValue !== "number" || !Number.isFinite(recordValue)) return [];
+        return [[recordKey, recordValue]];
+      }),
+    );
+  } catch {
+    return {};
+  }
+}
+
 function writeStringArray(key: string, value: string[]) {
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
@@ -552,6 +607,14 @@ function writeStringArrayRecord(key: string, value: Record<string, string[]>) {
     window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // Ignore unavailable localStorage; session ordering still works for the current page lifetime.
+  }
+}
+
+function writeNumberRecord(key: string, value: Record<string, number>) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore unavailable localStorage; unread state still works for the current page lifetime.
   }
 }
 

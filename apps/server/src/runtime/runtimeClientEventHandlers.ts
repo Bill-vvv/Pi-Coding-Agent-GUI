@@ -6,7 +6,6 @@ import { handleRuntimeExit } from "./runtimeExitHandler.js";
 import type { RuntimeLiveState } from "./runtimeLiveState.js";
 import { handleRuntimePayload } from "./runtimePayloadHandler.js";
 import type { RuntimeSessionLinker } from "./runtimeSessionLinker.js";
-import { stripModelDebugStderrLines } from "./stderrFilters.js";
 
 type Broadcast = (event: ServerEvent) => void;
 
@@ -26,8 +25,7 @@ export function attachRuntimeClientEventHandlers(dependencies: RuntimeClientHand
   client.on("event", (payload) => handleRuntimeClientPayload(dependencies, runtimeId, payload));
   client.on("stderr", (chunk) => {
     events.publishGuiEvent(managed.runtime, "stderr", chunk);
-    const visibleChunk = stripModelDebugStderrLines(chunk);
-    if (visibleChunk.trim()) managed.projection.appendLog("log", visibleChunk, "stderr");
+    if (chunk.trim()) managed.projection.appendLog("log", chunk, "stderr");
   });
   client.on("error", (error) => {
     events.publishGuiEvent(managed.runtime, "error", { message: error.message });

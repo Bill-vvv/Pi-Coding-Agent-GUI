@@ -20,7 +20,8 @@ export function useExtensionUiRequests({ dispatch, send, setPrompt }: UseExtensi
   function handleExtensionUiRequest(runtimeId: string, request: ExtensionUiRequest) {
     switch (request.method) {
       case "notify":
-        dispatch({ type: "set.lastError", error: request.message });
+        if (request.notifyType === "error") dispatch({ type: "set.operationError", error: request.message });
+        else dispatch({ type: "set.notice", notice: request.message });
         return;
       case "set_editor_text":
         setPrompt(request.text);

@@ -18,7 +18,6 @@ export function useActiveRuntimeView(state: AppState, models: ModelSummary[]) {
     selectedModelKey: defaultModelKey,
     selectedThinkingLevel: defaultThinkingLevel,
     responseMode: defaultResponseMode,
-    showArchived,
   } = state;
 
   const selectedProject = useMemo(
@@ -30,8 +29,8 @@ export function useActiveRuntimeView(state: AppState, models: ModelSummary[]) {
     [runtimes, selectedProject?.id],
   );
   const visibleProjectRuntimes = useMemo(
-    () => selectedProjectRuntimes.filter((runtime) => showArchived || !runtime.archivedAt),
-    [selectedProjectRuntimes, showArchived],
+    () => selectedProjectRuntimes.filter((runtime) => !runtime.archivedAt),
+    [selectedProjectRuntimes],
   );
   const selectedRuntime = useMemo(
     () => (selectedRuntimeId ? visibleProjectRuntimes.find((runtime) => runtime.id === selectedRuntimeId) : undefined),

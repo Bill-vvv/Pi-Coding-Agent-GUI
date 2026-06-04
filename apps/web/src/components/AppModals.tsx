@@ -1,4 +1,4 @@
-import type { ExtensionUiRequest, ExtensionUiResponse, GuiSession, Project, Runtime } from "@pi-gui/shared";
+import type { ConversationMessage, ExtensionUiRequest, ExtensionUiResponse, GuiSession, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
 import type { ConnectionState, DirectoryEntry, UiPreferences } from "../types";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { PathPickerModal } from "./PathPickerModal";
@@ -21,8 +21,12 @@ type AppModalsProps = {
   onRespondExtensionUi: (response: ExtensionUiResponse) => void;
   settingsOpen: boolean;
   preferences: UiPreferences;
+  projects: Project[];
+  conversationSummaries: Record<string, RuntimeConversationSummary>;
+  messagesByRuntime: Record<string, ConversationMessage[]>;
   onCloseSettings: () => void;
   onChangePreferences: (preferences: UiPreferences) => void;
+  onOpenArchivedRuntime: (runtimeId: string) => void;
   sessionHistoryProject?: Project;
   sessions: GuiSession[];
   runtimes: Runtime[];
@@ -42,8 +46,12 @@ export function AppModals({
   onRespondExtensionUi,
   settingsOpen,
   preferences,
+  projects,
+  conversationSummaries,
+  messagesByRuntime,
   onCloseSettings,
   onChangePreferences,
+  onOpenArchivedRuntime,
   sessionHistoryProject,
   sessions,
   runtimes,
@@ -68,8 +76,14 @@ export function AppModals({
       <SettingsModal
         open={settingsOpen}
         preferences={preferences}
+        projects={projects}
+        sessions={sessions}
+        runtimes={runtimes}
+        conversationSummaries={conversationSummaries}
+        messagesByRuntime={messagesByRuntime}
         onClose={onCloseSettings}
         onChangePreferences={onChangePreferences}
+        onOpenArchivedRuntime={onOpenArchivedRuntime}
       />
 
       <SessionHistoryModal

@@ -1,0 +1,87 @@
+.composer-command-menu {
+  position: absolute;
+  left: 0.55rem;
+  right: 0.55rem;
+  bottom: calc(100% + 0.55rem);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-height: min(360px, 48vh);
+  border: 1px solid var(--color-border-panel);
+  border-radius: 18px;
+  background: var(--color-surface-panel);
+  box-shadow: var(--shadow-composer);
+  backdrop-filter: blur(18px);
+  padding: 0.35rem;
+}
+
+.composer-command-item {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.65rem;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--color-text-muted);
+  padding: 0.55rem 0.7rem;
+  text-align: left;
+}
+
+.composer-command-item:hover,
+.composer-command-item.is-active {
+  background: var(--color-hover-subtle);
+  color: var(--color-text-primary);
+}
+
+.composer-command-name {
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-control);
+  font-weight: 700;
+}
+
+.composer-command-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-control);
+}
+
+.composer-command-source {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-soft);
+  font-size: 0.72rem;
+  font-weight: 650;
+  padding: 0.14rem 0.45rem;
+}
+
+.extension-ui-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: start center;
+  background: rgb(0 0 0 / 34%);
+  padding: 8vh 1rem 1rem;
+}
+
+.extension-ui-dialog {
+  width: min(560px, 100%);
+  border: 1px solid var(--color-border-panel);
+  border-radius: 22px;
+  background: var(--color-surface-panel);
+  box-shadow: var(--shadow-composer);
+  padding: 1rem;
+}
+
+.extension-ui-dialog h2 { margin: 0 0 0.4rem; }
+.extension-ui-dialog p { color: var(--color-text-muted); }
+.extension-ui-dialog input,
+.extension-ui-dialog textarea { width: 100%; }
+.extension-ui-dialog textarea { min-height: 180px; }
+.extension-ui-options { display: flex; flex-direction: column; gap: 0.5rem; }
+.extension-ui-dialog footer { display: flex; justify-content: flex-end; gap: 0.55rem; margin-top: 1rem; }

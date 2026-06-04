@@ -92,8 +92,8 @@ export function useComposerCommands({
       case "copy":
         if (!lastAssistantText?.trim()) return notifyCommandError("没有可复制的 assistant 回复");
         void navigator.clipboard.writeText(lastAssistantText).then(
-          () => dispatch({ type: "set.lastError", error: "已复制最后一条 assistant 回复" }),
-          () => dispatch({ type: "set.lastError", error: "复制失败" }),
+          () => dispatch({ type: "set.notice", notice: "已复制最后一条 assistant 回复" }),
+          () => dispatch({ type: "set.operationError", error: "复制失败" }),
         );
         setPrompt("");
         return true;
@@ -135,7 +135,7 @@ export function useComposerCommands({
   }
 
   function notifyCommandError(message: string): false {
-    dispatch({ type: "set.lastError", error: message });
+    dispatch({ type: "set.operationError", error: message });
     return false;
   }
 

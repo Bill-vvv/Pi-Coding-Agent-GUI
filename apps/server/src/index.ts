@@ -5,7 +5,6 @@ import { AppDatabase } from "./db.js";
 import { registerEnvironmentRoutes } from "./routes/environmentRoutes.js";
 import { registerFsRoutes } from "./routes/fsRoutes.js";
 import { RuntimeSupervisor } from "./runtime/runtimeSupervisor.js";
-import { buildSessionModelDebugSnapshot } from "./services/modelDebugService.js";
 import { listPiModels } from "./services/modelService.js";
 import { indexKnownPiSessions } from "./services/sessionIndexService.js";
 import { createSocketMessageHandler } from "./ws/commandHandler.js";
@@ -41,8 +40,6 @@ fastify.get("/health", async () => ({ ok: true, time: Date.now() }));
 fastify.get("/api/projects", async () => ({ projects: db.listProjects() }));
 
 fastify.get("/api/models", async () => ({ models: await listPiModels() }));
-
-fastify.get("/api/debug/session-models", async () => buildSessionModelDebugSnapshot(db, supervisor));
 
 fastify.get("/ws", { websocket: true }, (socket: WsClient, request: FastifyRequest) => {
   wsHub.add(socket);

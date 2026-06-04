@@ -11,7 +11,6 @@ type UseConversationPrefetchOptions = {
   runtimes: Runtime[];
   busyByRuntime: Record<string, boolean>;
   conversationSummaries: Record<string, RuntimeConversationSummary>;
-  showArchived: boolean;
   send: GuiSocketSend;
 };
 
@@ -21,7 +20,6 @@ export function useConversationPrefetch({
   runtimes,
   busyByRuntime,
   conversationSummaries,
-  showArchived,
   send,
 }: UseConversationPrefetchOptions) {
   const openedRuntimeIdsRef = useRef<Set<string>>(new Set());
@@ -56,7 +54,7 @@ export function useConversationPrefetch({
     if (remainingBudget <= 0) return;
 
     const candidates = runtimes
-      .filter((runtime) => (showArchived || !runtime.archivedAt) && runtime.id !== activeRuntime?.id)
+      .filter((runtime) => !runtime.archivedAt && runtime.id !== activeRuntime?.id)
       .sort((left, right) => prefetchPriority(right, busyByRuntime, conversationSummaries) - prefetchPriority(left, busyByRuntime, conversationSummaries))
       .slice(0, remainingBudget);
 
@@ -66,7 +64,7 @@ export function useConversationPrefetch({
         prefetchedRuntimeIdsRef.current.add(runtime.id);
       }
     }
-  }, [connection, runtimes, activeRuntime?.id, busyByRuntime, conversationSummaries, showArchived, send]);
+  }, [connection, runtimes, activeRuntime?.id, busyByRuntime, conversationSummaries, send]);
 
   return { clearConversationPrefetchState, markRuntimeConversationStale };
 }

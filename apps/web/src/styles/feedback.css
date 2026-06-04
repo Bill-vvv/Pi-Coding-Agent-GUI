@@ -1,3 +1,4 @@
+.floating-feedback,
 .floating-error {
   position: absolute;
   left: 50%;
@@ -13,10 +14,34 @@
   gap: 0.5rem;
 }
 
+.error-banner,
+.notice-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  justify-content: space-between;
+  border-radius: 12px;
+  padding: 0.75rem;
+}
+
 .error-banner {
   border: 1px solid var(--color-error-border);
-  border-radius: 12px;
   background: var(--color-error-bg);
   color: var(--color-error-text);
-  padding: 0.75rem;
+}
+
+.notice-banner {
+  border: 1px solid var(--color-border-panel);
+  background: var(--color-surface-panel);
+  color: var(--color-text-muted);
+}
+
+.feedback-dismiss {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.1rem 0.2rem;
 }

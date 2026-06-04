@@ -377,7 +377,7 @@
 }
 
 .status-dot.task-idle { background: #6d6861; }
-.status-dot.task-complete { background: #80c99a; }
+.status-dot.task-unread { background: #80c99a; }
 .status-dot.task-busy {
   background: #d9a94d;
   opacity: var(--session-dot-breathe-opacity, 1);

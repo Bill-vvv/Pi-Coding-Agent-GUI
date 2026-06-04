@@ -15,6 +15,7 @@ import type {
 } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
 import { upsertById } from "../domain/collections";
+import { isTransportConnectionError } from "../domain/connection";
 import { indexConversationSummaries } from "../domain/conversationSummary";
 import { applyConversationDelta, upsertConversationMessage } from "../domain/conversationState";
 
@@ -37,8 +38,8 @@ export type AppState = {
   selectedModelKey: string;
   selectedThinkingLevel: ThinkingLevel;
   responseMode: ResponseMode;
-  lastError?: string;
-  showArchived: boolean;
+  operationError?: string;
+  notice?: string;
 };
 
 export const initialAppState: AppState = {
@@ -58,12 +59,14 @@ export const initialAppState: AppState = {
   selectedModelKey: "",
   selectedThinkingLevel: "medium",
   responseMode: "normal",
-  showArchived: false,
 };
 
 export type AppAction =
   | { type: "server.event"; event: ServerEvent; fallbackModelKey?: string }
-  | { type: "set.lastError"; error?: string }
+  | { type: "set.operationError"; error?: string }
+  | { type: "clear.operationError" }
+  | { type: "set.notice"; notice?: string }
+  | { type: "clear.notice" }
   | { type: "clear.transportError" }
   | { type: "set.projectCwd"; cwd: string }
   | { type: "select.project"; projectId?: string }
@@ -77,10 +80,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "server.event":
       return applyServerEvent(state, action.event, action.fallbackModelKey);
-    case "set.lastError":
-      return { ...state, lastError: action.error };
+    case "set.operationError":
+      return { ...state, operationError: action.error };
+    case "clear.operationError":
+      return { ...state, operationError: undefined };
+    case "set.notice":
+      return { ...state, notice: action.notice };
+    case "clear.notice":
+      return { ...state, notice: undefined };
     case "clear.transportError":
-      return isTransportConnectionError(state.lastError) ? { ...state, lastError: undefined } : state;
+      return isTransportConnectionError(state.operationError) ? { ...state, operationError: undefined } : state;
     case "set.projectCwd":
       return { ...state, projectCwd: action.cwd };
     case "select.project":
@@ -117,10 +126,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "select.responseMode":
       return { ...state, responseMode: action.responseMode };
   }
-}
-
-function isTransportConnectionError(message?: string): boolean {
-  return message === "WebSocket 未连接" || message === "WebSocket 连接错误";
 }
 
 function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?: string): AppState {
@@ -273,7 +278,7 @@ function applyRuntimeStatus(state: AppState, runtime: Runtime): AppState {
 
 function applyCommandResult(state: AppState, event: Extract<ServerEvent, { type: "command.result" }>): AppState {
   if (!event.success) {
-    return { ...state, lastError: event.error ?? "命令执行失败" };
+    return { ...state, operationError: event.error ?? "命令执行失败" };
   }
 
   if ((event.command === "runtime.start" || event.command === "runtime.resume" || event.command === "runtime.restart" || event.command === "session.resume") && isRecord(event.data) && isRecord(event.data.runtime)) {

@@ -42,9 +42,10 @@ export class RuntimeStore {
   }
 
   listRuntimes(limit = 100): Runtime[] {
+    const boundedLimit = Math.max(1, Math.min(limit, 1000));
     const rows = this.db
       .prepare("select * from runtimes order by updated_at desc limit ?")
-      .all(limit) as RuntimeRow[];
+      .all(boundedLimit) as RuntimeRow[];
     return rows.map(runtimeFromRow);
   }
 

@@ -73,8 +73,8 @@ as modal, drawer, popover, split view, or route-level pages.
 
 上下文功能可以按场景采用不同形态：
 
-- 历史对话：当前不暴露前端入口；如果后续重启，需要重新确认产品需求。
-- 设置：modal、独立设置页或轻量弹层；主要承载 UI 字体、对话字体、主题、颜色、语言等界面偏好。
+- 历史对话：作为按需上下文入口暴露；Sidebar 的“查看历史对话…”和 `/resume` 打开历史恢复流程，但不在左侧常驻展开完整 session 树。
+- 设置：modal、独立设置页或轻量弹层；主要承载 UI 字体、对话字体、主题、颜色、语言等界面偏好，并提供已归档对话查看/管理入口。
 - 文件 / 变更 / 预览：后续根据任务形态选择 drawer、split view 或独立工作区。
 - BTW 对话 / side conversation：后续单独设计，不预设为常驻右栏。
 
@@ -90,13 +90,13 @@ as modal, drawer, popover, split view, or route-level pages.
 
 ### Session History Entry
 
-当前决策：前端暂不提供历史 Pi session 的发现与恢复入口。
+当前决策：前端提供按需历史 Pi session 查看与恢复入口。
 
-- 不在左侧栏显示 `恢复对话` / `查看历史对话…`。
-- 不挂载 Project 级历史对话 modal / drawer。
-- 不把 session 管理入口放进 Composer。
-- 后端 session 索引、`session.list`、`session.resume` 可作为底层能力保留，但当前不要主动暴露为 UI 功能。
-- 如果后续要重新启用，需要先确认产品需求，避免误把恢复入口加回左侧导航。
+- 左侧栏在 Project 下提供轻量 `查看历史对话…` 入口，打开 `SessionHistoryModal`。
+- Composer slash command `/resume` 打开同一历史恢复流程。
+- 不在左侧栏常驻展开完整历史 session 树，避免大量 Pi session 污染主导航。
+- 后端 session 索引、`session.list`、`session.resume` 是恢复能力的事实来源；前端只发送命令并渲染服务端状态。
+- 如果后续调整入口位置，应保留“可查看并恢复历史对话”的产品能力，除非有新的明确产品决策。
 
 ### Composer
 
@@ -128,11 +128,12 @@ as modal, drawer, popover, split view, or route-level pages.
 
 ### Step 2：Session UI
 
-状态：前端入口已撤销，当前暂不做。
+状态：已提供按需历史入口与恢复流程。
 
-- Project 下只显示正在运行 / 已托管 runtime 对话，不直接展开历史 session 预览。
-- 不提供轻量“历史对话”入口，也不挂载 Project 级历史 modal。
-- 后端 session 索引 / resume 能力可保留为底层能力，但不要主动暴露为当前 UI 功能。
+- Project 下默认只显示正在运行 / 已托管 runtime 对话，不直接展开完整历史 session 预览。
+- 提供轻量“查看历史对话…”入口，并挂载 Project 级 `SessionHistoryModal`。
+- `/resume` 作为 Composer 命令打开同一历史恢复流程。
+- 后端 session 索引 / resume 能力继续作为恢复流程的事实来源。
 
 ## 后续阶段
 
@@ -150,7 +151,7 @@ as modal, drawer, popover, split view, or route-level pages.
 
 状态：已完成基础版。
 
-- Settings 中已新增 UI 字体大小、对话字体大小、主题与强调色入口。
+- Settings 中已新增 UI 字体大小、对话字体大小、主题与强调色入口，并作为已归档对话查看/管理入口。
 - 模型设置不归入 Settings；模型选择继续跟随 Project / Runtime / Session 语境，并保留 Composer 快捷控制。
 - 语言设置后续可作为界面偏好加入 Settings。
 
