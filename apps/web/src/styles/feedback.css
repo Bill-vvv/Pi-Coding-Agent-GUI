@@ -2,9 +2,9 @@
 .floating-error {
   position: absolute;
   left: 50%;
-  top: 1rem;
+  top: calc(var(--chat-header-top-offset) + 2.65rem);
   transform: translateX(-50%);
-  z-index: 3;
+  z-index: 7;
   max-width: min(720px, calc(100% - 2rem));
 }
 

@@ -1,20 +1,44 @@
-import type { Dispatch } from "react";
-import type { PiRpcCommand, Project, Runtime } from "@pi-gui/shared";
+import { useRef, type Dispatch, type SetStateAction } from "react";
+import type { PiRpcCommand, Project, ResponseMode, Runtime, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
+import { isRecord } from "@pi-gui/shared";
 import type { ComposerCommandOption } from "../components/Composer";
 import type { AppAction } from "../state/appReducer";
 import type { GuiSocketSend } from "../types";
+
+type PendingNativeRpc = {
+  requestId?: string;
+  runtimeId?: string;
+  projectId?: string;
+  command: PiRpcCommand;
+  label: string;
+  clearPrompt: boolean;
+  input?: string;
+};
+
+type PendingRuntimePrompt = {
+  requestId?: string;
+  runtimeId?: string;
+  projectId?: string;
+  message: string;
+  streamingBehavior?: "steer" | "followUp";
+  input?: string;
+};
 
 type UseComposerCommandsOptions = {
   activeRuntime?: Runtime;
   activeRuntimeIsBusy: boolean;
   selectedProject?: Project;
   lastAssistantText?: string;
+  defaultRuntimeModelKey: () => string | undefined;
+  defaultThinkingLevel: ThinkingLevel;
+  defaultResponseMode: ResponseMode;
   dispatch: Dispatch<AppAction>;
   send: GuiSocketSend;
-  setPrompt: (prompt: string) => void;
+  setPrompt: Dispatch<SetStateAction<string>>;
   setModelPickerOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   openSessionHistory: (projectId: string) => void;
+  openCheckpoints: (projectId?: string, runtimeId?: string) => void;
   startRuntimeForSidebarProject: (projectId: string) => void;
 };
 
@@ -23,24 +47,89 @@ export function useComposerCommands({
   activeRuntimeIsBusy,
   selectedProject,
   lastAssistantText,
+  defaultRuntimeModelKey,
+  defaultThinkingLevel,
+  defaultResponseMode,
   dispatch,
   send,
   setPrompt,
   setModelPickerOpen,
   setSettingsOpen,
   openSessionHistory,
+  openCheckpoints,
   startRuntimeForSidebarProject,
 }: UseComposerCommandsOptions) {
+  const pendingNativeRpcRef = useRef<PendingNativeRpc | undefined>(undefined);
+  const pendingRuntimePromptRef = useRef<PendingRuntimePrompt | undefined>(undefined);
+
+  function handleComposerCommandServerEvent(event: ServerEvent) {
+    handlePendingNativeRpcServerEvent(event);
+    handlePendingRuntimePromptServerEvent(event);
+  }
+
+  function handlePendingNativeRpcServerEvent(event: ServerEvent) {
+    const pending = pendingNativeRpcRef.current;
+    if (!pending) return;
+
+    if (event.type === "runtime.status" && pending.runtimeId === event.runtime.id && event.runtime.status === "running") {
+      flushPendingNativeRpc(pending, event.runtime.id);
+      return;
+    }
+
+    if (event.type !== "command.result" || event.requestId !== pending.requestId) return;
+
+    if (!event.success) {
+      pendingNativeRpcRef.current = undefined;
+      restorePrompt(pending.input);
+      return;
+    }
+
+    if (!isRuntimeLaunchCommand(event.command)) return;
+    if (!isRecord(event.data) || !isRecord(event.data.runtime) || typeof event.data.runtime.id !== "string") {
+      pendingNativeRpcRef.current = undefined;
+      restorePrompt(pending.input);
+      dispatch({ type: "set.operationError", error: `${pending.label} 启动 runtime 后未返回 runtime id` });
+      return;
+    }
+
+    flushPendingNativeRpc(pending, event.data.runtime.id);
+  }
+
+  function handlePendingRuntimePromptServerEvent(event: ServerEvent) {
+    const pending = pendingRuntimePromptRef.current;
+    if (!pending) return;
+
+    if (event.type === "runtime.status" && pending.runtimeId === event.runtime.id && event.runtime.status === "running") {
+      flushPendingRuntimePrompt(pending, event.runtime.id);
+      return;
+    }
+
+    if (event.type !== "command.result" || event.requestId !== pending.requestId) return;
+
+    if (!event.success) {
+      pendingRuntimePromptRef.current = undefined;
+      restorePrompt(pending.input);
+      return;
+    }
+
+    if (!isRuntimeLaunchCommand(event.command)) return;
+    if (!isRecord(event.data) || !isRecord(event.data.runtime) || typeof event.data.runtime.id !== "string") {
+      pendingRuntimePromptRef.current = undefined;
+      restorePrompt(pending.input);
+      dispatch({ type: "set.operationError", error: "启动 runtime 后未返回 runtime id" });
+      return;
+    }
+
+    flushPendingRuntimePrompt(pending, event.data.runtime.id);
+  }
+
   function executeCommandInput(input: string, command?: ComposerCommandOption): boolean {
     const parsed = parseSlashInput(input);
     if (!parsed) return false;
 
     if (command?.dynamicCommand) {
-      if (!activeRuntime?.id) return notifyCommandError("需要运行中的 runtime");
-      const streamingBehavior = activeRuntimeIsBusy ? "steer" : undefined;
-      const ok = send({ type: "runtime.prompt", runtimeId: activeRuntime.id, message: `/${command.dynamicCommand.name}${parsed.args ? ` ${parsed.args}` : ""}`, streamingBehavior });
-      if (ok) setPrompt("");
-      return ok;
+      const streamingBehavior = activeRuntime?.status === "running" && activeRuntimeIsBusy ? "steer" : undefined;
+      return sendRuntimePrompt(`/${command.dynamicCommand.name}${parsed.args ? ` ${parsed.args}` : ""}`, streamingBehavior, input);
     }
 
     return executeNativeCommand(parsed.name, parsed.args);
@@ -64,6 +153,10 @@ export function useComposerCommands({
       case "resume":
         if (!selectedProject) return notifyCommandError("请先选择项目");
         openSessionHistory(selectedProject.id);
+        setPrompt("");
+        return true;
+      case "checkpoints":
+        openCheckpoints(selectedProject?.id, activeRuntime?.id);
         setPrompt("");
         return true;
       case "new":
@@ -106,9 +199,10 @@ export function useComposerCommands({
           send({ type: "runtime.commands.list", runtimeId: activeRuntime.id });
           sendNativeRpc({ type: "get_state" }, "/reload state", false);
           sendNativeRpc({ type: "get_messages" }, "/reload messages", false);
+          setPrompt("");
+          return true;
         }
-        setPrompt("");
-        return true;
+        return sendNativeRpc({ type: "get_state" }, "/reload state");
       case "hotkeys":
         return notifyCommandError("快捷键：Ctrl/Cmd+K 或空输入 / 打开命令栏；↑/↓ 选择；Tab 补全；Enter 执行；Shift+Enter 换行。");
       case "changelog":
@@ -122,16 +216,137 @@ export function useComposerCommands({
         }
         return false;
       default:
-        if (!activeRuntime?.id) return notifyCommandError("需要运行中的 runtime");
-        return send({ type: "runtime.prompt", runtimeId: activeRuntime.id, message: `/${name}${args ? ` ${args}` : ""}`, streamingBehavior: activeRuntimeIsBusy ? "steer" : undefined });
+        return sendRuntimePrompt(`/${name}${args ? ` ${args}` : ""}`, activeRuntime?.status === "running" && activeRuntimeIsBusy ? "steer" : undefined, `/${name}${args ? ` ${args}` : ""}`);
     }
   }
 
   function sendNativeRpc(command: PiRpcCommand, label: string, clearPrompt = true): boolean {
-    if (!activeRuntime?.id || activeRuntime.status !== "running") return notifyCommandError("需要运行中的 runtime");
-    const ok = send({ type: "runtime.rpc", runtimeId: activeRuntime.id, command, label });
+    if (activeRuntime?.status === "running" && !activeRuntime.archivedAt) return sendNativeRpcToRuntime(activeRuntime.id, command, label, clearPrompt);
+    return launchRuntimeThenSendNativeRpc(command, label, clearPrompt);
+  }
+
+  function sendNativeRpcToRuntime(runtimeId: string, command: PiRpcCommand, label: string, clearPrompt: boolean): boolean {
+    const ok = send({ type: "runtime.rpc", runtimeId, command, label });
     if (ok && clearPrompt) setPrompt("");
     return ok;
+  }
+
+  function sendRuntimePrompt(message: string, streamingBehavior: "steer" | "followUp" | undefined, input: string): boolean {
+    if (activeRuntime?.status === "running" && !activeRuntime.archivedAt) {
+      const ok = send({ type: "runtime.prompt", runtimeId: activeRuntime.id, message, streamingBehavior });
+      if (ok) setPrompt("");
+      return ok;
+    }
+    return launchRuntimeThenSendPrompt(message, streamingBehavior, input);
+  }
+
+  function launchRuntimeThenSendNativeRpc(command: PiRpcCommand, label: string, clearPrompt: boolean): boolean {
+    const input = clearPrompt ? `/${label.replace(/^\//, "")}` : undefined;
+
+    if (activeRuntime?.status === "starting") {
+      pendingNativeRpcRef.current = { runtimeId: activeRuntime.id, command, label, clearPrompt, input };
+      if (clearPrompt) setPrompt("");
+      return true;
+    }
+
+    if (activeRuntime && !activeRuntime.archivedAt && (activeRuntime.status === "stopped" || activeRuntime.status === "crashed")) {
+      const requestId = crypto.randomUUID();
+      const sent = activeRuntime.sessionId
+        ? send({ type: "runtime.resume", requestId, runtimeId: activeRuntime.id })
+        : send({
+            type: "runtime.restart",
+            requestId,
+            runtimeId: activeRuntime.id,
+            model: activeRuntime.model ?? defaultRuntimeModelKey(),
+            thinkingLevel: activeRuntime.thinkingLevel ?? defaultThinkingLevel,
+            responseMode: activeRuntime.responseMode ?? defaultResponseMode,
+          });
+      if (!sent) return false;
+      pendingNativeRpcRef.current = { requestId, projectId: activeRuntime.projectId, command, label, clearPrompt, input };
+      if (clearPrompt) setPrompt("");
+      return true;
+    }
+
+    if (selectedProject) {
+      const requestId = crypto.randomUUID();
+      const sent = send({
+        type: "runtime.start",
+        requestId,
+        projectId: selectedProject.id,
+        model: defaultRuntimeModelKey(),
+        thinkingLevel: defaultThinkingLevel,
+        responseMode: defaultResponseMode,
+      });
+      if (!sent) return false;
+      pendingNativeRpcRef.current = { requestId, projectId: selectedProject.id, command, label, clearPrompt, input };
+      if (clearPrompt) setPrompt("");
+      return true;
+    }
+
+    return notifyCommandError("需要运行中的 runtime");
+  }
+
+  function launchRuntimeThenSendPrompt(message: string, streamingBehavior: "steer" | "followUp" | undefined, input: string): boolean {
+    if (activeRuntime?.status === "starting") {
+      pendingRuntimePromptRef.current = { runtimeId: activeRuntime.id, message, streamingBehavior, input };
+      setPrompt("");
+      return true;
+    }
+
+    if (activeRuntime && !activeRuntime.archivedAt && (activeRuntime.status === "stopped" || activeRuntime.status === "crashed")) {
+      const requestId = crypto.randomUUID();
+      const sent = activeRuntime.sessionId
+        ? send({ type: "runtime.resume", requestId, runtimeId: activeRuntime.id })
+        : send({
+            type: "runtime.restart",
+            requestId,
+            runtimeId: activeRuntime.id,
+            model: activeRuntime.model ?? defaultRuntimeModelKey(),
+            thinkingLevel: activeRuntime.thinkingLevel ?? defaultThinkingLevel,
+            responseMode: activeRuntime.responseMode ?? defaultResponseMode,
+          });
+      if (!sent) return false;
+      pendingRuntimePromptRef.current = { requestId, projectId: activeRuntime.projectId, message, streamingBehavior, input };
+      setPrompt("");
+      return true;
+    }
+
+    if (selectedProject) {
+      const requestId = crypto.randomUUID();
+      const sent = send({
+        type: "runtime.start",
+        requestId,
+        projectId: selectedProject.id,
+        model: defaultRuntimeModelKey(),
+        thinkingLevel: defaultThinkingLevel,
+        responseMode: defaultResponseMode,
+      });
+      if (!sent) return false;
+      pendingRuntimePromptRef.current = { requestId, projectId: selectedProject.id, message, streamingBehavior, input };
+      setPrompt("");
+      return true;
+    }
+
+    return notifyCommandError("需要运行中的 runtime");
+  }
+
+  function flushPendingNativeRpc(pending: PendingNativeRpc, runtimeId: string) {
+    pendingNativeRpcRef.current = undefined;
+    if (!send({ type: "runtime.rpc", runtimeId, command: pending.command, label: pending.label })) {
+      restorePrompt(pending.input);
+    }
+  }
+
+  function flushPendingRuntimePrompt(pending: PendingRuntimePrompt, runtimeId: string) {
+    pendingRuntimePromptRef.current = undefined;
+    if (!send({ type: "runtime.prompt", runtimeId, message: pending.message, streamingBehavior: pending.streamingBehavior })) {
+      restorePrompt(pending.input);
+    }
+  }
+
+  function restorePrompt(input?: string) {
+    if (!input?.trim()) return;
+    setPrompt((current) => (current.trim() ? current : input));
   }
 
   function notifyCommandError(message: string): false {
@@ -139,7 +354,11 @@ export function useComposerCommands({
     return false;
   }
 
-  return { executeCommandInput };
+  return { executeCommandInput, handleComposerCommandServerEvent };
+}
+
+function isRuntimeLaunchCommand(command: Extract<ServerEvent, { type: "command.result" }>["command"]): boolean {
+  return command === "runtime.start" || command === "runtime.resume" || command === "runtime.restart" || command === "session.resume";
 }
 
 function parseSlashInput(input: string): { name: string; args: string } | undefined {

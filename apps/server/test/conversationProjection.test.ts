@@ -257,3 +257,87 @@ test("ConversationProjection applies get_messages snapshots into persistent conv
   assert.ok(events.some((event) => event.type === "conversation.snapshot" && event.messages.length === 3));
   db.close();
 });
+
+test("ConversationProjection does not persist synthetic snapshot duplicates for live messages", () => {
+  const { db, runtime, projection } = createHarness();
+
+  projection.handlePiPayload({ type: "message_end", message: { id: "user-live", role: "user", content: "同一个问题", timestamp: 100 } });
+  projection.handlePiPayload({ type: "message_end", message: { id: "assistant-live", role: "assistant", content: "同一个回答", timestamp: 101 } });
+  projection.handlePiPayload({
+    type: "response",
+    command: "get_messages",
+    success: true,
+    data: {
+      messages: [
+        { role: "user", content: "同一个问题", timestamp: 100 },
+        { role: "assistant", content: "同一个回答", timestamp: 101 },
+      ],
+    },
+  });
+
+  const messages = db.listConversationMessages(runtime.id);
+  assert.deepEqual(messages.map((message) => message.id), ["user-live", "assistant-live"]);
+  assert.deepEqual(messages.map((message) => message.text), ["同一个问题", "同一个回答"]);
+  db.close();
+});
+
+test("AppDatabase lists conversation messages before an anchor without dropping full history", () => {
+  const { db, runtime } = createHarness();
+  for (let index = 1; index <= 6; index += 1) {
+    db.upsertConversationMessage({
+      id: `message-${index}`,
+      runtimeId: runtime.id,
+      projectId: runtime.projectId,
+      role: index % 2 === 0 ? "assistant" : "user",
+      text: `message ${index}`,
+      timestamp: index,
+      updatedAt: index,
+    });
+  }
+
+  const page = db.listConversationMessagesBefore(runtime.id, "message-5", 2);
+
+  assert.deepEqual(page.messages.map((message) => message.id), ["message-3", "message-4"]);
+  assert.equal(page.hasMoreBefore, true);
+  assert.deepEqual(db.listConversationMessages(runtime.id, 10).map((message) => message.id), ["message-1", "message-2", "message-3", "message-4", "message-5", "message-6"]);
+  db.close();
+});
+
+test("AppDatabase pages messages with duplicate timestamps using stable insertion ordering", () => {
+  const { db, runtime } = createHarness();
+  for (const id of ["a", "b", "c", "d"]) {
+    db.upsertConversationMessage({
+      id,
+      runtimeId: runtime.id,
+      projectId: runtime.projectId,
+      role: "assistant",
+      text: id,
+      timestamp: 10,
+      updatedAt: 10,
+    });
+  }
+
+  const page = db.listConversationMessagesBefore(runtime.id, "d", 2);
+
+  assert.deepEqual(page.messages.map((message) => message.id), ["b", "c"]);
+  assert.equal(page.hasMoreBefore, true);
+  db.close();
+});
+
+test("ConversationProjection compacts long thinking and cache still serves snapshots from persisted history", () => {
+  const { db, runtime, projection } = createHarness();
+  for (let index = 0; index < 220; index += 1) {
+    projection.handlePiPayload({ type: "message_end", message: { id: `assistant-${index}`, role: "assistant", content: `reply ${index}`, timestamp: index } });
+  }
+  projection.handlePiPayload({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "x".repeat(210_000) } });
+
+  const snapshot = projection.snapshot(500);
+
+  assert.equal(snapshot?.type, "conversation.snapshot");
+  assert.ok(snapshot.messages.some((message) => message.id === "assistant-0"));
+  const live = snapshot.messages.find((message) => message.isStreaming);
+  assert.ok((live?.thinking?.length ?? 0) < 205_000);
+  assert.match(live?.thinking ?? "", /truncated/);
+  assert.equal(db.listConversationMessages(runtime.id, 500).length, 220);
+  db.close();
+});

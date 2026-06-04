@@ -4,6 +4,7 @@ import Fastify, { type FastifyRequest } from "fastify";
 import { AppDatabase } from "./db.js";
 import { registerEnvironmentRoutes } from "./routes/environmentRoutes.js";
 import { registerFsRoutes } from "./routes/fsRoutes.js";
+import { registerImportRoutes } from "./routes/importRoutes.js";
 import { RuntimeSupervisor } from "./runtime/runtimeSupervisor.js";
 import { listPiModels } from "./services/modelService.js";
 import { indexKnownPiSessions } from "./services/sessionIndexService.js";
@@ -33,6 +34,7 @@ const handleSocketMessage = createSocketMessageHandler({
 await fastify.register(cors, { origin: allowedCorsOrigins });
 await fastify.register(websocket);
 await registerFsRoutes(fastify);
+await registerImportRoutes(fastify);
 await registerEnvironmentRoutes(fastify);
 
 fastify.get("/health", async () => ({ ok: true, time: Date.now() }));

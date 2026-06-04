@@ -19,6 +19,7 @@ export function runtimeConversationSummaryFromRow(row: RuntimeConversationSummar
       detail,
       updatedAt: row.latest_updated_at ?? undefined,
       messageCount: row.message_count,
+      latestAssistantCompletedAt: row.latest_assistant_completed_at ?? undefined,
     },
   ];
 }
@@ -35,6 +36,10 @@ export function runtimeConversationSummaryFromMessages(runtimeId: string, messag
   const latestText = latestMessage ? summaryText(latestMessage.text, DETAIL_MAX_LENGTH) : undefined;
   const detail = latestMessage && latestMessage.id !== titleMessage.id && latestText && latestText !== title ? latestText : undefined;
   const updatedAt = messages.reduce((latest, message) => Math.max(latest, message.updatedAt ?? message.timestamp ?? 0), 0);
+  const latestAssistantCompletedAt = messages.reduce((latest, message) => {
+    if (message.role !== "assistant" || message.isStreaming || !message.text.trim()) return latest;
+    return Math.max(latest, message.updatedAt ?? message.timestamp ?? 0);
+  }, 0);
 
   return {
     runtimeId,
@@ -43,6 +48,7 @@ export function runtimeConversationSummaryFromMessages(runtimeId: string, messag
     detail,
     updatedAt: updatedAt || undefined,
     messageCount: candidates.length,
+    latestAssistantCompletedAt: latestAssistantCompletedAt || undefined,
   };
 }
 

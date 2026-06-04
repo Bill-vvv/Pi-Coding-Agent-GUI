@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ConversationContextUsage, ConversationDelta, ConversationMessage, Runtime, ServerEvent } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
 import { ConversationMessageCache } from "./conversation/conversationMessageCache.js";
-import { compactText } from "./conversation/conversationText.js";
+import { compactOptionalText, compactText } from "./conversation/conversationText.js";
 import type { NormalizedConversationEvent, NormalizedMessage, NormalizedSnapshotMessage, NormalizedTool } from "./conversation/normalizedEvents.js";
 import { normalizePiPayload } from "./conversation/piPayloadNormalizer.js";
 import { toolStatusLabel, type ToolStatus } from "./conversation/toolStatus.js";
@@ -29,6 +29,16 @@ function mergeConversationMessages(persistedMessages: ConversationMessage[], cac
     const message = messagesById.get(id);
     return message ? [message] : [];
   }).slice(-boundedLimit);
+}
+
+function snapshotDuplicateSignature(message: ConversationMessage): string | undefined {
+  if (message.timestamp === undefined || !Number.isFinite(message.timestamp)) return undefined;
+  if (!message.text && !message.thinking) return undefined;
+  return JSON.stringify([message.role, message.timestamp, message.text, message.thinking ?? "", message.title ?? ""]);
+}
+
+function isSyntheticSnapshotMessageId(id: string): boolean {
+  return /^snapshot-\d+-\d+$/.test(id) || /^tool-snapshot-\d+-\d+$/.test(id) || /^bash-\d+-\d+$/.test(id);
 }
 
 export class ConversationProjection {
@@ -205,18 +215,18 @@ export class ConversationProjection {
 
   private applyMessagesSnapshot(snapshotMessages: NormalizedSnapshotMessage[]): void {
     const runtime = this.requireRuntime();
-    const messages = snapshotMessages.map((message): ConversationMessage => ({
+    const messages = this.normalizeSnapshotMessageIds(snapshotMessages.map((message): ConversationMessage => ({
       id: message.id,
       runtimeId: runtime.id,
       projectId: runtime.projectId,
       role: message.role,
-      text: message.text,
-      thinking: message.thinking,
+      text: compactText(message.text),
+      thinking: compactOptionalText(message.thinking),
       title: message.title,
       timestamp: message.timestamp,
       updatedAt: Date.now(),
       isStreaming: message.isStreaming ?? false,
-    }));
+    })));
 
     if (messages.length === 0) return;
 
@@ -233,6 +243,32 @@ export class ConversationProjection {
 
     const snapshot = this.snapshot();
     if (snapshot) this.broadcast(snapshot);
+  }
+
+  private normalizeSnapshotMessageIds(messages: ConversationMessage[]): ConversationMessage[] {
+    const runtime = this.requireRuntime();
+    const existingBySignature = new Map<string, ConversationMessage>();
+    for (const message of [...this.db.listConversationMessages(runtime.id, 500), ...this.cache.ordered(500)]) {
+      const signature = snapshotDuplicateSignature(message);
+      if (signature && !existingBySignature.has(signature)) existingBySignature.set(signature, message);
+    }
+
+    const normalizedMessages: ConversationMessage[] = [];
+    const indexById = new Map<string, number>();
+    for (const message of messages) {
+      const signature = snapshotDuplicateSignature(message);
+      const existing = signature && isSyntheticSnapshotMessageId(message.id) ? existingBySignature.get(signature) : undefined;
+      const normalized = existing ? { ...message, id: existing.id } : message;
+      const existingIndex = indexById.get(normalized.id);
+      if (existingIndex !== undefined) {
+        normalizedMessages[existingIndex] = normalized;
+      } else {
+        indexById.set(normalized.id, normalizedMessages.length);
+        normalizedMessages.push(normalized);
+      }
+      if (signature && !existingBySignature.has(signature)) existingBySignature.set(signature, normalized);
+    }
+    return normalizedMessages;
   }
 
   private ensureAssistantMessage(timestamp: number): ConversationMessage {
@@ -256,6 +292,7 @@ export class ConversationProjection {
       runtimeId: runtime.id,
       projectId: runtime.projectId,
       text: compactText(input.text ?? existing?.text ?? ""),
+      thinking: compactOptionalText(input.thinking ?? existing?.thinking),
       updatedAt: input.updatedAt ?? Date.now(),
     });
     if (persist) this.db.upsertConversationMessage(message);
@@ -271,7 +308,7 @@ export class ConversationProjection {
       role: input.role ?? current.role,
       title: input.title ?? current.title,
       text: compactText(input.text ?? `${current.text}${input.appendText ?? ""}`),
-      thinking: input.thinking ?? (input.appendThinking ? `${current.thinking ?? ""}${input.appendThinking}` : current.thinking),
+      thinking: compactOptionalText(input.thinking ?? (input.appendThinking ? `${current.thinking ?? ""}${input.appendThinking}` : current.thinking)),
       isStreaming: input.isStreaming ?? current.isStreaming,
       updatedAt: Date.now(),
     };

@@ -1,6 +1,6 @@
 import { useMemo, type CSSProperties } from "react";
 
-export type ThinkingAnimationVariant = "loop" | "coreloop" | "bigbang" | "blackhole" | "burst" | "collapse" | "slow" | "sharp" | "wide";
+export type ThinkingAnimationVariant = "loop" | "coreloop" | "bigbang" | "blackhole" | "burst" | "collapse" | "slow" | "superslow" | "sharp" | "wide";
 
 type ThinkingAnimationProps = {
   variant?: ThinkingAnimationVariant;
@@ -8,17 +8,18 @@ type ThinkingAnimationProps = {
   label?: string;
   ariaLabel?: string;
   className?: string;
+  role?: "status" | "img";
 };
 
 const RAY_COUNT = 16;
 const RAY_LENGTHS = [1, 0.72, 1.22, 0.86, 1.08, 0.78, 1.32, 0.92];
 
-export function ThinkingAnimation({ variant = "coreloop", size = 46, label, ariaLabel, className }: ThinkingAnimationProps) {
+export function ThinkingAnimation({ variant = "coreloop", size = 46, label, ariaLabel, className, role = "status" }: ThinkingAnimationProps) {
   const style = useMemo(() => ({ "--thinking-size": `${size}px` }) as CSSProperties, [size]);
-  const statusLabel = ariaLabel ?? (label?.trim() ? label : "后台活动");
+  const accessibleLabel = ariaLabel ?? (label?.trim() ? label : role === "img" ? "思考动画" : "后台活动");
 
   return (
-    <span className={`thinking-status ${className ?? ""}`.trim()} aria-label={statusLabel} role="status">
+    <span className={`thinking-status ${className ?? ""}`.trim()} aria-label={accessibleLabel} role={role}>
       <span className={`thinking-visual thinking-${variant}`} style={style} aria-hidden="true">
         <span className="thinking-event-horizon" />
         <span className="thinking-accretion" />

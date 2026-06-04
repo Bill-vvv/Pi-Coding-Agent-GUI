@@ -1,9 +1,11 @@
 import type {
   AppSettings,
   ConversationContextUsage,
+  ConversationDelta,
   ConversationMessage,
   GuiEvent,
   GuiSession,
+  RewindCheckpoint,
   ResponseMode,
   Runtime,
   RuntimeConversationSummary,
@@ -18,13 +20,15 @@ import { isRecord } from "@pi-gui/shared";
 import { upsertById } from "../domain/collections";
 import { isTransportConnectionError } from "../domain/connection";
 import { indexConversationSummaries } from "../domain/conversationSummary";
-import { applyConversationDelta, mergeConversationSnapshot, upsertConversationMessage } from "../domain/conversationState";
+import { applyConversationDeltas, applyConversationDelta, evictInactiveRuntimeMessages, mergeConversationSnapshot, prependConversationPage, rememberHydratedRuntime, upsertConversationMessage } from "../domain/conversationState";
 import { subagentDetailKey } from "../domain/subagents";
 
 export type AppState = {
   projects: Project[];
   runtimes: Runtime[];
   messagesByRuntime: Record<string, ConversationMessage[]>;
+  hydratedRuntimeIds: string[];
+  hasMoreBeforeByRuntime: Record<string, boolean>;
   persistedConversationSummaries: Record<string, RuntimeConversationSummary>;
   contextUsageByRuntime: Record<string, ConversationContextUsage>;
   busyByRuntime: Record<string, boolean>;
@@ -32,6 +36,7 @@ export type AppState = {
   commandsByRuntime: Record<string, SlashCommand[]>;
   guiEvents: GuiEvent[];
   sessions: GuiSession[];
+  checkpointsByProject: Record<string, RewindCheckpoint[]>;
   subagentRuns: Record<string, SubagentRun>;
   subagentDetails: Record<string, { childRunId: string; messages: ConversationMessage[]; readAt: number; error?: string }>;
   selectedProjectId?: string;
@@ -50,6 +55,8 @@ export const initialAppState: AppState = {
   projects: [],
   runtimes: [],
   messagesByRuntime: {},
+  hydratedRuntimeIds: [],
+  hasMoreBeforeByRuntime: {},
   persistedConversationSummaries: {},
   contextUsageByRuntime: {},
   busyByRuntime: {},
@@ -57,6 +64,7 @@ export const initialAppState: AppState = {
   commandsByRuntime: {},
   guiEvents: [],
   sessions: [],
+  checkpointsByProject: {},
   subagentRuns: {},
   subagentDetails: {},
   selectedRuntimeIdByProject: {},
@@ -69,10 +77,11 @@ export const initialAppState: AppState = {
 
 export type AppAction =
   | { type: "server.event"; event: ServerEvent; fallbackModelKey?: string }
+  | { type: "server.deltaBatch"; deltas: ConversationDelta[] }
   | { type: "set.operationError"; error?: string }
-  | { type: "clear.operationError" }
+  | { type: "clear.operationError"; error?: string }
   | { type: "set.notice"; notice?: string }
-  | { type: "clear.notice" }
+  | { type: "clear.notice"; notice?: string }
   | { type: "clear.transportError" }
   | { type: "set.projectCwd"; cwd: string }
   | { type: "select.project"; projectId?: string }
@@ -86,27 +95,33 @@ export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "server.event":
       return applyServerEvent(state, action.event, action.fallbackModelKey);
+    case "server.deltaBatch":
+      return applyConversationDeltaBatch(state, action.deltas);
     case "set.operationError":
       return { ...state, operationError: action.error };
     case "clear.operationError":
-      return { ...state, operationError: undefined };
+      return action.error !== undefined && state.operationError !== action.error ? state : { ...state, operationError: undefined };
     case "set.notice":
       return { ...state, notice: action.notice };
     case "clear.notice":
-      return { ...state, notice: undefined };
+      return action.notice !== undefined && state.notice !== action.notice ? state : { ...state, notice: undefined };
     case "clear.transportError":
       return isTransportConnectionError(state.operationError) ? { ...state, operationError: undefined } : state;
     case "set.projectCwd":
       return { ...state, projectCwd: action.cwd };
     case "select.project":
       return { ...state, selectedProjectId: action.projectId, selectedRuntimeId: runtimeIdForProject(state, action.projectId) };
-    case "select.runtime":
+    case "select.runtime": {
+      const hydratedRuntimeIds = rememberHydratedRuntime(state.hydratedRuntimeIds, action.runtimeId);
       return {
         ...state,
         selectedProjectId: action.projectId,
         selectedRuntimeId: action.runtimeId,
         selectedRuntimeIdByProject: { ...state.selectedRuntimeIdByProject, [action.projectId]: action.runtimeId },
+        hydratedRuntimeIds,
+        messagesByRuntime: evictInactiveRuntimeMessages(state.messagesByRuntime, hydratedRuntimeIds, action.runtimeId),
       };
+    }
     case "update.runtimeConfig":
       return {
         ...state,
@@ -132,6 +147,30 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "select.responseMode":
       return { ...state, responseMode: action.responseMode };
   }
+}
+
+function applyConversationDeltaBatch(state: AppState, deltas: ConversationDelta[]): AppState {
+  if (deltas.length === 0) return state;
+  const grouped = new Map<string, ConversationDelta[]>();
+  for (const delta of deltas) {
+    const items = grouped.get(delta.runtimeId) ?? [];
+    items.push(delta);
+    grouped.set(delta.runtimeId, items);
+  }
+
+  let messagesByRuntime = state.messagesByRuntime;
+  let hydratedRuntimeIds = state.hydratedRuntimeIds;
+  for (const [runtimeId, runtimeDeltas] of grouped) {
+    if (messagesByRuntime === state.messagesByRuntime) messagesByRuntime = { ...state.messagesByRuntime };
+    messagesByRuntime[runtimeId] = applyConversationDeltas(messagesByRuntime[runtimeId] ?? [], runtimeDeltas);
+    hydratedRuntimeIds = rememberHydratedRuntime(hydratedRuntimeIds, runtimeId);
+  }
+
+  return {
+    ...state,
+    hydratedRuntimeIds,
+    messagesByRuntime: evictInactiveRuntimeMessages(messagesByRuntime, hydratedRuntimeIds, state.selectedRuntimeId),
+  };
 }
 
 function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?: string): AppState {
@@ -180,35 +219,66 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
       return { ...state, sessions: filterChildSubagentSessions(mergeSessionList(state.sessions, event.sessions, event.projectId), state.subagentRuns) };
     case "session.updated":
       return { ...state, sessions: filterChildSubagentSessions(upsertById(state.sessions, event.session), state.subagentRuns) };
+    case "checkpoint.list":
+      return {
+        ...state,
+        checkpointsByProject: { ...state.checkpointsByProject, [event.projectId]: event.checkpoints },
+      };
+    case "checkpoint.updated":
+      return {
+        ...state,
+        checkpointsByProject: {
+          ...state.checkpointsByProject,
+          [event.projectId]: upsertById(state.checkpointsByProject[event.projectId] ?? [], event.checkpoint).sort((left, right) => right.createdAt - left.createdAt),
+        },
+      };
     case "settings.updated":
       return applySettingsState(state, event.settings, fallbackModelKey);
     case "runtime.status":
       return applyRuntimeStatus(state, event.runtime);
-    case "conversation.snapshot":
+    case "conversation.snapshot": {
+      const hydratedRuntimeIds = rememberHydratedRuntime(state.hydratedRuntimeIds, event.runtimeId);
       return {
         ...state,
-        messagesByRuntime: { ...state.messagesByRuntime, [event.runtimeId]: mergeConversationSnapshot(state.messagesByRuntime[event.runtimeId] ?? [], event.messages) },
+        hydratedRuntimeIds,
+        messagesByRuntime: evictInactiveRuntimeMessages(
+          { ...state.messagesByRuntime, [event.runtimeId]: mergeConversationSnapshot(state.messagesByRuntime[event.runtimeId] ?? [], event.messages) },
+          hydratedRuntimeIds,
+          state.selectedRuntimeId,
+        ),
+        hasMoreBeforeByRuntime: { ...state.hasMoreBeforeByRuntime, [event.runtimeId]: event.messages.length > 0 },
         busyByRuntime: { ...state.busyByRuntime, [event.runtimeId]: event.busy },
         contextUsageByRuntime: event.contextUsage
           ? { ...state.contextUsageByRuntime, [event.runtimeId]: event.contextUsage }
           : state.contextUsageByRuntime,
       };
-    case "conversation.message":
+    }
+    case "conversation.page":
       return {
         ...state,
         messagesByRuntime: {
           ...state.messagesByRuntime,
-          [event.message.runtimeId]: upsertConversationMessage(state.messagesByRuntime[event.message.runtimeId] ?? [], event.message),
+          [event.runtimeId]: prependConversationPage(state.messagesByRuntime[event.runtimeId] ?? [], event.messages),
         },
+        hasMoreBeforeByRuntime: { ...state.hasMoreBeforeByRuntime, [event.runtimeId]: event.hasMoreBefore },
       };
+    case "conversation.message": {
+      const hydratedRuntimeIds = rememberHydratedRuntime(state.hydratedRuntimeIds, event.message.runtimeId);
+      return {
+        ...state,
+        hydratedRuntimeIds,
+        messagesByRuntime: evictInactiveRuntimeMessages(
+          {
+            ...state.messagesByRuntime,
+            [event.message.runtimeId]: upsertConversationMessage(state.messagesByRuntime[event.message.runtimeId] ?? [], event.message),
+          },
+          hydratedRuntimeIds,
+          state.selectedRuntimeId,
+        ),
+      };
+    }
     case "conversation.delta":
-      return {
-        ...state,
-        messagesByRuntime: {
-          ...state.messagesByRuntime,
-          [event.delta.runtimeId]: applyConversationDelta(state.messagesByRuntime[event.delta.runtimeId] ?? [], event.delta),
-        },
-      };
+      return applyConversationDeltaBatch(state, [event.delta]);
     case "conversation.context":
       return {
         ...state,

@@ -1,0 +1,54 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { ConversationMessage } from "@pi-gui/shared";
+import { prependConversationPage, evictInactiveRuntimeMessages, rememberHydratedRuntime, applyConversationDeltas } from "../src/domain/conversationState";
+import { performanceFixtureEvents } from "../src/domain/performanceFixtures";
+import { estimateVirtualRange, prependScrollTop } from "../src/domain/virtualList";
+
+function message(id: string, runtimeId = "runtime-1"): ConversationMessage {
+  return { id, runtimeId, projectId: "project-1", role: "assistant", text: id, timestamp: 1, updatedAt: 1 };
+}
+
+test("prependConversationPage merges older pages without duplicates", () => {
+  const merged = prependConversationPage([message("b"), message("c")], [message("a"), message("b")]);
+  assert.deepEqual(merged.map((item) => item.id), ["a", "b", "c"]);
+});
+
+test("inactive runtime MRU eviction keeps active and recent message bodies", () => {
+  const messagesByRuntime = Object.fromEntries(Array.from({ length: 8 }, (_value, index) => [`runtime-${index + 1}`, [message(`m-${index + 1}`, `runtime-${index + 1}`)]]));
+  const hydrated = ["runtime-1", "runtime-2", "runtime-3", "runtime-4", "runtime-5", "runtime-6"];
+  const evicted = evictInactiveRuntimeMessages(messagesByRuntime, hydrated, "runtime-1");
+  assert.deepEqual(Object.keys(evicted).sort(), ["runtime-1", "runtime-2", "runtime-3", "runtime-4", "runtime-5", "runtime-6"].sort());
+  assert.equal(evicted["runtime-7"], undefined);
+});
+
+test("rememberHydratedRuntime moves runtimes to the MRU tail", () => {
+  assert.deepEqual(rememberHydratedRuntime(["a", "b", "c"], "b", 3), ["a", "c", "b"]);
+  assert.deepEqual(rememberHydratedRuntime(["a", "b", "c"], "d", 3), ["b", "c", "d"]);
+});
+
+test("applyConversationDeltas preserves append order", () => {
+  const messages = applyConversationDeltas([], [
+    { runtimeId: "runtime-1", projectId: "project-1", messageId: "assistant-1", timestamp: 1, appendText: "hello" },
+    { runtimeId: "runtime-1", projectId: "project-1", messageId: "assistant-1", timestamp: 2, appendText: " world", appendThinking: "plan" },
+  ]);
+  assert.equal(messages[0]?.text, "hello world");
+  assert.equal(messages[0]?.thinking, "plan");
+});
+
+test("virtual range computes visible window and prepend scroll anchor", () => {
+  const range = estimateVirtualRange({ itemCount: 100, scrollTop: 500, viewportHeight: 400, itemHeights: [], estimatedItemHeight: 100, overscan: 1 });
+  assert.equal(range.startIndex <= 5, true);
+  assert.equal(range.endIndex >= 9, true);
+  assert.equal(prependScrollTop(200, 1000, 1400), 600);
+});
+
+test("performance fixture exposes long conversation and many runtime summaries", () => {
+  const events = performanceFixtureEvents(1000);
+  const hello = events.find((event) => event.type === "hello");
+  const snapshot = events.find((event) => event.type === "conversation.snapshot");
+  assert.equal(hello?.type, "hello");
+  assert.equal(hello?.runtimes.length, 50);
+  assert.equal(snapshot?.type, "conversation.snapshot");
+  assert.equal(snapshot?.messages.length, 2000);
+});

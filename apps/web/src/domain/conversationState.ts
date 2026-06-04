@@ -1,5 +1,7 @@
 import type { ConversationDelta, ConversationMessage } from "@pi-gui/shared";
 
+export const HYDRATED_RUNTIME_MRU_LIMIT = 5;
+
 export function mergeConversationSnapshot(currentMessages: ConversationMessage[], snapshotMessages: ConversationMessage[]): ConversationMessage[] {
   if (currentMessages.length === 0) return snapshotMessages;
   if (snapshotMessages.length === 0) return currentMessages;
@@ -19,12 +21,40 @@ export function mergeConversationSnapshot(currentMessages: ConversationMessage[]
   return [...merged.values()].sort((left, right) => compareConversationMessages(left, right, originalOrder));
 }
 
+export function prependConversationPage(currentMessages: ConversationMessage[], pageMessages: ConversationMessage[]): ConversationMessage[] {
+  if (pageMessages.length === 0) return currentMessages;
+  if (currentMessages.length === 0) return pageMessages;
+  const existingIds = new Set(currentMessages.map((message) => message.id));
+  const prepended = pageMessages.filter((message) => !existingIds.has(message.id));
+  return prepended.length === 0 ? currentMessages : [...prepended, ...currentMessages];
+}
+
+export function evictInactiveRuntimeMessages(
+  messagesByRuntime: Record<string, ConversationMessage[]>,
+  hydratedRuntimeIds: string[],
+  activeRuntimeId?: string,
+): Record<string, ConversationMessage[]> {
+  const keep = new Set(hydratedRuntimeIds.slice(-HYDRATED_RUNTIME_MRU_LIMIT));
+  if (activeRuntimeId) keep.add(activeRuntimeId);
+  const entries = Object.entries(messagesByRuntime).filter(([runtimeId]) => keep.has(runtimeId));
+  return entries.length === Object.keys(messagesByRuntime).length ? messagesByRuntime : Object.fromEntries(entries);
+}
+
+export function rememberHydratedRuntime(current: string[], runtimeId: string, limit = HYDRATED_RUNTIME_MRU_LIMIT): string[] {
+  const next = [...current.filter((id) => id !== runtimeId), runtimeId];
+  return next.slice(-Math.max(1, limit));
+}
+
 export function upsertConversationMessage(messages: ConversationMessage[], message: ConversationMessage): ConversationMessage[] {
   const index = messages.findIndex((candidate) => candidate.id === message.id);
   if (index === -1) return [...messages, message];
   const next = [...messages];
   next[index] = message;
   return next;
+}
+
+export function applyConversationDeltas(messages: ConversationMessage[], deltas: ConversationDelta[]): ConversationMessage[] {
+  return deltas.reduce(applyConversationDelta, messages);
 }
 
 export function applyConversationDelta(messages: ConversationMessage[], delta: ConversationDelta): ConversationMessage[] {

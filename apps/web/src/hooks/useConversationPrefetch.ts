@@ -4,7 +4,7 @@ import type { ConnectionState, GuiSocketSend } from "../types";
 
 const ACTIVE_CONVERSATION_OPEN_LIMIT = 500;
 const SIDEBAR_CONVERSATION_PREFETCH_LIMIT = 120;
-const SIDEBAR_CONVERSATION_PREFETCH_MAX = 80;
+const SIDEBAR_CONVERSATION_PREFETCH_MAX = 0;
 
 type UseConversationPrefetchOptions = {
   connection: ConnectionState;
@@ -42,7 +42,6 @@ export function useConversationPrefetch({
 
   useEffect(() => {
     if (connection !== "open" || !activeRuntime) return;
-    if (openedRuntimeIdsRef.current.has(activeRuntime.id)) return;
     openedRuntimeIdsRef.current.add(activeRuntime.id);
     if (!send({ type: "conversation.open", runtimeId: activeRuntime.id, limit: ACTIVE_CONVERSATION_OPEN_LIMIT }, { notifyOnDisconnected: false })) {
       openedRuntimeIdsRef.current.delete(activeRuntime.id);
@@ -55,7 +54,7 @@ export function useConversationPrefetch({
     if (remainingBudget <= 0) return;
 
     const candidates = runtimes
-      .filter((runtime) => !runtime.archivedAt && runtime.id !== activeRuntime?.id)
+      .filter((runtime) => !runtime.archivedAt && runtime.id !== activeRuntime?.id && (busyByRuntime[runtime.id] || runtime.status === "running" || runtime.status === "starting"))
       .sort((left, right) => prefetchPriority(right, busyByRuntime, conversationSummaries) - prefetchPriority(left, busyByRuntime, conversationSummaries))
       .slice(0, remainingBudget);
 

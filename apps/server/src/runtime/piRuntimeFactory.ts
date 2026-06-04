@@ -1,6 +1,10 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { ResponseMode, ThinkingLevel } from "@pi-gui/shared";
 import { PiRpcClient } from "./piRpcClient.js";
 import { serviceTierConfigPath, writeServiceTierConfig } from "./serviceTierConfig.js";
+
+const INTERNAL_EXTENSION_PATHS = [resolveSiblingExtensionPath("piServiceTierExtension"), resolveSiblingExtensionPath("piReadyNotificationExtension")];
 
 export type PiRuntimeClientOptions = {
   runtimeId: string;
@@ -26,6 +30,17 @@ export function createPiRuntimeClient(options: PiRuntimeClientOptions): PiRuntim
       model: options.model,
       thinkingLevel: options.thinkingLevel,
       serviceTierConfigFile,
+      extensionPaths: INTERNAL_EXTENSION_PATHS,
     }),
   };
+}
+
+function resolveSiblingExtensionPath(baseName: string): string {
+  const jsPath = fileURLToPath(new URL(`./${baseName}.js`, import.meta.url));
+  if (existsSync(jsPath)) return jsPath;
+
+  const tsPath = fileURLToPath(new URL(`./${baseName}.ts`, import.meta.url));
+  if (existsSync(tsPath)) return tsPath;
+
+  return jsPath;
 }

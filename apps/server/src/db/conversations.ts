@@ -52,11 +52,32 @@ export class ConversationStore {
     const rows = this.db
       .prepare(
         `select * from (
-           select * from conversation_messages where runtime_id = ? order by created_at desc limit ?
-         ) order by created_at asc`,
+           select *, rowid as _rowid from conversation_messages where runtime_id = ? order by created_at desc, rowid desc limit ?
+         ) order by created_at asc, _rowid asc`,
       )
       .all(runtimeId, boundedLimit) as ConversationMessageRow[];
     return rows.map(conversationMessageFromRow);
+  }
+
+  listConversationMessagesBefore(runtimeId: string, beforeMessageId: string, limit = 100): { messages: ConversationMessage[]; hasMoreBefore: boolean } {
+    const boundedLimit = Math.max(1, Math.min(limit, 500));
+    const anchor = this.db
+      .prepare("select created_at, rowid as row_id from conversation_messages where runtime_id = ? and message_id = ?")
+      .get(runtimeId, beforeMessageId) as { created_at: number; row_id: number } | undefined;
+    if (!anchor) return { messages: [], hasMoreBefore: false };
+
+    const rows = this.db
+      .prepare(
+        `select * from (
+           select *, rowid as _rowid from conversation_messages
+           where runtime_id = ? and (created_at < ? or (created_at = ? and rowid < ?))
+           order by created_at desc, rowid desc limit ?
+         ) order by created_at asc, _rowid asc`,
+      )
+      .all(runtimeId, anchor.created_at, anchor.created_at, anchor.row_id, boundedLimit + 1) as ConversationMessageRow[];
+    const hasMoreBefore = rows.length > boundedLimit;
+    const visibleRows = hasMoreBefore ? rows.slice(1) : rows;
+    return { messages: visibleRows.map(conversationMessageFromRow), hasMoreBefore };
   }
 
   listRuntimeConversationSummaries(limit = 100): RuntimeConversationSummary[] {
@@ -85,6 +106,11 @@ export class ConversationStore {
              where m.runtime_id = r.id and m.role in ('user', 'assistant') and trim(m.text) != ''
              order by m.created_at desc limit 1
            ) as latest_updated_at,
+           (
+             select m.updated_at from conversation_messages m
+             where m.runtime_id = r.id and m.role = 'assistant' and trim(m.text) != '' and m.is_streaming = 0
+             order by m.created_at desc limit 1
+           ) as latest_assistant_completed_at,
            (
              select count(*) from conversation_messages m
              where m.runtime_id = r.id and m.role in ('user', 'assistant') and trim(m.text) != ''

@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useReducer, useState } from "react";
-import type { ServerEvent, SubagentRun } from "@pi-gui/shared";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import type { ConversationDelta, ServerEvent, SubagentRun } from "@pi-gui/shared";
 import { AppModals } from "./components/AppModals";
 import { ChatView } from "./components/ChatView";
 import { Composer } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { SubagentDetailDrawer } from "./components/SubagentDetailDrawer";
 import { useActiveRuntimeView } from "./hooks/useActiveRuntimeView";
 import { useAppModalState } from "./hooks/useAppModalState";
+import { useCheckpointActions } from "./hooks/useCheckpointActions";
 import { useCommandMenuHotkey } from "./hooks/useCommandMenuHotkey";
 import { useComposerCommands } from "./hooks/useComposerCommands";
 import { useConversationPrefetch } from "./hooks/useConversationPrefetch";
@@ -19,6 +21,7 @@ import { useProjectRuntimeActions } from "./hooks/useProjectRuntimeActions";
 import { useRuntimeCommandRefresh } from "./hooks/useRuntimeCommandRefresh";
 import { useSessionRestoreActions } from "./hooks/useSessionRestoreActions";
 import { useUiPreferences } from "./hooks/useUiPreferences";
+import { performanceFixtureEvents } from "./domain/performanceFixtures";
 import { subagentCopyText, subagentDetailKey, subagentRunIsActive } from "./domain/subagents";
 import { appReducer, initialAppState } from "./state/appReducer";
 
@@ -29,12 +32,18 @@ export function App() {
   const commandMenuOpenSignal = useCommandMenuHotkey();
   const { uiPreferences, setUiPreferences } = useUiPreferences();
   const [subagentDrawer, setSubagentDrawer] = useState<{ runId: string; childRunId?: string } | undefined>();
+  const pendingConversationDeltasRef = useRef<ConversationDelta[]>([]);
+  const conversationDeltaFrameRef = useRef<number | undefined>(undefined);
+  const performanceFixtureMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("fixture") === "performance";
+  const [compactSidebarExpanded, setCompactSidebarExpanded] = useState(false);
 
   const {
     projects,
     runtimes,
     sessions,
+    checkpointsByProject,
     messagesByRuntime,
+    hasMoreBeforeByRuntime,
     busyByRuntime,
     projectCwd,
     settings,
@@ -46,6 +55,11 @@ export function App() {
     subagentRuns,
     subagentDetails,
   } = state;
+
+  useEffect(() => {
+    if (!performanceFixtureMode) return;
+    for (const event of performanceFixtureEvents()) dispatch({ type: "server.event", event });
+  }, [performanceFixtureMode]);
 
   const { connection, send, connectionWarning } = useGuiSocket({
     onEvent: handleServerEvent,
@@ -64,6 +78,7 @@ export function App() {
     conversationSummaries,
     activeRuntimeConversationSummary,
     activeRuntimeContextUsage,
+    activeRuntimeQueue,
     activeRuntimeCommands,
     activeRuntimeIsBusy,
   } = useActiveRuntimeView(state, models);
@@ -86,6 +101,20 @@ export function App() {
     dispatch,
     send,
   });
+  const {
+    checkpointPanelProjectId,
+    checkpointPanelRuntimeId,
+    pendingCheckpointActionId,
+    openCheckpointPanel,
+    closeCheckpointPanel,
+    refreshCheckpoints,
+    restoreCheckpoint,
+    fastForward,
+    handleCheckpointServerEvent,
+  } = useCheckpointActions({ send });
+  const checkpointPanelProject = checkpointPanelProjectId ? projects.find((project) => project.id === checkpointPanelProjectId) : undefined;
+  const checkpointPanelRuntime = checkpointPanelRuntimeId ? runtimes.find((runtime) => runtime.id === checkpointPanelRuntimeId) : activeRuntime;
+  const checkpointPanelCheckpoints = checkpointPanelProjectId ? checkpointsByProject[checkpointPanelProjectId] ?? [] : [];
   const {
     sessionHistoryProjectId,
     pendingHistoryRestoreId,
@@ -133,18 +162,34 @@ export function App() {
     dispatch,
     send,
     setPrompt,
+    uiPreferences,
+    projects,
+    runtimes,
+    activeRuntime,
+    conversationSummaries,
   });
-  const { executeCommandInput } = useComposerCommands({
+  const { executeCommandInput, handleComposerCommandServerEvent } = useComposerCommands({
     activeRuntime,
     activeRuntimeIsBusy,
     selectedProject,
     lastAssistantText,
+    defaultRuntimeModelKey,
+    defaultThinkingLevel,
+    defaultResponseMode,
     dispatch,
     send,
     setPrompt,
     setModelPickerOpen,
     setSettingsOpen,
     openSessionHistory,
+    openCheckpoints: (projectId?: string, runtimeId?: string) => {
+      const targetProjectId = projectId ?? selectedProject?.id;
+      if (!targetProjectId) {
+        dispatch({ type: "set.operationError", error: "请先选择项目" });
+        return;
+      }
+      openCheckpointPanel(targetProjectId, runtimeId ?? activeRuntime?.id);
+    },
     startRuntimeForSidebarProject,
   });
   useRuntimeCommandRefresh({ connection, activeRuntime, send });
@@ -166,32 +211,76 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [selectedSubagentRun?.id, selectedSubagentRunIsActive, selectedSubagentChildRunId, send]);
 
+  useEffect(() => {
+    return () => {
+      if (conversationDeltaFrameRef.current !== undefined) window.cancelAnimationFrame(conversationDeltaFrameRef.current);
+    };
+  }, []);
+
   function handleServerEvent(event: ServerEvent) {
+    if (performanceFixtureMode) return;
+    if (event.type === "conversation.delta") {
+      pendingConversationDeltasRef.current.push(event.delta);
+      if (conversationDeltaFrameRef.current === undefined) {
+        conversationDeltaFrameRef.current = window.requestAnimationFrame(() => {
+          conversationDeltaFrameRef.current = undefined;
+          flushConversationDeltas();
+        });
+      }
+      return;
+    }
+
+    flushConversationDeltas();
     dispatch({ type: "server.event", event });
     handleServerSideEffects(event);
+  }
+
+  function flushConversationDeltas() {
+    if (pendingConversationDeltasRef.current.length === 0) return;
+    const deltas = pendingConversationDeltasRef.current;
+    pendingConversationDeltasRef.current = [];
+    dispatch({ type: "server.deltaBatch", deltas });
   }
 
   function handleServerSideEffects(event: ServerEvent) {
     handleProjectRuntimeServerEvent(event);
     handleSessionRestoreServerEvent(event);
     handleExtensionUiServerEvent(event);
+    handleCheckpointServerEvent(event);
+    handleComposerCommandServerEvent(event);
   }
 
   function requestSubagentDetail(runId: string, childRunId?: string) {
     send({ type: "subagent.detail.open", runId, childRunId, limit: 240 }, { notifyOnDisconnected: false });
   }
 
-  function copySubagentOutput(run: SubagentRun) {
+  const firstActiveConversationMessageId = conversationMessages[0]?.id;
+  const loadOlderActiveConversationMessages = useCallback(() => {
+    const runtimeId = activeRuntime?.id;
+    if (!runtimeId || !firstActiveConversationMessageId) return;
+    send({ type: "conversation.page", runtimeId, beforeMessageId: firstActiveConversationMessageId, limit: 200 }, { notifyOnDisconnected: false });
+  }, [activeRuntime?.id, firstActiveConversationMessageId, send]);
+
+  const openSubagentRun = useCallback((runId: string) => setSubagentDrawer({ runId }), []);
+
+  const copySubagentOutput = useCallback((run: SubagentRun) => {
     const text = subagentCopyText(run);
     if (!text) return;
     void navigator.clipboard.writeText(text).then(
       () => dispatch({ type: "set.notice", notice: "已复制子代理结果" }),
       () => dispatch({ type: "set.operationError", error: "复制子代理结果失败" }),
     );
+  }, []);
+
+  const dismissOperationError = useCallback((expectedError?: string) => dispatch({ type: "clear.operationError", error: expectedError }), []);
+  const dismissNotice = useCallback((expectedNotice?: string) => dispatch({ type: "clear.notice", notice: expectedNotice }), []);
+
+  function collapseCompactSidebar() {
+    setCompactSidebarExpanded(false);
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${compactSidebarExpanded ? "sidebar-compact-expanded" : ""}`}>
       <Sidebar
         connection={connection}
         projects={projects}
@@ -202,60 +291,105 @@ export function App() {
         activeRuntimeIsBusy={activeRuntimeIsBusy}
         busyByRuntime={busyByRuntime}
         messagesByRuntime={messagesByRuntime}
-        onAddProject={() => void openPathPicker("addProject")}
-        onStartRuntimeForProject={startRuntimeForSidebarProject}
-        onOpenSessionHistory={openSessionHistory}
-        onSelectProject={(projectId) => dispatch({ type: "select.project", projectId })}
-        onSelectRuntime={(projectId, runtimeId) => dispatch({ type: "select.runtime", projectId, runtimeId })}
+        compactExpanded={compactSidebarExpanded}
+        onToggleCompact={() => setCompactSidebarExpanded((expanded) => !expanded)}
+        onAddProject={() => {
+          collapseCompactSidebar();
+          void openPathPicker("addProject");
+        }}
+        onStartRuntimeForProject={(projectId) => {
+          collapseCompactSidebar();
+          startRuntimeForSidebarProject(projectId);
+        }}
+        onOpenSessionHistory={(projectId) => {
+          collapseCompactSidebar();
+          openSessionHistory(projectId);
+        }}
+        onOpenCheckpoints={(projectId, runtimeId) => {
+          collapseCompactSidebar();
+          openCheckpointPanel(projectId, runtimeId);
+        }}
+        onSelectProject={(projectId) => {
+          collapseCompactSidebar();
+          dispatch({ type: "select.project", projectId });
+        }}
+        onSelectRuntime={(projectId, runtimeId) => {
+          collapseCompactSidebar();
+          dispatch({ type: "select.runtime", projectId, runtimeId });
+        }}
         onArchiveRuntime={archiveRuntime}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => {
+          collapseCompactSidebar();
+          setSettingsOpen(true);
+        }}
         conversationSummaries={conversationSummaries}
-        subagentRuns={subagentRuns}
       />
 
-      <section className="main-chat">
-        <ChatView
-          operationError={operationError}
-          notice={notice}
-          connectionWarning={connectionWarning}
-          activeRuntime={activeRuntime}
-          conversationSummary={activeRuntimeConversationSummary}
-          messages={conversationMessages}
-          activeRuntimeIsBusy={activeRuntimeIsBusy}
-          subagentRuns={activeRuntimeSubagentRuns}
-          onOpenSubagentRun={(runId) => setSubagentDrawer({ runId })}
-          onCopySubagentOutput={copySubagentOutput}
-          onDismissOperationError={() => dispatch({ type: "clear.operationError" })}
-          onDismissNotice={() => dispatch({ type: "clear.notice" })}
-        />
+      <section className={`main-chat ${settingsOpen ? "settings-mode" : ""}`}>
+        {settingsOpen ? (
+          <SettingsPanel
+            open={settingsOpen}
+            preferences={uiPreferences}
+            projects={projects}
+            sessions={sessions}
+            runtimes={runtimes}
+            conversationSummaries={conversationSummaries}
+            messagesByRuntime={messagesByRuntime}
+            onClose={closeSettings}
+            onChangePreferences={setUiPreferences}
+            onOpenArchivedRuntime={(runtimeId: string) => {
+              send({ type: "conversation.open", runtimeId, limit: 200 }, { notifyOnDisconnected: false });
+            }}
+          />
+        ) : (
+          <>
+            <ChatView
+              operationError={operationError}
+              notice={notice}
+              connectionWarning={connectionWarning}
+              activeRuntime={activeRuntime}
+              conversationSummary={activeRuntimeConversationSummary}
+              messages={conversationMessages}
+              activeRuntimeIsBusy={activeRuntimeIsBusy}
+              hasMoreBefore={activeRuntime ? hasMoreBeforeByRuntime[activeRuntime.id] !== false && conversationMessages.length > 0 : false}
+              subagentRuns={activeRuntimeSubagentRuns}
+              onLoadOlderMessages={activeRuntime ? loadOlderActiveConversationMessages : undefined}
+              onOpenSubagentRun={openSubagentRun}
+              onCopySubagentOutput={copySubagentOutput}
+              onDismissOperationError={dismissOperationError}
+              onDismissNotice={dismissNotice}
+            />
 
-        <Composer
-          prompt={prompt}
-          projectCwd={projectCwd}
-          selectedProject={selectedProject}
-          models={models}
-          selectedModel={selectedModel}
-          selectedThinkingLevel={selectedThinkingLevel}
-          availableThinkingLevels={availableThinkingLevels}
-          responseMode={responseMode}
-          modelPickerOpen={modelPickerOpen}
-          contextUsage={activeRuntimeContextUsage}
-          slashCommands={activeRuntimeCommands}
-          commandMenuOpenSignal={commandMenuOpenSignal}
-          connection={connection}
-          activeRuntime={activeRuntime}
-          activeRuntimeIsBusy={activeRuntimeIsBusy}
-          onSubmit={submitPrompt}
-          onPromptChange={setPrompt}
-          onExecuteCommandInput={executeCommandInput}
-          onOpenPathPicker={() => void openPathPicker("composer")}
-          onAbortRuntime={(runtimeId) => send({ type: "runtime.abort", runtimeId })}
-          onToggleModelPicker={toggleModelPicker}
-          onCloseModelPicker={closeModelPicker}
-          onChooseModel={chooseModel}
-          onChooseThinkingLevel={chooseThinkingLevel}
-          onChooseResponseMode={chooseResponseMode}
-        />
+            <Composer
+              prompt={prompt}
+              projectCwd={projectCwd}
+              selectedProject={selectedProject}
+              models={models}
+              selectedModel={selectedModel}
+              selectedThinkingLevel={selectedThinkingLevel}
+              availableThinkingLevels={availableThinkingLevels}
+              responseMode={responseMode}
+              modelPickerOpen={modelPickerOpen}
+              contextUsage={activeRuntimeContextUsage}
+              activeRuntimeQueue={activeRuntimeQueue}
+              slashCommands={activeRuntimeCommands}
+              commandMenuOpenSignal={commandMenuOpenSignal}
+              connection={connection}
+              activeRuntime={activeRuntime}
+              activeRuntimeIsBusy={activeRuntimeIsBusy}
+              onSubmit={submitPrompt}
+              onPromptChange={setPrompt}
+              onExecuteCommandInput={executeCommandInput}
+              onOpenPathPicker={() => void openPathPicker("composer")}
+              onAbortRuntime={(runtimeId) => send({ type: "runtime.abort", runtimeId })}
+              onToggleModelPicker={toggleModelPicker}
+              onCloseModelPicker={closeModelPicker}
+              onChooseModel={chooseModel}
+              onChooseThinkingLevel={chooseThinkingLevel}
+              onChooseResponseMode={chooseResponseMode}
+            />
+          </>
+        )}
       </section>
 
       <SubagentDetailDrawer
@@ -269,16 +403,6 @@ export function App() {
       <AppModals
         extensionUiRequest={extensionUiDialog?.request}
         onRespondExtensionUi={sendExtensionUiResponse}
-        settingsOpen={settingsOpen}
-        preferences={uiPreferences}
-        projects={projects}
-        conversationSummaries={conversationSummaries}
-        messagesByRuntime={messagesByRuntime}
-        onCloseSettings={closeSettings}
-        onChangePreferences={setUiPreferences}
-        onOpenArchivedRuntime={(runtimeId: string) => {
-          send({ type: "conversation.open", runtimeId, limit: 200 }, { notifyOnDisconnected: false });
-        }}
         sessionHistoryProject={sessionHistoryProject}
         sessions={sessions}
         runtimes={runtimes}
@@ -287,6 +411,14 @@ export function App() {
         onCloseSessionHistory={closeSessionHistory}
         onResumeSession={resumeSessionFromHistory}
         onSelectRuntime={(projectId: string, runtimeId: string) => dispatch({ type: "select.runtime", projectId, runtimeId })}
+        checkpointPanelProject={checkpointPanelProject}
+        checkpointPanelRuntime={checkpointPanelRuntime}
+        checkpoints={checkpointPanelCheckpoints}
+        pendingCheckpointActionId={pendingCheckpointActionId}
+        onCloseCheckpointPanel={closeCheckpointPanel}
+        onRefreshCheckpoints={() => refreshCheckpoints(checkpointPanelProjectId)}
+        onRestoreCheckpoint={(checkpointId: string, restoreFiles: boolean) => restoreCheckpoint(checkpointPanelRuntime, checkpointId, restoreFiles)}
+        onFastForwardCheckpoint={(restoreFiles: boolean) => fastForward(checkpointPanelRuntime, restoreFiles)}
         pathPicker={pathPicker}
         onChoosePickerCwd={choosePickerCwd}
         pathPickerTitle={pathPickerTitle}

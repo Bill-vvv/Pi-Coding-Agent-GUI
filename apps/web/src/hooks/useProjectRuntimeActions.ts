@@ -38,6 +38,7 @@ export function useProjectRuntimeActions({
   markRuntimeConversationStale,
 }: UseProjectRuntimeActionsOptions) {
   const pendingPromptRef = useRef<PendingPrompt | undefined>(undefined);
+  const pendingRuntimePromptRef = useRef(new Map<string, string>());
   const pendingProjectStartRef = useRef<PendingProjectStart | undefined>(undefined);
   const [prompt, setPrompt] = useState("");
 
@@ -63,11 +64,21 @@ export function useProjectRuntimeActions({
         pendingProjectStartRef.current = undefined;
         restorePendingMessage(pending.message);
       }
+      if (event.command === "runtime.prompt" && event.requestId) {
+        const pendingMessage = pendingRuntimePromptRef.current.get(event.requestId);
+        pendingRuntimePromptRef.current.delete(event.requestId);
+        restorePendingMessage(pendingMessage);
+      }
       if (isRuntimeLaunchCommand(event.command) && pendingPromptRef.current && event.requestId === pendingPromptRef.current.requestId) {
         const pending = pendingPromptRef.current;
         pendingPromptRef.current = undefined;
         restorePendingMessage(pending.message);
       }
+      return;
+    }
+
+    if (event.command === "runtime.prompt" && event.requestId) {
+      pendingRuntimePromptRef.current.delete(event.requestId);
       return;
     }
 
@@ -79,7 +90,12 @@ export function useProjectRuntimeActions({
       if (pendingPromptRef.current && event.requestId === pendingPromptRef.current.requestId && projectId === pendingPromptRef.current.projectId) {
         const pending = pendingPromptRef.current;
         pendingPromptRef.current = undefined;
-        if (!send({ type: "runtime.prompt", runtimeId, message: pending.message })) restorePendingMessage(pending.message);
+        const requestId = crypto.randomUUID();
+        if (send({ type: "runtime.prompt", requestId, runtimeId, message: pending.message })) {
+          pendingRuntimePromptRef.current.set(requestId, pending.message);
+        } else {
+          restorePendingMessage(pending.message);
+        }
       }
     }
   }
@@ -88,6 +104,7 @@ export function useProjectRuntimeActions({
     const pendingPrompt = pendingPromptRef.current;
     pendingPromptRef.current = undefined;
     restorePendingMessage(pendingPrompt?.message);
+    pendingRuntimePromptRef.current.clear();
 
     const pendingProjectStart = pendingProjectStartRef.current;
     if (!pendingProjectStart) return;
@@ -207,7 +224,9 @@ export function useProjectRuntimeActions({
 
     if (activeRuntime?.status === "running") {
       const queuedBehavior = activeRuntimeIsBusy ? streamingBehavior ?? "steer" : undefined;
-      if (send({ type: "runtime.prompt", runtimeId: activeRuntime.id, message, streamingBehavior: queuedBehavior })) {
+      const requestId = crypto.randomUUID();
+      if (send({ type: "runtime.prompt", requestId, runtimeId: activeRuntime.id, message, streamingBehavior: queuedBehavior })) {
+        pendingRuntimePromptRef.current.set(requestId, message);
         setPrompt("");
       }
       return;

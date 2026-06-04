@@ -75,9 +75,8 @@ export class SubagentRunStore {
     update.run(timestamp, timestamp, STALE_SUBAGENT_ERROR);
   }
 
-  listChildSessionFiles(limit = 2000): Set<string> {
-    const boundedLimit = Math.max(1, Math.min(limit, 5000));
-    const rows = this.db.prepare("select runs_json from subagent_runs order by updated_at desc limit ?").all(boundedLimit) as Array<{ runs_json: string }>;
+  listChildSessionFiles(): Set<string> {
+    const rows = this.db.prepare("select runs_json from subagent_runs").all() as Array<{ runs_json: string }>;
     const files = new Set<string>();
     for (const row of rows) {
       for (const child of parseRunsJson(row.runs_json)) {

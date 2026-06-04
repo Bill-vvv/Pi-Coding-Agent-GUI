@@ -36,6 +36,7 @@ export function buildRuntimeConversationSummaries({
       detail: liveSummary.detail ?? (liveSummary.title !== persistedSummary.title ? liveSummary.title : persistedSummary.detail),
       updatedAt: Math.max(persistedSummary.updatedAt ?? 0, liveSummary.updatedAt ?? 0) || undefined,
       messageCount: Math.max(persistedSummary.messageCount, liveSummary.messageCount),
+      latestAssistantCompletedAt: Math.max(persistedSummary.latestAssistantCompletedAt ?? 0, liveSummary.latestAssistantCompletedAt ?? 0) || undefined,
     });
   }
 
@@ -47,6 +48,20 @@ export function buildRuntimeConversationSummaries({
       return leftOrder - rightOrder || (right.updatedAt ?? 0) - (left.updatedAt ?? 0);
     })
     .slice(0, boundedLimit);
+}
+
+export function runtimeConversationPageBefore(db: AppDatabase, runtimeId: string, beforeMessageId: string, limit?: number): ServerEvent | undefined {
+  const runtime = db.getRuntime(runtimeId);
+  if (!runtime) return undefined;
+  const page = db.listConversationMessagesBefore(runtimeId, beforeMessageId, limit ?? 100);
+  return {
+    type: "conversation.page",
+    runtimeId: runtime.id,
+    projectId: runtime.projectId,
+    beforeMessageId,
+    messages: page.messages,
+    hasMoreBefore: page.hasMoreBefore,
+  };
 }
 
 export function runtimeConversationSnapshot(db: AppDatabase, runtimes: Map<string, ManagedRuntime>, runtimeId: string, limit?: number): ServerEvent | undefined {

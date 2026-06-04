@@ -31,6 +31,12 @@
   --ray-distance: calc(var(--thinking-size) * 0.36);
 }
 
+.thinking-superslow {
+  --thinking-duration: 14000ms;
+  --thinking-ink: var(--color-text-primary);
+  --ray-distance: calc(var(--thinking-size) * 0.34);
+}
+
 .thinking-sharp {
   --thinking-duration: 1650ms;
   --ray-distance: calc(var(--thinking-size) * 0.5);
@@ -124,7 +130,7 @@
   height: calc(var(--thinking-size) * 0.34);
   border: max(1px, calc(var(--thinking-size) * 0.018)) solid currentColor;
   border-right-color: transparent;
-  border-bottom-color: rgb(241 238 232 / 34%);
+  border-bottom-color: var(--color-thinking-glint);
   border-radius: 50%;
   transform: translate(-50%, -50%) rotate(-10deg) scale(0.2);
 }
@@ -176,7 +182,7 @@
   height: calc(var(--thinking-size) * 0.2 * var(--ray-length, 1));
   border-radius: 999px;
   opacity: 0;
-  background: linear-gradient(to bottom, currentColor 0%, currentColor 34%, rgb(241 238 232 / 38%) 68%, transparent 100%);
+  background: linear-gradient(to bottom, currentColor 0%, currentColor 34%, var(--color-thinking-glint) 68%, transparent 100%);
   transform: translate(-50%, 0) rotate(var(--ray-angle)) translateY(0) scaleY(0.2);
   transform-origin: 50% 0%;
   animation: thinking-ray-bigbang var(--thinking-duration) cubic-bezier(0.12, 0.86, 0.18, 1) infinite;
@@ -526,6 +532,44 @@
   animation: none;
 }
 
+.thinking-superslow .thinking-core {
+  animation: thinking-core-logo-bigbang var(--thinking-duration) linear infinite;
+}
+
+.thinking-superslow .thinking-core::before {
+  animation: thinking-core-logo-lobe-a var(--thinking-duration) linear infinite;
+}
+
+.thinking-superslow .thinking-core::after {
+  animation: thinking-core-logo-lobe-b var(--thinking-duration) linear infinite;
+}
+
+.sidebar-logo.is-collapsing .thinking-core {
+  animation: thinking-core-logo-collapse 1180ms linear both;
+}
+
+.sidebar-logo.is-collapsing .thinking-core::before {
+  animation: thinking-core-logo-collapse-lobe-a 1180ms linear both;
+}
+
+.sidebar-logo.is-collapsing .thinking-core::after {
+  animation: thinking-core-logo-collapse-lobe-b 1180ms linear both;
+}
+
+.thinking-superslow .thinking-line,
+.thinking-superslow .thinking-rays,
+.thinking-superslow .thinking-ray,
+.thinking-superslow .thinking-event-horizon,
+.thinking-superslow .thinking-accretion {
+  opacity: 0;
+  animation: none;
+}
+
+.thinking-superslow .thinking-line::before,
+.thinking-superslow .thinking-line::after {
+  animation: none;
+}
+
 .thinking-burst .thinking-core {
   animation: thinking-core-burst var(--thinking-duration) linear infinite;
 }
@@ -538,7 +582,7 @@
   width: max(1px, calc(var(--thinking-size) * 0.016));
   height: calc(var(--thinking-size) * 0.16 * var(--ray-length, 1));
   clip-path: polygon(50% 0, 92% 22%, 66% 100%, 34% 100%, 8% 22%);
-  background: linear-gradient(to bottom, currentColor 0%, currentColor 22%, rgb(241 238 232 / 48%) 52%, transparent 100%);
+  background: linear-gradient(to bottom, currentColor 0%, currentColor 22%, var(--color-thinking-glint) 52%, transparent 100%);
   animation: thinking-ray-burst var(--thinking-duration) cubic-bezier(0.06, 0.92, 0.12, 1) infinite;
 }
 
@@ -558,7 +602,7 @@
 .thinking-blackhole .thinking-ray {
   width: max(1px, calc(var(--thinking-size) * 0.016));
   height: calc(var(--thinking-size) * 0.18 * var(--ray-length, 1));
-  background: linear-gradient(to top, transparent 0%, rgb(241 238 232 / 34%) 36%, currentColor 100%);
+  background: linear-gradient(to top, transparent 0%, var(--color-thinking-glint) 36%, currentColor 100%);
   animation: thinking-ray-blackhole var(--thinking-duration) cubic-bezier(0.7, 0, 0.16, 1) infinite;
 }
 
@@ -717,6 +761,258 @@
   }
 
   91%, 100% {
+    opacity: 0;
+    transform: translate(calc(var(--thinking-size) * 0.018), 0) scaleX(0.06) scaleY(0.03);
+  }
+}
+
+@keyframes thinking-core-logo-bigbang {
+  0% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.66);
+    height: calc(var(--thinking-size) * 0.66);
+    border-radius: 47% 53% 52% 48% / 50% 52% 48% 50%;
+    transform: translate(-50%, -50%) scaleX(1.03) scaleY(0.97) rotate(-1deg);
+    animation-timing-function: cubic-bezier(0.36, 0, 0.24, 1);
+  }
+
+  11% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.68);
+    height: calc(var(--thinking-size) * 0.6);
+    border-radius: 36% 64% 51% 49% / 59% 34% 66% 41%;
+    transform: translate(-50%, -50%) translate(calc(var(--thinking-size) * -0.006), calc(var(--thinking-size) * 0.004)) scaleX(1.15) scaleY(0.91) skewX(-2deg) rotate(2deg);
+    animation-timing-function: cubic-bezier(0.3, 0, 0.22, 1);
+  }
+
+  23% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.61);
+    height: calc(var(--thinking-size) * 0.72);
+    border-radius: 58% 42% 35% 65% / 41% 67% 33% 59%;
+    transform: translate(-50%, -50%) translate(calc(var(--thinking-size) * 0.007), calc(var(--thinking-size) * -0.004)) scaleX(0.92) scaleY(1.12) skewY(1deg) rotate(-4deg);
+    animation-timing-function: cubic-bezier(0.34, 0, 0.26, 1);
+  }
+
+  36% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.72);
+    height: calc(var(--thinking-size) * 0.56);
+    border-radius: 32% 68% 60% 40% / 65% 31% 69% 35%;
+    transform: translate(-50%, -50%) translate(calc(var(--thinking-size) * -0.009), calc(var(--thinking-size) * 0.006)) scaleX(1.2) scaleY(0.86) skewX(-4deg) rotate(5deg);
+    animation-timing-function: cubic-bezier(0.28, 0, 0.2, 1);
+  }
+
+  49% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.59);
+    height: calc(var(--thinking-size) * 0.74);
+    border-radius: 63% 37% 44% 56% / 36% 70% 30% 64%;
+    transform: translate(-50%, -50%) translate(calc(var(--thinking-size) * 0.008), calc(var(--thinking-size) * -0.006)) scaleX(0.9) scaleY(1.16) skewY(-3deg) rotate(-5deg);
+    animation-timing-function: cubic-bezier(0.3, 0, 0.18, 1);
+  }
+
+  62% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.7);
+    height: calc(var(--thinking-size) * 0.61);
+    border-radius: 39% 61% 65% 35% / 58% 38% 62% 42%;
+    transform: translate(-50%, -50%) translate(calc(var(--thinking-size) * -0.004), calc(var(--thinking-size) * 0.004)) scaleX(1.12) scaleY(0.93) skewX(3deg) rotate(3deg);
+    animation-timing-function: cubic-bezier(0.26, 0, 0.2, 1);
+  }
+
+  75% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.64);
+    height: calc(var(--thinking-size) * 0.7);
+    border-radius: 54% 46% 38% 62% / 44% 63% 37% 56%;
+    transform: translate(-50%, -50%) translate(calc(var(--thinking-size) * 0.006), calc(var(--thinking-size) * -0.003)) scaleX(0.98) scaleY(1.1) skewY(2deg) rotate(-2deg);
+    animation-timing-function: cubic-bezier(0.32, 0, 0.22, 1);
+  }
+
+  88% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.69);
+    height: calc(var(--thinking-size) * 0.6);
+    border-radius: 35% 65% 50% 50% / 62% 36% 64% 38%;
+    transform: translate(-50%, -50%) translate(calc(var(--thinking-size) * -0.005), calc(var(--thinking-size) * 0.005)) scaleX(1.13) scaleY(0.92) skewX(-2deg) rotate(2deg);
+    animation-timing-function: cubic-bezier(0.34, 0, 0.24, 1);
+  }
+
+  100% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.66);
+    height: calc(var(--thinking-size) * 0.66);
+    border-radius: 47% 53% 52% 48% / 50% 52% 48% 50%;
+    transform: translate(-50%, -50%) scaleX(1.03) scaleY(0.97) rotate(-1deg);
+  }
+}
+
+@keyframes thinking-core-logo-lobe-a {
+  0% {
+    opacity: 0.34;
+    border-radius: 42% 58% 46% 54% / 58% 42% 56% 44%;
+    transform: translate(calc(var(--thinking-size) * -0.04), calc(var(--thinking-size) * 0.016)) scaleX(1.08) scaleY(0.88) rotate(-5deg);
+  }
+
+  14% {
+    opacity: 0.42;
+    border-radius: 31% 69% 45% 55% / 67% 32% 68% 33%;
+    transform: translate(calc(var(--thinking-size) * -0.058), calc(var(--thinking-size) * 0.012)) scaleX(1.42) scaleY(0.72) rotate(-10deg);
+  }
+
+  28% {
+    opacity: 0.27;
+    border-radius: 65% 35% 53% 47% / 38% 67% 33% 62%;
+    transform: translate(calc(var(--thinking-size) * -0.026), calc(var(--thinking-size) * 0.026)) scaleX(0.86) scaleY(1.12) rotate(8deg);
+  }
+
+  43% {
+    opacity: 0.39;
+    border-radius: 36% 64% 42% 58% / 64% 36% 60% 40%;
+    transform: translate(calc(var(--thinking-size) * -0.066), calc(var(--thinking-size) * 0.008)) scaleX(1.52) scaleY(0.68) rotate(-4deg);
+  }
+
+  57% {
+    opacity: 0.3;
+    border-radius: 60% 40% 37% 63% / 40% 65% 35% 60%;
+    transform: translate(calc(var(--thinking-size) * -0.03), calc(var(--thinking-size) * 0.022)) scaleX(0.92) scaleY(1.06) rotate(7deg);
+  }
+
+  72% {
+    opacity: 0.43;
+    border-radius: 33% 67% 58% 42% / 61% 34% 66% 39%;
+    transform: translate(calc(var(--thinking-size) * -0.052), calc(var(--thinking-size) * 0.018)) scaleX(1.26) scaleY(0.8) rotate(-7deg);
+  }
+
+  86% {
+    opacity: 0.31;
+    border-radius: 55% 45% 49% 51% / 42% 59% 41% 58%;
+    transform: translate(calc(var(--thinking-size) * -0.034), calc(var(--thinking-size) * 0.012)) scaleX(0.98) scaleY(0.98) rotate(5deg);
+  }
+
+  100% {
+    opacity: 0.34;
+    border-radius: 42% 58% 46% 54% / 58% 42% 56% 44%;
+    transform: translate(calc(var(--thinking-size) * -0.04), calc(var(--thinking-size) * 0.016)) scaleX(1.08) scaleY(0.88) rotate(-5deg);
+  }
+}
+
+@keyframes thinking-core-logo-lobe-b {
+  0% {
+    opacity: 0.36;
+    border-radius: 58% 42% 62% 38% / 42% 58% 44% 56%;
+    transform: translate(calc(var(--thinking-size) * 0.048), calc(var(--thinking-size) * -0.016)) scaleX(0.94) scaleY(1.02) rotate(6deg);
+  }
+
+  12% {
+    opacity: 0.24;
+    border-radius: 41% 59% 58% 42% / 63% 37% 57% 43%;
+    transform: translate(calc(var(--thinking-size) * 0.026), calc(var(--thinking-size) * -0.024)) scaleX(1.08) scaleY(0.82) rotate(-5deg);
+  }
+
+  27% {
+    opacity: 0.43;
+    border-radius: 66% 34% 38% 62% / 35% 70% 30% 65%;
+    transform: translate(calc(var(--thinking-size) * 0.062), calc(var(--thinking-size) * -0.02)) scaleX(0.86) scaleY(1.22) rotate(11deg);
+  }
+
+  41% {
+    opacity: 0.28;
+    border-radius: 44% 56% 64% 36% / 56% 43% 57% 44%;
+    transform: translate(calc(var(--thinking-size) * 0.036), calc(var(--thinking-size) * -0.008)) scaleX(1.22) scaleY(0.76) rotate(-6deg);
+  }
+
+  58% {
+    opacity: 0.42;
+    border-radius: 61% 39% 43% 57% / 37% 64% 40% 60%;
+    transform: translate(calc(var(--thinking-size) * 0.058), calc(var(--thinking-size) * -0.026)) scaleX(0.9) scaleY(1.14) rotate(8deg);
+  }
+
+  73% {
+    opacity: 0.3;
+    border-radius: 39% 61% 61% 39% / 60% 39% 55% 45%;
+    transform: translate(calc(var(--thinking-size) * 0.032), calc(var(--thinking-size) * -0.018)) scaleX(1.12) scaleY(0.88) rotate(-3deg);
+  }
+
+  88% {
+    opacity: 0.45;
+    border-radius: 64% 36% 55% 45% / 35% 66% 37% 63%;
+    transform: translate(calc(var(--thinking-size) * 0.052), calc(var(--thinking-size) * -0.014)) scaleX(0.92) scaleY(1.06) rotate(7deg);
+  }
+
+  100% {
+    opacity: 0.36;
+    border-radius: 58% 42% 62% 38% / 42% 58% 44% 56%;
+    transform: translate(calc(var(--thinking-size) * 0.048), calc(var(--thinking-size) * -0.016)) scaleX(0.94) scaleY(1.02) rotate(6deg);
+  }
+}
+
+@keyframes thinking-core-logo-collapse {
+  0% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.66);
+    height: calc(var(--thinking-size) * 0.66);
+    border-radius: 47% 53% 52% 48% / 50% 52% 48% 50%;
+    transform: translate(-50%, -50%) scaleX(1.03) scaleY(0.97) rotate(-1deg);
+  }
+
+  58% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.62);
+    height: calc(var(--thinking-size) * 0.62);
+    border-radius: 34% 66% 40% 60% / 64% 32% 68% 36%;
+    transform: translate(-50%, -50%) scaleX(2.05) scaleY(0.065) skewX(-10deg) rotate(-2deg);
+  }
+
+  78% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.14);
+    height: calc(var(--thinking-size) * 0.085);
+    border-radius: 999px;
+    transform: translate(-50%, -50%) scaleX(1.22) scaleY(0.38) skewX(7deg);
+  }
+
+  100% {
+    opacity: 1;
+    width: calc(var(--thinking-size) * 0.095);
+    height: calc(var(--thinking-size) * 0.095);
+    border-radius: 999px;
+    transform: translate(-50%, -50%) scale(0.38);
+  }
+}
+
+@keyframes thinking-core-logo-collapse-lobe-a {
+  0% {
+    opacity: 0.34;
+    border-radius: 42% 58% 46% 54% / 58% 42% 56% 44%;
+    transform: translate(calc(var(--thinking-size) * -0.04), calc(var(--thinking-size) * 0.016)) scaleX(1.08) scaleY(0.88) rotate(-5deg);
+  }
+
+  58% {
+    opacity: 0.24;
+    transform: translate(calc(var(--thinking-size) * -0.072), calc(var(--thinking-size) * 0.012)) scaleX(1.58) scaleY(0.14) rotate(-9deg);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(calc(var(--thinking-size) * -0.022), 0) scaleX(0.08) scaleY(0.03);
+  }
+}
+
+@keyframes thinking-core-logo-collapse-lobe-b {
+  0% {
+    opacity: 0.36;
+    border-radius: 58% 42% 62% 38% / 42% 58% 44% 56%;
+    transform: translate(calc(var(--thinking-size) * 0.048), calc(var(--thinking-size) * -0.016)) scaleX(0.94) scaleY(1.02) rotate(6deg);
+  }
+
+  60% {
+    opacity: 0.2;
+    transform: translate(calc(var(--thinking-size) * 0.074), calc(var(--thinking-size) * -0.004)) scaleX(1.18) scaleY(0.1) rotate(8deg);
+  }
+
+  100% {
     opacity: 0;
     transform: translate(calc(var(--thinking-size) * 0.018), 0) scaleX(0.06) scaleY(0.03);
   }
@@ -1107,9 +1403,16 @@
 
 @media (prefers-reduced-motion: reduce) {
   .thinking-core,
+  .thinking-core::before,
+  .thinking-core::after,
   .thinking-line,
   .thinking-ray {
     animation: none !important;
+  }
+
+  .thinking-core::before,
+  .thinking-core::after {
+    opacity: 0;
   }
 
   .thinking-core {

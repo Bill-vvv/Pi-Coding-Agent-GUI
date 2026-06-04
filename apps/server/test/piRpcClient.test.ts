@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { PiRpcClient } from "../src/runtime/piRpcClient.js";
+import { createPiRuntimeClient } from "../src/runtime/piRuntimeFactory.js";
 
 function createFakePiBin(script: string): string {
   const dir = mkdtempSync(join(tmpdir(), "pi-gui-fake-pi-"));
@@ -20,6 +21,16 @@ function withPathPrefix<T>(prefix: string, run: () => Promise<T>): Promise<T> {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
   });
+}
+
+async function withCwd<T>(cwd: string, run: () => Promise<T>): Promise<T> {
+  const previousCwd = process.cwd();
+  process.chdir(cwd);
+  try {
+    return await run();
+  } finally {
+    process.chdir(previousCwd);
+  }
 }
 
 function onceClientEvent<T extends unknown[]>(client: PiRpcClient, event: "event" | "stderr" | "error" | "exit"): Promise<T> {
@@ -77,6 +88,53 @@ process.stdin.resume();
     client.stop();
     await onceClientEvent(client, "exit");
   });
+});
+
+test("PiRpcClient passes extension paths as repeated --extension args", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2) }) + "\\n");
+process.stdin.resume();
+`);
+
+  await withPathPrefix(fakeBin, async () => {
+    const client = new PiRpcClient(process.cwd(), { extensionPaths: ["/tmp/one-extension.ts", "/tmp/two-extension.ts"] });
+    const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
+
+    client.start();
+    const started = (await startedPromise) as { argv: string[] };
+
+    assert.deepEqual(started.argv, ["--mode", "rpc", "--extension", "/tmp/one-extension.ts", "--extension", "/tmp/two-extension.ts"]);
+
+    client.stop();
+    await onceClientEvent(client, "exit");
+  });
+});
+
+test("createPiRuntimeClient launches GUI-managed runtimes with internal extensions", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2) }) + "\\n");
+process.stdin.resume();
+`);
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-factory-cwd-"));
+
+  await withCwd(cwd, () =>
+    withPathPrefix(fakeBin, async () => {
+      const { client } = createPiRuntimeClient({ runtimeId: "runtime-extensions", cwd, model: "openai:gpt-5", thinkingLevel: "high" });
+      const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
+
+      client.start();
+      const started = (await startedPromise) as { argv: string[] };
+      const extensionPaths = extensionArgsFromArgv(started.argv);
+
+      assert.equal(started.argv.slice(0, 6).join("\0"), ["--mode", "rpc", "--model", "openai:gpt-5", "--thinking", "high"].join("\0"));
+      assert.equal(extensionPaths.length, 2);
+      assert.ok(extensionPaths.some((path) => /piServiceTierExtension\.(?:ts|js)$/.test(path)));
+      assert.ok(extensionPaths.some((path) => /piReadyNotificationExtension\.(?:ts|js)$/.test(path)));
+
+      client.stop();
+      await onceClientEvent(client, "exit");
+    }),
+  );
 });
 
 test("PiRpcClient writes commands to stdin as LF-delimited JSONL", async () => {
@@ -161,4 +219,12 @@ process.stdin.resume();
 
 function readText(path: string): string {
   return readFileSync(path, "utf8");
+}
+
+function extensionArgsFromArgv(argv: string[]): string[] {
+  const paths: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === "--extension" && argv[index + 1]) paths.push(argv[index + 1]);
+  }
+  return paths;
 }

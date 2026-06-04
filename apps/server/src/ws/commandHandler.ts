@@ -6,6 +6,7 @@ import { isRecord } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
 import { parseClientCommand } from "../protocol/parseClientCommand.js";
 import type { RuntimeSupervisor } from "../runtime/runtimeSupervisor.js";
+import { listProjectRewindCheckpoints } from "../services/checkpointStoreService.js";
 import { indexKnownPiSessions } from "../services/sessionIndexService.js";
 import type { WsClient } from "./wsHub.js";
 
@@ -68,6 +69,36 @@ export function createSocketMessageHandler({ db, supervisor, send, broadcast }: 
           sendResult(send, socket, command, true, { runtime });
           break;
         }
+        case "checkpoint.list": {
+          const project = db.getProject(command.projectId);
+          if (!project) throw new Error(`Project not found: ${command.projectId}`);
+          const checkpoints = await listProjectRewindCheckpoints(project);
+          send(socket, { type: "checkpoint.list", projectId: project.id, checkpoints });
+          sendResult(send, socket, command, true, { checkpoints });
+          break;
+        }
+        case "checkpoint.restore": {
+          assertCommandToken(command.checkpointId, "checkpointId");
+          const runtime = supervisor.getRuntime(command.runtimeId);
+          if (!runtime) throw new Error(`Runtime not found: ${command.runtimeId}`);
+          const project = db.getProject(runtime.projectId);
+          if (!project) throw new Error(`Project not found: ${runtime.projectId}`);
+          const checkpoints = await listProjectRewindCheckpoints(project);
+          const checkpoint = checkpoints.find((item) => item.id === command.checkpointId || item.id.startsWith(command.checkpointId) || item.sessionEntryId === command.checkpointId);
+          if (!checkpoint) throw new Error(`Checkpoint not found: ${command.checkpointId}`);
+          const message = command.restoreFiles ? `/restore ${checkpoint.id} --force` : `/restore ${checkpoint.id} --no-restore --force`;
+          await supervisor.prompt(command.runtimeId, message);
+          sendResult(send, socket, command, true, { checkpointId: checkpoint.id, restoreFiles: command.restoreFiles });
+          break;
+        }
+        case "checkpoint.fastForward": {
+          const runtime = supervisor.getRuntime(command.runtimeId);
+          if (!runtime) throw new Error(`Runtime not found: ${command.runtimeId}`);
+          const message = command.restoreFiles ? "/ff --force" : "/ff --no-restore --force";
+          await supervisor.prompt(command.runtimeId, message);
+          sendResult(send, socket, command, true, { restoreFiles: command.restoreFiles });
+          break;
+        }
         case "settings.get": {
           const settings = db.getSettings();
           send(socket, { type: "settings.updated", settings });
@@ -116,7 +147,7 @@ export function createSocketMessageHandler({ db, supervisor, send, broadcast }: 
           break;
         }
         case "runtime.prompt": {
-          supervisor.prompt(command.runtimeId, command.message, command.streamingBehavior);
+          await supervisor.prompt(command.runtimeId, command.message, command.streamingBehavior);
           sendResult(send, socket, command, true);
           break;
         }
@@ -148,6 +179,13 @@ export function createSocketMessageHandler({ db, supervisor, send, broadcast }: 
           sendResult(send, socket, command, true, { count: snapshot.type === "conversation.snapshot" ? snapshot.messages.length : 0 });
           break;
         }
+        case "conversation.page": {
+          const page = supervisor.conversationPageBefore(command.runtimeId, command.beforeMessageId, command.limit);
+          if (!page) throw new Error(`Runtime not found: ${command.runtimeId}`);
+          send(socket, page);
+          sendResult(send, socket, command, true, { count: page.type === "conversation.page" ? page.messages.length : 0 });
+          break;
+        }
         case "subagent.detail.open": {
           const detail = supervisor.subagentDetail(command.runId, command.childRunId, command.limit);
           send(socket, detail);
@@ -165,6 +203,12 @@ export function createSocketMessageHandler({ db, supervisor, send, broadcast }: 
       sendResult(send, socket, command, false, undefined, (error as Error).message);
     }
   };
+}
+
+function assertCommandToken(value: string, field: string): void {
+  if (!value || /\s/.test(value)) {
+    throw new Error(`Invalid ${field}`);
+  }
 }
 
 function sendResult(

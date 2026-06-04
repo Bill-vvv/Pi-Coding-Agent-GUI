@@ -1,9 +1,9 @@
-import type { ConversationMessage, ExtensionUiRequest, ExtensionUiResponse, GuiSession, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
-import type { ConnectionState, DirectoryEntry, UiPreferences } from "../types";
+import type { ExtensionUiRequest, ExtensionUiResponse, GuiSession, Project, RewindCheckpoint, Runtime } from "@pi-gui/shared";
+import type { ConnectionState, DirectoryEntry } from "../types";
+import { CheckpointPanel } from "./CheckpointPanel";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { PathPickerModal } from "./PathPickerModal";
 import { SessionHistoryModal } from "./SessionHistoryModal";
-import { SettingsModal } from "./SettingsModal";
 
 type PathPickerState = {
   open: boolean;
@@ -19,22 +19,22 @@ type PathPickerState = {
 type AppModalsProps = {
   extensionUiRequest?: ExtensionUiRequest;
   onRespondExtensionUi: (response: ExtensionUiResponse) => void;
-  settingsOpen: boolean;
-  preferences: UiPreferences;
-  projects: Project[];
-  conversationSummaries: Record<string, RuntimeConversationSummary>;
-  messagesByRuntime: Record<string, ConversationMessage[]>;
-  onCloseSettings: () => void;
-  onChangePreferences: (preferences: UiPreferences) => void;
-  onOpenArchivedRuntime: (runtimeId: string) => void;
   sessionHistoryProject?: Project;
   sessions: GuiSession[];
+  checkpointPanelProject?: Project;
+  checkpointPanelRuntime?: Runtime;
+  checkpoints: RewindCheckpoint[];
+  pendingCheckpointActionId?: string;
   runtimes: Runtime[];
   connection: ConnectionState;
   pendingHistoryRestoreId?: string;
   onCloseSessionHistory: () => void;
   onResumeSession: (sessionId: string) => void;
   onSelectRuntime: (projectId: string, runtimeId: string) => void;
+  onCloseCheckpointPanel: () => void;
+  onRefreshCheckpoints: () => void;
+  onRestoreCheckpoint: (checkpointId: string, restoreFiles: boolean) => void;
+  onFastForwardCheckpoint: (restoreFiles: boolean) => void;
   pathPicker: PathPickerState;
   onChoosePickerCwd: () => void;
   pathPickerTitle: string;
@@ -44,22 +44,22 @@ type AppModalsProps = {
 export function AppModals({
   extensionUiRequest,
   onRespondExtensionUi,
-  settingsOpen,
-  preferences,
-  projects,
-  conversationSummaries,
-  messagesByRuntime,
-  onCloseSettings,
-  onChangePreferences,
-  onOpenArchivedRuntime,
   sessionHistoryProject,
   sessions,
+  checkpointPanelProject,
+  checkpointPanelRuntime,
+  checkpoints,
+  pendingCheckpointActionId,
   runtimes,
   connection,
   pendingHistoryRestoreId,
   onCloseSessionHistory,
   onResumeSession,
   onSelectRuntime,
+  onCloseCheckpointPanel,
+  onRefreshCheckpoints,
+  onRestoreCheckpoint,
+  onFastForwardCheckpoint,
   pathPicker,
   onChoosePickerCwd,
   pathPickerTitle,
@@ -73,19 +73,6 @@ export function AppModals({
         onCancel={() => onRespondExtensionUi({ cancelled: true })}
       />
 
-      <SettingsModal
-        open={settingsOpen}
-        preferences={preferences}
-        projects={projects}
-        sessions={sessions}
-        runtimes={runtimes}
-        conversationSummaries={conversationSummaries}
-        messagesByRuntime={messagesByRuntime}
-        onClose={onCloseSettings}
-        onChangePreferences={onChangePreferences}
-        onOpenArchivedRuntime={onOpenArchivedRuntime}
-      />
-
       <SessionHistoryModal
         open={Boolean(sessionHistoryProject)}
         project={sessionHistoryProject}
@@ -96,6 +83,19 @@ export function AppModals({
         onClose={onCloseSessionHistory}
         onResumeSession={onResumeSession}
         onSelectRuntime={onSelectRuntime}
+      />
+
+      <CheckpointPanel
+        open={Boolean(checkpointPanelProject)}
+        project={checkpointPanelProject}
+        runtime={checkpointPanelRuntime}
+        checkpoints={checkpoints}
+        connection={connection}
+        pendingActionId={pendingCheckpointActionId}
+        onClose={onCloseCheckpointPanel}
+        onRefresh={onRefreshCheckpoints}
+        onRestore={onRestoreCheckpoint}
+        onFastForward={onFastForwardCheckpoint}
       />
 
       <PathPickerModal

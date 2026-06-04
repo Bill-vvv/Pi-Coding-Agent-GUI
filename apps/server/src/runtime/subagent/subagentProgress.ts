@@ -29,15 +29,17 @@ export function subagentProgressFromToolPayload(payload: Record<string, unknown>
 }
 
 export function finalTextFromToolPayload(payload: Record<string, unknown>): string | undefined {
-  const source = payload.result ?? payload.partialResult;
+  const source = payload.result;
+  if (source === undefined) return undefined;
+  if (findProgressDetails(source) && !resultHasTextContent(source)) return undefined;
+
   const text = textFromResult(source).trim();
   if (!text || text === "subagent running") return undefined;
   return text;
 }
 
 export function aggregateSubagentStatus(runs: SubagentChildRun[], fallback: SubagentRunStatus, isFinal: boolean): SubagentRunStatus {
-  const hasActiveChild = runs.some((run) => run.status === "pending" || run.status === "running");
-  if (!isFinal && hasActiveChild && fallback !== "failed" && fallback !== "cancelled") return "running";
+  if (!isFinal && fallback !== "failed" && fallback !== "cancelled") return "running";
   if (runs.some((run) => run.status === "failed") || fallback === "failed") return "failed";
   if (runs.some((run) => run.status === "cancelled") || fallback === "cancelled") return "cancelled";
   if (runs.length > 0 && runs.every((run) => run.status === "succeeded")) return "succeeded";
@@ -46,7 +48,7 @@ export function aggregateSubagentStatus(runs: SubagentChildRun[], fallback: Suba
 }
 
 export function subagentRunWithDerivedFields(run: SubagentRun): SubagentRun {
-  const finalText = run.finalText ?? aggregateFinalText(run.runs);
+  const finalText = run.finalText ?? (subagentRunStatusIsTerminal(run.status) ? aggregateFinalText(run.runs) : undefined);
   const errorMessage = run.errorMessage ?? run.runs.find((child) => child.errorMessage)?.errorMessage;
   return {
     ...run,
@@ -62,6 +64,10 @@ function aggregateFinalText(runs: SubagentChildRun[]): string | undefined {
   return completed.map((text, index) => `### Child ${index + 1}\n\n${text}`).join("\n\n---\n\n");
 }
 
+function subagentRunStatusIsTerminal(status: SubagentRunStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
 function findProgressDetails(value: unknown, depth = 0): Record<string, unknown> | undefined {
   if (depth > 4) return undefined;
   if (isRecord(value)) {
@@ -75,6 +81,19 @@ function findProgressDetails(value: unknown, depth = 0): Record<string, unknown>
     }
   }
   return undefined;
+}
+
+function resultHasTextContent(value: unknown, depth = 0): boolean {
+  if (depth > 4 || value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.some((item) => resultHasTextContent(item, depth + 1));
+  if (!isRecord(value) || value.kind === "trellis-subagent-progress") return false;
+
+  if (typeof value.text === "string" && value.text.trim()) return true;
+  if (typeof value.content === "string" && value.content.trim()) return true;
+  if (typeof value.output === "string" && value.output.trim()) return true;
+  if (typeof value.result === "string" && value.result.trim()) return true;
+  return resultHasTextContent(value.content, depth + 1) || resultHasTextContent(value.result, depth + 1);
 }
 
 function normalizeChildRun(value: unknown, index: number, details: Record<string, unknown>): SubagentChildRun[] {

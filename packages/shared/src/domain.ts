@@ -35,6 +35,33 @@ export type GuiSession = {
   runtimeId?: string;
 };
 
+export type RewindCheckpointGit = {
+  available: boolean;
+  root?: string;
+  head?: string;
+  branch?: string;
+  dirty?: boolean;
+  backend?: "patch" | "stash";
+  snapshotId?: string;
+  trackedPatch?: string;
+  stagedPatch?: string;
+  untrackedDir?: string;
+  stashSha?: string;
+  statusPreview?: string;
+  error?: string;
+};
+
+export type RewindCheckpoint = {
+  id: string;
+  projectId: string;
+  cwd: string;
+  sessionFile?: string;
+  sessionEntryId: string;
+  prompt: string;
+  createdAt: number;
+  git: RewindCheckpointGit;
+};
+
 export type GuiEventKind = "pi_event" | "runtime_status" | "stderr" | "error";
 
 export type GuiEvent = {
@@ -172,6 +199,7 @@ export type RuntimeConversationSummary = {
   detail?: string;
   updatedAt?: number;
   messageCount: number;
+  latestAssistantCompletedAt?: number;
 };
 
 export type ConversationDelta = {

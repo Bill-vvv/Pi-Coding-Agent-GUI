@@ -30,8 +30,17 @@ export type ToolNameCount = {
   count: number;
 };
 
+export type SubagentProcessDisplayModel = {
+  run: SubagentRun;
+  status: ToolDisplayStatus;
+  statusLabel: string;
+  summary: string;
+  detail: string;
+  updatedAt: number;
+};
+
 export type ProcessCurrentDisplayModel = {
-  kind: "thinking" | "tool";
+  kind: "thinking" | "tool" | "subagent";
   title: string;
   status: ToolDisplayStatus;
   statusLabel: string;
@@ -45,12 +54,14 @@ export type ToolGroupDisplayModel = {
   summary: string;
   thinkingCount: number;
   toolCount: number;
+  subagentCount: number;
   runningCount: number;
   failedCount: number;
   completedCount: number;
   toolNameCounts: ToolNameCount[];
   thinking: ThinkingDisplayModel[];
   tools: ToolDisplayModel[];
+  subagents: SubagentProcessDisplayModel[];
   current?: ProcessCurrentDisplayModel;
 };
 
@@ -67,14 +78,8 @@ export type ConversationDisplayBlock =
       id: string;
       tools: ConversationMessage[];
       thinkingMessages: ConversationMessage[];
+      subagentRuns: SubagentRun[];
       model: ToolGroupDisplayModel;
-      isStreaming: boolean;
-    }
-  | {
-      type: "subagent_group";
-      id: string;
-      run: SubagentRun;
-      sourceToolMessage?: ConversationMessage;
       isStreaming: boolean;
     };
 
@@ -87,8 +92,6 @@ const TOOL_STATUS_SUFFIX_RE = /\s+(运行中|完成|失败)$/;
 const TOOL_SUMMARY_MAX_CHARS = 150;
 const TOOL_SUMMARY_LINE_MAX_CHARS = 110;
 const TOOL_GROUP_SUMMARY_MAX_ITEMS = 4;
-const PROCESS_PREVIEW_MAX_CHARS = 1600;
-const PROCESS_PREVIEW_MAX_LINES = 18;
 
 export function buildConversationDisplayBlocks(
   messages: ConversationMessage[],
@@ -96,29 +99,33 @@ export function buildConversationDisplayBlocks(
   options: ConversationDisplayOptions = {},
 ): ConversationDisplayBlock[] {
   const blocks: ConversationDisplayBlock[] = [];
+  const displayMessages = dedupeSyntheticSnapshotMessages(messages);
   const subagentRunByToolMessageId = new Map((options.subagentRuns ?? []).map((run) => [run.parentToolMessageId, run]));
   let segmentBlocks: ConversationDisplayBlock[] = [];
   let segmentTools: ConversationMessage[] = [];
   let segmentThinkingMessages: ConversationMessage[] = [];
+  let segmentSubagentRuns: SubagentRun[] = [];
   let segmentUserMessageId = "root";
   let processInsertIndex: number | undefined;
 
   function flushSegment(forceRunning = false) {
-    if (segmentTools.length > 0 || segmentThinkingMessages.length > 0) {
+    if (segmentTools.length > 0 || segmentThinkingMessages.length > 0 || segmentSubagentRuns.length > 0) {
       const insertAt = processInsertIndex ?? segmentBlocks.length;
-      segmentBlocks.splice(insertAt, 0, toolGroupBlock(segmentTools, segmentThinkingMessages, segmentUserMessageId, forceRunning));
+      segmentBlocks.splice(insertAt, 0, toolGroupBlock(segmentTools, segmentThinkingMessages, segmentSubagentRuns, segmentUserMessageId, forceRunning));
     }
 
     blocks.push(...segmentBlocks);
     segmentBlocks = [];
     segmentTools = [];
     segmentThinkingMessages = [];
+    segmentSubagentRuns = [];
     segmentUserMessageId = "root";
     processInsertIndex = undefined;
   }
 
-  for (const message of messages) {
-    if (mode === "normal" && message.role === "assistant" && message.thinking?.trim()) {
+  for (const message of displayMessages) {
+    const hasAssistantThinking = mode === "normal" && message.role === "assistant" && Boolean(message.thinking?.trim());
+    if (hasAssistantThinking) {
       if (processInsertIndex === undefined) processInsertIndex = segmentBlocks.length;
       segmentThinkingMessages.push(message);
     }
@@ -139,7 +146,8 @@ export function buildConversationDisplayBlocks(
     if (displayKind === "tool") {
       const subagentRun = subagentRunByToolMessageId.get(displayMessage.id);
       if (subagentRun) {
-        segmentBlocks.push(subagentGroupBlock(subagentRun, displayMessage));
+        if (processInsertIndex === undefined) processInsertIndex = segmentBlocks.length;
+        segmentSubagentRuns.push(subagentRun);
         continue;
       }
       if (processInsertIndex === undefined) processInsertIndex = segmentBlocks.length;
@@ -172,6 +180,52 @@ export function isLeakedToolCallMessage(message: ConversationMessage): boolean {
   return message.role === "assistant" && isSerializedToolCallText(message.text);
 }
 
+function dedupeSyntheticSnapshotMessages(messages: ConversationMessage[]): ConversationMessage[] {
+  const result: ConversationMessage[] = [];
+  const indexById = new Map<string, number>();
+  const indexBySignature = new Map<string, number>();
+
+  for (const message of messages) {
+    const signature = snapshotDuplicateSignature(message);
+    const signatureIndex = signature ? indexBySignature.get(signature) : undefined;
+    const signatureMatch = signatureIndex !== undefined ? result[signatureIndex] : undefined;
+    if (signatureIndex !== undefined && signatureMatch) {
+      const currentIsSynthetic = isSyntheticSnapshotMessageId(message.id);
+      const matchIsSynthetic = isSyntheticSnapshotMessageId(signatureMatch.id);
+      if (currentIsSynthetic || matchIsSynthetic) {
+        const next = matchIsSynthetic && !currentIsSynthetic ? message : signatureMatch;
+        result[signatureIndex] = next;
+        indexById.delete(signatureMatch.id);
+        indexById.set(next.id, signatureIndex);
+        continue;
+      }
+    }
+
+    const idIndex = indexById.get(message.id);
+    if (idIndex !== undefined) {
+      result[idIndex] = message;
+      if (signature) indexBySignature.set(signature, idIndex);
+      continue;
+    }
+
+    indexById.set(message.id, result.length);
+    if (signature) indexBySignature.set(signature, result.length);
+    result.push(message);
+  }
+
+  return result;
+}
+
+function snapshotDuplicateSignature(message: ConversationMessage): string | undefined {
+  if (message.timestamp === undefined || !Number.isFinite(message.timestamp)) return undefined;
+  if (!message.text && !message.thinking) return undefined;
+  return JSON.stringify([message.role, message.timestamp, message.text, message.thinking ?? "", message.title ?? ""]);
+}
+
+function isSyntheticSnapshotMessageId(id: string): boolean {
+  return /^snapshot-\d+-\d+$/.test(id) || /^tool-snapshot-\d+-\d+$/.test(id) || /^bash-\d+-\d+$/.test(id);
+}
+
 function conversationMessageForDisplay(message: ConversationMessage, mode: ConversationDisplayMode): ConversationMessage | undefined {
   if (mode !== "normal" || message.role !== "assistant") return message;
 
@@ -197,14 +251,16 @@ export function toolDisplayModel(message: ConversationMessage): ToolDisplayModel
   };
 }
 
-export function toolGroupDisplayModel(tools: ConversationMessage[], thinkingMessages: ConversationMessage[] = [], forceRunning = false): ToolGroupDisplayModel {
+export function toolGroupDisplayModel(tools: ConversationMessage[], thinkingMessages: ConversationMessage[] = [], subagentRuns: SubagentRun[] = [], forceRunning = false): ToolGroupDisplayModel {
   const displayTools = tools.map(toolDisplayModel);
   const thinking = thinkingMessages.flatMap(thinkingDisplayModel);
+  const subagents = subagentRuns.map(subagentProcessDisplayModel);
   const thinkingRunningCount = thinking.filter((item) => item.isStreaming).length;
   const toolRunningCount = displayTools.filter((tool) => tool.status === "running").length;
-  const failedCount = displayTools.filter((tool) => tool.status === "failed").length;
-  const runningCount = toolRunningCount + thinkingRunningCount;
-  const completedCount = displayTools.length - toolRunningCount - failedCount;
+  const subagentRunningCount = subagents.filter((item) => item.status === "running").length;
+  const failedCount = displayTools.filter((tool) => tool.status === "failed").length + subagents.filter((item) => item.status === "failed").length;
+  const runningCount = toolRunningCount + thinkingRunningCount + subagentRunningCount;
+  const completedCount = displayTools.length + subagents.length - toolRunningCount - subagentRunningCount - failedCount;
   const isProcessing = forceRunning || runningCount > 0;
   const status: ToolDisplayStatus = isProcessing ? "running" : failedCount > 0 ? "failed" : "completed";
   const toolNameCounts = countToolNames(displayTools);
@@ -212,17 +268,19 @@ export function toolGroupDisplayModel(tools: ConversationMessage[], thinkingMess
   return {
     title: "",
     status,
-    statusLabel: toolGroupStatusLabel(status, failedCount, displayTools.length),
-    summary: toolGroupSummary(toolNameCounts, { thinkingCount: thinking.length, runningCount, failedCount, completedCount, isProcessing }),
+    statusLabel: toolGroupStatusLabel(status, failedCount, displayTools.length + subagents.length),
+    summary: toolGroupSummary(toolNameCounts, { thinkingCount: thinking.length, subagentCount: subagents.length, runningCount, failedCount, completedCount, isProcessing }),
     thinkingCount: thinking.length,
     toolCount: displayTools.length,
+    subagentCount: subagents.length,
     runningCount,
     failedCount,
     completedCount,
     toolNameCounts,
     thinking,
     tools: displayTools,
-    current: currentProcessDisplayModel(displayTools, thinking, isProcessing),
+    subagents,
+    current: currentProcessDisplayModel(displayTools, thinking, subagents, isProcessing),
   };
 }
 
@@ -236,25 +294,16 @@ function messageBlock(message: ConversationMessage, displayKind: RenderableConve
   };
 }
 
-function toolGroupBlock(tools: ConversationMessage[], thinkingMessages: ConversationMessage[], groupId: string, forceRunning: boolean): ConversationDisplayBlock {
-  const model = toolGroupDisplayModel(tools, thinkingMessages, forceRunning);
+function toolGroupBlock(tools: ConversationMessage[], thinkingMessages: ConversationMessage[], subagentRuns: SubagentRun[], groupId: string, forceRunning: boolean): ConversationDisplayBlock {
+  const model = toolGroupDisplayModel(tools, thinkingMessages, subagentRuns, forceRunning);
   return {
     type: "tool_group",
     id: `process-group-${groupId}`,
     tools,
     thinkingMessages,
+    subagentRuns,
     model,
     isStreaming: model.status === "running",
-  };
-}
-
-function subagentGroupBlock(run: SubagentRun, sourceToolMessage: ConversationMessage): ConversationDisplayBlock {
-  return {
-    type: "subagent_group",
-    id: `subagent-group-${run.id}`,
-    run,
-    sourceToolMessage,
-    isStreaming: subagentRunIsActive(run),
   };
 }
 
@@ -264,17 +313,31 @@ function thinkingDisplayModel(message: ConversationMessage): ThinkingDisplayMode
   return [{ id: `${message.id}-thinking`, text, isStreaming: message.isStreaming ?? false, updatedAt: message.updatedAt ?? message.timestamp ?? 0 }];
 }
 
-function currentProcessDisplayModel(tools: ToolDisplayModel[], thinking: ThinkingDisplayModel[], isProcessing: boolean): ProcessCurrentDisplayModel | undefined {
+function subagentProcessDisplayModel(run: SubagentRun): SubagentProcessDisplayModel {
+  const status = subagentRunProcessStatus(run);
+  return {
+    run,
+    status,
+    statusLabel: subagentRunStatusLabel(run.status),
+    summary: subagentRunSummary(run),
+    detail: subagentRunDetail(run),
+    updatedAt: run.updatedAt,
+  };
+}
+
+function currentProcessDisplayModel(tools: ToolDisplayModel[], thinking: ThinkingDisplayModel[], subagents: SubagentProcessDisplayModel[], isProcessing: boolean): ProcessCurrentDisplayModel | undefined {
   if (!isProcessing) return undefined;
 
   const runningThinking = thinking.filter((item) => item.isStreaming).map((item) => ({ kind: "thinking" as const, updatedAt: item.updatedAt, item }));
   const runningTools = tools.filter((tool) => tool.status === "running").map((tool) => ({ kind: "tool" as const, updatedAt: tool.updatedAt, item: tool }));
-  const runningCurrent = latestByUpdatedAt([...runningThinking, ...runningTools]);
+  const runningSubagents = subagents.filter((subagent) => subagent.status === "running").map((subagent) => ({ kind: "subagent" as const, updatedAt: subagent.updatedAt, item: subagent }));
+  const runningCurrent = latestByUpdatedAt([...runningThinking, ...runningTools, ...runningSubagents]);
   if (runningCurrent) return processCurrentFromCandidate(runningCurrent);
 
   const latestThinking = thinking.map((item) => ({ kind: "thinking" as const, updatedAt: item.updatedAt, item }));
   const latestTools = tools.map((tool) => ({ kind: "tool" as const, updatedAt: tool.updatedAt, item: tool }));
-  const latest = latestByUpdatedAt([...latestThinking, ...latestTools]);
+  const latestSubagents = subagents.map((subagent) => ({ kind: "subagent" as const, updatedAt: subagent.updatedAt, item: subagent }));
+  const latest = latestByUpdatedAt([...latestThinking, ...latestTools, ...latestSubagents]);
   return latest ? processCurrentFromCandidate(latest) : undefined;
 }
 
@@ -283,36 +346,38 @@ function latestByUpdatedAt<T extends { updatedAt: number }>(items: T[]): T | und
 }
 
 function processCurrentFromCandidate(
-  candidate: { kind: "thinking"; item: ThinkingDisplayModel } | { kind: "tool"; item: ToolDisplayModel },
+  candidate: { kind: "thinking"; item: ThinkingDisplayModel } | { kind: "tool"; item: ToolDisplayModel } | { kind: "subagent"; item: SubagentProcessDisplayModel },
 ): ProcessCurrentDisplayModel {
   if (candidate.kind === "thinking") {
-    const preview = truncateProcessPreview(candidate.item.text);
+    const content = candidate.item.text.trim();
     return {
       kind: "thinking",
       title: "正在思考",
       status: candidate.item.isStreaming ? "running" : "completed",
       statusLabel: candidate.item.isStreaming ? "进行中" : "最近思考",
-      content: preview || "等待思考内容…",
+      content: content || "等待思考内容…",
     };
   }
 
-  const preview = truncateProcessPreview(candidate.item.detail || candidate.item.summary);
+  if (candidate.kind === "subagent") {
+    const content = (candidate.item.detail || candidate.item.summary).trim();
+    return {
+      kind: "subagent",
+      title: `子代理 ${candidate.item.run.agent}`,
+      status: candidate.item.status,
+      statusLabel: candidate.item.statusLabel,
+      content: content || "等待子代理输出…",
+    };
+  }
+
+  const content = (candidate.item.detail || candidate.item.summary).trim();
   return {
     kind: "tool",
     title: `正在执行 ${candidate.item.name}`,
     status: candidate.item.status,
     statusLabel: candidate.item.statusLabel,
-    content: preview || "等待工具输出…",
+    content: content || "等待工具输出…",
   };
-}
-
-function truncateProcessPreview(text: string): string {
-  const normalized = text.trim();
-  if (!normalized) return "";
-
-  const lines = normalized.split(/\r?\n/);
-  const lineLimited = lines.length > PROCESS_PREVIEW_MAX_LINES ? lines.slice(-PROCESS_PREVIEW_MAX_LINES).join("\n") : normalized;
-  return lineLimited.length > PROCESS_PREVIEW_MAX_CHARS ? lineLimited.slice(lineLimited.length - PROCESS_PREVIEW_MAX_CHARS) : lineLimited;
 }
 
 function toolName(message: ConversationMessage): string {
@@ -334,6 +399,41 @@ function toolStatusLabel(status: ToolDisplayStatus): string {
   return "完成";
 }
 
+function subagentRunProcessStatus(run: SubagentRun): ToolDisplayStatus {
+  if (run.status === "failed" || run.status === "cancelled") return "failed";
+  if (subagentRunIsActive(run)) return "running";
+  return "completed";
+}
+
+function subagentRunStatusLabel(status: SubagentRun["status"]): string {
+  if (status === "pending") return "等待中";
+  if (status === "running") return "运行中";
+  if (status === "succeeded") return "完成";
+  if (status === "failed") return "失败";
+  return "已取消";
+}
+
+function subagentRunSummary(run: SubagentRun): string {
+  const childCount = run.runs.length || 1;
+  const runningCount = run.runs.filter((child) => child.status === "pending" || child.status === "running").length;
+  return [run.agent, `${childCount} child`, runningCount > 0 ? `${runningCount} 运行中` : subagentRunStatusLabel(run.status)].join(" · ");
+}
+
+function subagentRunDetail(run: SubagentRun): string {
+  const final = run.finalText?.trim();
+  if (final) return final;
+  const latest = latestSubagentChild(run);
+  return latest?.finalText?.trim() || latest?.textTail?.trim() || latest?.thinkingTail?.trim() || latest?.errorMessage?.trim() || latest?.stderrTail?.trim() || "";
+}
+
+function latestSubagentChild(run: SubagentRun): SubagentRun["runs"][number] | undefined {
+  return run.runs.reduce<SubagentRun["runs"][number] | undefined>((latest, child) => {
+    const updatedAt = child.finishedAt ?? child.startedAt ?? 0;
+    const latestUpdatedAt = latest ? latest.finishedAt ?? latest.startedAt ?? 0 : -1;
+    return updatedAt >= latestUpdatedAt ? child : latest;
+  }, undefined);
+}
+
 function toolGroupStatusLabel(status: ToolDisplayStatus, failedCount: number, toolCount: number): string {
   if (status === "running") return "处理中";
   if (status === "failed") return failedCount === toolCount ? "失败" : "部分失败";
@@ -348,10 +448,11 @@ function countToolNames(tools: ToolDisplayModel[]): ToolNameCount[] {
 
 function toolGroupSummary(
   toolNameCounts: ToolNameCount[],
-  counts: { thinkingCount: number; runningCount: number; failedCount: number; completedCount: number; isProcessing: boolean },
+  counts: { thinkingCount: number; subagentCount: number; runningCount: number; failedCount: number; completedCount: number; isProcessing: boolean },
 ): string {
   const parts: string[] = [];
   if (counts.thinkingCount > 0) parts.push(`思考 ${counts.thinkingCount} 段`);
+  if (counts.subagentCount > 0) parts.push(`子代理 ${counts.subagentCount} 项`);
 
   const nameSummary = formatToolNameCounts(toolNameCounts);
   if (nameSummary) parts.push(nameSummary);

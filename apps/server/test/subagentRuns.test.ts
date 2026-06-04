@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { Runtime, ServerEvent, SubagentRun } from "@pi-gui/shared";
 import { AppDatabase } from "../src/db.js";
-import { parseSubagentChildSession } from "../src/runtime/subagent/childSessionParser.js";
+import { parseSubagentChildSession, SubagentChildSessionCache } from "../src/runtime/subagent/childSessionParser.js";
 import { aggregateSubagentStatus } from "../src/runtime/subagent/subagentProgress.js";
 import { SubagentRunProjection } from "../src/runtime/subagent/subagentRunProjection.js";
 
@@ -65,6 +65,36 @@ test("AppDatabase hides child subagent sessions from ordinary session lists", ()
   db.close();
 });
 
+test("AppDatabase hides child subagent sessions beyond recent run windows", () => {
+  const { db } = createDb();
+  db.upsertSession({ id: "parent-session", projectId: "project-1", piSessionFile: "/tmp/parent.jsonl", createdAt: 1, updatedAt: 2 });
+  db.upsertSession({ id: "old-child-session", projectId: "project-1", piSessionFile: "/tmp/old-child.jsonl", createdAt: 1, updatedAt: 1 });
+  db.upsertSubagentRun(subagentRun({
+    id: "runtime-1:old-subagent",
+    parentToolCallId: "old-subagent",
+    parentToolMessageId: "tool-old-subagent",
+    status: "succeeded",
+    updatedAt: 1,
+    finishedAt: 1,
+    runs: [{ id: "trellis-check-old", agent: "trellis-check", status: "succeeded", sessionFile: "/tmp/old-child.jsonl" }],
+  }));
+
+  for (let index = 0; index < 2000; index += 1) {
+    db.upsertSubagentRun(subagentRun({
+      id: `runtime-1:newer-subagent-${index}`,
+      parentToolCallId: `newer-subagent-${index}`,
+      parentToolMessageId: `tool-newer-subagent-${index}`,
+      status: "succeeded",
+      updatedAt: 10 + index,
+      finishedAt: 10 + index,
+      runs: [],
+    }));
+  }
+
+  assert.deepEqual(db.listSessions().map((session) => session.id), ["parent-session"]);
+  db.close();
+});
+
 test("aggregateSubagentStatus stays active while parallel children are still running", () => {
   const runs: SubagentRun["runs"] = [
     { id: "trellis-check-1", agent: "trellis-check", status: "failed", errorMessage: "failed" },
@@ -73,6 +103,16 @@ test("aggregateSubagentStatus stays active while parallel children are still run
 
   assert.equal(aggregateSubagentStatus(runs, "running", false), "running");
   assert.equal(aggregateSubagentStatus(runs, "running", true), "failed");
+});
+
+test("aggregateSubagentStatus keeps all-succeeded progress running until final", () => {
+  const runs: SubagentRun["runs"] = [
+    { id: "trellis-check-1", agent: "trellis-check", status: "succeeded" },
+    { id: "trellis-check-2", agent: "trellis-check", status: "succeeded" },
+  ];
+
+  assert.equal(aggregateSubagentStatus(runs, "running", false), "running");
+  assert.equal(aggregateSubagentStatus(runs, "running", true), "succeeded");
 });
 
 test("SubagentRunProjection accepts progress details even when the start event was missed", () => {
@@ -98,8 +138,52 @@ test("SubagentRunProjection accepts progress details even when the start event w
   assert.equal(run?.agent, "trellis-check");
   assert.equal(run?.status, "running");
   assert.equal(run?.parentToolMessageId, "tool-subagent-progress-only");
+  assert.equal(run?.finalText, undefined);
   assert.equal(run?.runs[0]?.sessionFile, "/tmp/child.jsonl");
   assert.ok(events.some((event) => event.type === "subagent.run" && event.run.id === "runtime-1:subagent-progress-only"));
+  db.close();
+});
+
+test("SubagentRunProjection keeps child finals out of parent finalText until final", () => {
+  const { db, runtime } = createDb();
+  const projection = new SubagentRunProjection(db, () => runtime, () => undefined);
+
+  projection.handlePiPayload({
+    type: "tool_execution_update",
+    toolCallId: "subagent-child-final-progress",
+    partialResult: {
+      details: {
+        kind: "trellis-subagent-progress",
+        agent: "trellis-check",
+        mode: "single",
+        final: false,
+        runs: [{ id: "trellis-check-1", agent: "trellis-check", status: "succeeded", finalText: "child final" }],
+      },
+    },
+  });
+
+  const run = db.getSubagentRun("runtime-1:subagent-child-final-progress");
+  assert.equal(run?.status, "running");
+  assert.equal(run?.runs[0]?.finalText, "child final");
+  assert.equal(run?.finalText, undefined);
+
+  projection.handlePiPayload({
+    type: "tool_execution_update",
+    toolCallId: "subagent-child-final-progress",
+    partialResult: {
+      details: {
+        kind: "trellis-subagent-progress",
+        agent: "trellis-check",
+        mode: "single",
+        final: true,
+        runs: [{ id: "trellis-check-1", agent: "trellis-check", status: "succeeded", finalText: "child final" }],
+      },
+    },
+  });
+
+  const finalRun = db.getSubagentRun("runtime-1:subagent-child-final-progress");
+  assert.equal(finalRun?.status, "succeeded");
+  assert.equal(finalRun?.finalText, "child final");
   db.close();
 });
 
@@ -231,5 +315,57 @@ test("parseSubagentChildSession reads child Pi session JSONL into conversation m
   assert.equal(detail.messages[1]?.text, "README.md");
   assert.equal(detail.messages[2]?.thinking, "分析");
   assert.equal(detail.messages[2]?.text, "检查完成");
+  db.close();
+});
+
+test("SubagentChildSessionCache reads appended child session content incrementally", () => {
+  const { db } = createDb();
+  const sessionFile = join(mkdtempSync(join(tmpdir(), "pi-gui-child-session-")), "child.jsonl");
+  writeFileSync(sessionFile, JSON.stringify({ type: "message", message: { id: "user-1", role: "user", content: "first", timestamp: 1 } }) + "\n");
+  const run = subagentRun({ runs: [{ id: "child-1", agent: "trellis-check", status: "running", sessionFile }] });
+  const cache = new SubagentChildSessionCache();
+
+  const first = cache.parse(run, "child-1", 10);
+  writeFileSync(sessionFile, JSON.stringify({ type: "message", message: { id: "user-1", role: "user", content: "first", timestamp: 1 } }) + "\n" + JSON.stringify({ type: "message", message: { id: "assistant-1", role: "assistant", content: "second", timestamp: 2 } }) + "\n");
+  const second = cache.parse(run, "child-1", 10);
+
+  assert.deepEqual(first.messages.map((message) => message.text), ["first"]);
+  assert.deepEqual(second.messages.map((message) => message.text), ["first", "second"]);
+  db.close();
+});
+
+test("SubagentChildSessionCache preserves partial trailing JSONL lines until completion", () => {
+  const { db } = createDb();
+  const sessionFile = join(mkdtempSync(join(tmpdir(), "pi-gui-child-session-")), "child.jsonl");
+  const firstLine = JSON.stringify({ type: "message", message: { id: "user-1", role: "user", content: "first", timestamp: 1 } }) + "\n";
+  const secondLine = JSON.stringify({ type: "message", message: { id: "assistant-1", role: "assistant", content: "second", timestamp: 2 } }) + "\n";
+  writeFileSync(sessionFile, firstLine + secondLine.slice(0, 32));
+  const run = subagentRun({ runs: [{ id: "child-1", agent: "trellis-check", status: "running", sessionFile }] });
+  const cache = new SubagentChildSessionCache();
+
+  const partial = cache.parse(run, "child-1", 10);
+  writeFileSync(sessionFile, firstLine + secondLine);
+  const completed = cache.parse(run, "child-1", 10);
+
+  assert.deepEqual(partial.messages.map((message) => message.text), ["first"]);
+  assert.deepEqual(completed.messages.map((message) => message.text), ["first", "second"]);
+  db.close();
+});
+
+test("SubagentChildSessionCache reparses after child session file shrink", () => {
+  const { db } = createDb();
+  const sessionFile = join(mkdtempSync(join(tmpdir(), "pi-gui-child-session-")), "child.jsonl");
+  const firstLine = JSON.stringify({ type: "message", message: { id: "user-1", role: "user", content: "first", timestamp: 1 } }) + "\n";
+  const secondLine = JSON.stringify({ type: "message", message: { id: "assistant-1", role: "assistant", content: "second", timestamp: 2 } }) + "\n";
+  writeFileSync(sessionFile, firstLine + secondLine);
+  const run = subagentRun({ runs: [{ id: "child-1", agent: "trellis-check", status: "running", sessionFile }] });
+  const cache = new SubagentChildSessionCache();
+
+  const full = cache.parse(run, "child-1", 10);
+  writeFileSync(sessionFile, secondLine);
+  const reparsed = cache.parse(run, "child-1", 10);
+
+  assert.deepEqual(full.messages.map((message) => message.text), ["first", "second"]);
+  assert.deepEqual(reparsed.messages.map((message) => message.text), ["second"]);
   db.close();
 });

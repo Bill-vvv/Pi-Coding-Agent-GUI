@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PiRpcCommand, ResponseMode, Runtime, ServerEvent, SlashCommand, ThinkingLevel } from "@pi-gui/shared";
 import type { ManagedRuntime } from "./managedRuntime.js";
+import { expandPromptFileReferences } from "./promptFileReferences.js";
 import type { RuntimeLiveState } from "./runtimeLiveState.js";
 import { responseModeToServiceTier, writeServiceTierConfig } from "./serviceTierConfig.js";
 
@@ -44,12 +45,14 @@ export function applyManagedRuntimeConfiguration(managed: ManagedRuntime, option
   }
 }
 
-export function sendPrompt(managed: ManagedRuntime, message: string, streamingBehavior?: "steer" | "followUp"): void {
+export async function sendPrompt(managed: ManagedRuntime, message: string, streamingBehavior: "steer" | "followUp" | undefined, cwd: string): Promise<void> {
+  const expanded = await expandPromptFileReferences(message, cwd);
   const command: Record<string, unknown> = {
     id: `gui-${randomUUID()}`,
     type: "prompt",
-    message,
+    message: expanded.message,
   };
+  if (expanded.images) command.images = expanded.images;
   if (streamingBehavior) command.streamingBehavior = streamingBehavior;
   managed.client.send(command);
 }

@@ -2,12 +2,12 @@ import type { PiRpcCommand, Runtime, RuntimeConversationSummary, RuntimeQueue, S
 import { AppDatabase } from "../db.js";
 import type { ManagedRuntime, RuntimeConfigOptions } from "./managedRuntime.js";
 import { applyManagedRuntimeConfiguration, requestRuntimeSlashCommands, runtimeWithConfiguredOptions, sendAbort, sendExtensionUiResponse, sendNativeRpcCommand, sendPrompt, type RuntimeConfigureOptions } from "./runtimeCommandSender.js";
-import { buildRuntimeConversationSummaries, runtimeConversationSnapshot } from "./runtimeConversationViews.js";
+import { buildRuntimeConversationSummaries, runtimeConversationPageBefore, runtimeConversationSnapshot } from "./runtimeConversationViews.js";
 import { RuntimeEventSink } from "./runtimeEventSink.js";
 import { RuntimeLauncher } from "./runtimeLauncher.js";
 import { RuntimeLiveState } from "./runtimeLiveState.js";
 import { RuntimeSessionLinker } from "./runtimeSessionLinker.js";
-import { parseSubagentChildSession } from "./subagent/childSessionParser.js";
+import { SubagentChildSessionCache } from "./subagent/childSessionParser.js";
 
 type Broadcast = (event: ServerEvent) => void;
 
@@ -17,6 +17,7 @@ export class RuntimeSupervisor {
   private readonly liveState: RuntimeLiveState;
   private readonly sessionLinker: RuntimeSessionLinker;
   private readonly launcher: RuntimeLauncher;
+  private readonly subagentChildSessions = new SubagentChildSessionCache();
 
   constructor(
     private readonly db: AppDatabase,
@@ -181,8 +182,11 @@ export class RuntimeSupervisor {
     this.events.publishRuntimeStatus(nextRuntime);
   }
 
-  prompt(runtimeId: string, message: string, streamingBehavior?: "steer" | "followUp"): void {
-    sendPrompt(this.requireManaged(runtimeId), message, streamingBehavior);
+  async prompt(runtimeId: string, message: string, streamingBehavior?: "steer" | "followUp"): Promise<void> {
+    const managed = this.requireManaged(runtimeId);
+    const project = this.db.getProject(managed.runtime.projectId);
+    if (!project) throw new Error(`Project not found for runtime: ${managed.runtime.projectId}`);
+    await sendPrompt(managed, message, streamingBehavior, project.cwd);
   }
 
   executeRpcCommand(runtimeId: string, command: PiRpcCommand, label?: string): void {
@@ -205,10 +209,14 @@ export class RuntimeSupervisor {
     return runtimeConversationSnapshot(this.db, this.runtimes, runtimeId, limit);
   }
 
+  conversationPageBefore(runtimeId: string, beforeMessageId: string, limit?: number): ServerEvent | undefined {
+    return runtimeConversationPageBefore(this.db, runtimeId, beforeMessageId, limit);
+  }
+
   subagentDetail(runId: string, childRunId?: string, limit?: number): Extract<ServerEvent, { type: "subagent.detail" }> {
     const run = this.db.getSubagentRun(runId);
     if (!run) throw new Error(`Sub-agent run not found: ${runId}`);
-    const detail = parseSubagentChildSession(run, childRunId, limit);
+    const detail = this.subagentChildSessions.parse(run, childRunId, limit);
     return { type: "subagent.detail", ...detail };
   }
 

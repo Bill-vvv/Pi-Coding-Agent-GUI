@@ -7,7 +7,7 @@
   overflow: hidden;
   border: 1px solid var(--color-border-panel);
   border-radius: var(--radius-panel);
-  background: color-mix(in srgb, var(--color-surface-panel) 92%, #1b1b1a);
+  background: color-mix(in srgb, var(--color-surface-panel) 92%, var(--color-bg-app));
   backdrop-filter: blur(20px);
   padding: 1rem;
 }
@@ -68,7 +68,7 @@
   width: 100%;
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-control);
-  background: rgb(20 20 19 / 28%);
+  background: var(--color-surface-subtle);
   padding: 0.72rem 0.78rem;
   text-align: left;
 }

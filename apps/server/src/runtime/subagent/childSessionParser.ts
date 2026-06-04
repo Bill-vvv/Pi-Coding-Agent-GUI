@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import type { ConversationMessage, SubagentRun } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
 import { extractPiMessageContent, textFromResult } from "../conversation/piMessageContent.js";
@@ -17,7 +17,46 @@ export type ChildSessionDetail = {
   error?: string;
 };
 
-export function parseSubagentChildSession(run: SubagentRun, childRunId?: string, limit = DEFAULT_LIMIT): ChildSessionDetail {
+type CachedChildSession = {
+  sessionFile: string;
+  size: number;
+  mtimeMs: number;
+  parser: ChildSessionParser;
+  partialLine: string;
+};
+
+export class SubagentChildSessionCache {
+  private readonly entries = new Map<string, CachedChildSession>();
+
+  parse(run: SubagentRun, childRunId?: string, limit = DEFAULT_LIMIT): ChildSessionDetail {
+    return parseSubagentChildSession(run, childRunId, limit, this);
+  }
+
+  detailFromFile(run: SubagentRun, childRunId: string, sessionFile: string, limit: number, stat: { size: number; mtimeMs: number }, readAt: number): ChildSessionDetail {
+    const key = `${run.id}:${childRunId}:${sessionFile}`;
+    const boundedLimit = Math.max(1, Math.min(limit, MAX_LIMIT));
+    let entry = this.entries.get(key);
+
+    if (!entry || stat.size < entry.size || stat.mtimeMs < entry.mtimeMs) {
+      const parser = new ChildSessionParser(run, childRunId);
+      const content = readFileSync(sessionFile, "utf8");
+      const partialLine = applyChunk(parser, content, "");
+      entry = { sessionFile, size: stat.size, mtimeMs: stat.mtimeMs, parser, partialLine };
+      this.entries.set(key, entry);
+    } else if (stat.size > entry.size) {
+      const chunk = readFileRange(sessionFile, entry.size, stat.size - entry.size);
+      entry.partialLine = applyChunk(entry.parser, chunk, entry.partialLine);
+      entry.size = stat.size;
+      entry.mtimeMs = stat.mtimeMs;
+    } else {
+      entry.mtimeMs = stat.mtimeMs;
+    }
+
+    return { runId: run.id, childRunId, messages: entry.parser.messages(boundedLimit), readAt };
+  }
+}
+
+export function parseSubagentChildSession(run: SubagentRun, childRunId?: string, limit = DEFAULT_LIMIT, cache?: SubagentChildSessionCache): ChildSessionDetail {
   const childRun = childRunId ? run.runs.find((item) => item.id === childRunId) : run.runs[0];
   const resolvedChildRunId = childRun?.id ?? childRunId ?? "child-1";
   const readAt = Date.now();
@@ -40,9 +79,13 @@ export function parseSubagentChildSession(run: SubagentRun, childRunId?: string,
       };
     }
 
+    if (cache) {
+      return cache.detailFromFile(run, resolvedChildRunId, childRun.sessionFile, limit, stat, readAt);
+    }
+
     const parser = new ChildSessionParser(run, resolvedChildRunId);
     const content = readFileSync(childRun.sessionFile, "utf8");
-    for (const line of content.split(/\r?\n/)) parser.applyLine(line);
+    applyChunk(parser, content, "", true);
     return {
       runId: run.id,
       childRunId: resolvedChildRunId,
@@ -51,6 +94,30 @@ export function parseSubagentChildSession(run: SubagentRun, childRunId?: string,
     };
   } catch (error) {
     return { runId: run.id, childRunId: resolvedChildRunId, messages: [], readAt, error: (error as Error).message };
+  }
+}
+
+function applyChunk(parser: ChildSessionParser, chunk: string, partialLine: string, flushPartial = false): string {
+  const combined = `${partialLine}${chunk}`;
+  const lines = combined.split(/\r?\n/);
+  const nextPartial = lines.pop() ?? "";
+  for (const line of lines) parser.applyLine(line);
+  if (flushPartial && nextPartial) {
+    parser.applyLine(nextPartial);
+    return "";
+  }
+  return nextPartial;
+}
+
+function readFileRange(path: string, offset: number, length: number): string {
+  if (length <= 0) return "";
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    const bytesRead = readSync(fd, buffer, 0, length, offset);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    closeSync(fd);
   }
 }
 

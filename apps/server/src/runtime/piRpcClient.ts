@@ -1,8 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { StringDecoder } from "node:string_decoder";
 import { LfJsonlParser } from "./jsonlFraming.js";
 
@@ -14,7 +13,6 @@ type PiRpcClientEvents = {
 };
 
 const DEFAULT_STOP_GRACE_MS = 2500;
-const SERVICE_TIER_EXTENSION_PATH = resolveSiblingExtensionPath();
 
 export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
   private proc?: ChildProcessWithoutNullStreams;
@@ -26,7 +24,7 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
 
   constructor(
     private readonly cwd: string,
-    private readonly options: { model?: string; thinkingLevel?: string; serviceTierConfigFile?: string; session?: string } = {},
+    private readonly options: { model?: string; thinkingLevel?: string; serviceTierConfigFile?: string; session?: string; extensionPaths?: string[] } = {},
   ) {
     super();
   }
@@ -54,8 +52,8 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
     if (this.options.thinkingLevel) {
       args.push("--thinking", this.options.thinkingLevel);
     }
-    if (this.options.serviceTierConfigFile) {
-      args.push("--extension", SERVICE_TIER_EXTENSION_PATH);
+    for (const extensionPath of this.options.extensionPaths ?? []) {
+      args.push("--extension", extensionPath);
     }
 
     this.proc = spawn("pi", args, {
@@ -125,16 +123,6 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
     for (const record of batch.records) this.emit("event", record);
     for (const error of batch.errors) this.emit("error", error);
   }
-}
-
-function resolveSiblingExtensionPath(): string {
-  const jsPath = fileURLToPath(new URL("./piServiceTierExtension.js", import.meta.url));
-  if (existsSync(jsPath)) return jsPath;
-
-  const tsPath = fileURLToPath(new URL("./piServiceTierExtension.ts", import.meta.url));
-  if (existsSync(tsPath)) return tsPath;
-
-  return jsPath;
 }
 
 function normalizeServiceTier(serviceTier: unknown): "default" | "flex" | "scale" | "priority" | undefined {

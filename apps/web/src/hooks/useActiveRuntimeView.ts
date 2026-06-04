@@ -12,6 +12,7 @@ export function useActiveRuntimeView(state: AppState, models: ModelSummary[]) {
     persistedConversationSummaries,
     contextUsageByRuntime,
     busyByRuntime,
+    queueByRuntime,
     commandsByRuntime,
     selectedProjectId,
     selectedRuntimeId,
@@ -63,6 +64,7 @@ export function useActiveRuntimeView(state: AppState, models: ModelSummary[]) {
   );
   const activeRuntimeConversationSummary = activeRuntime ? conversationSummaries[activeRuntime.id] : undefined;
   const activeRuntimeContextUsage = activeRuntime ? contextUsageByRuntime[activeRuntime.id] : undefined;
+  const activeRuntimeQueue = activeRuntime ? queueByRuntime[activeRuntime.id] : undefined;
   const activeRuntimeCommands = activeRuntime ? commandsByRuntime[activeRuntime.id] ?? [] : [];
   const activeRuntimeIsBusy = activeRuntime ? busyByRuntime[activeRuntime.id] ?? false : false;
 
@@ -81,6 +83,7 @@ export function useActiveRuntimeView(state: AppState, models: ModelSummary[]) {
     conversationSummaries,
     activeRuntimeConversationSummary,
     activeRuntimeContextUsage,
+    activeRuntimeQueue,
     activeRuntimeCommands,
     activeRuntimeIsBusy,
   };

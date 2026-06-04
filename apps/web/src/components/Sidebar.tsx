@@ -1,9 +1,9 @@
 import type { DragEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ConversationMessage, GuiSession, Project, Runtime, RuntimeConversationSummary, SubagentRun } from "@pi-gui/shared";
-import { runningSubagentRunsForRuntime, subagentStatusLabel } from "../domain/subagents";
+import type { ConversationMessage, GuiSession, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
 import type { ConnectionState } from "../types";
 import { Icon } from "./Icon";
+import { PiLogo } from "./PiLogo";
 
 const PROJECT_ORDER_STORAGE_KEY = "pi-gui.projectOrder";
 const SESSION_ORDER_STORAGE_KEY = "pi-gui.sessionOrder";
@@ -12,6 +12,7 @@ const RUNTIME_READ_TIMESTAMPS_STORAGE_KEY = "pi-gui.runtimeReadTimestamps";
 const PROJECT_DRAG_MIME = "application/x-pi-gui-project";
 const SESSION_DRAG_MIME = "application/x-pi-gui-session";
 const SESSION_DOT_BREATHE_DURATION_MS = 1350;
+const SIDEBAR_SCROLLBAR_VISIBLE_MS = 850;
 
 type DraggingSession = { projectId: string; runtimeId: string };
 type DropPosition = "before" | "after";
@@ -30,12 +31,14 @@ type SidebarProps = {
   busyByRuntime: Record<string, boolean>;
   messagesByRuntime: Record<string, ConversationMessage[]>;
   conversationSummaries: Record<string, RuntimeConversationSummary>;
-  subagentRuns: Record<string, SubagentRun>;
   onAddProject: () => void;
   onStartRuntimeForProject: (projectId: string) => void;
   onOpenSessionHistory: (projectId: string) => void;
+  onOpenCheckpoints: (projectId: string, runtimeId?: string) => void;
   onSelectProject: (projectId: string) => void;
   onSelectRuntime: (projectId: string, runtimeId: string) => void;
+  compactExpanded: boolean;
+  onToggleCompact: () => void;
   onArchiveRuntime: (runtimeId: string) => void;
   onOpenSettings: () => void;
 };
@@ -51,10 +54,12 @@ export function Sidebar({
   busyByRuntime,
   messagesByRuntime,
   conversationSummaries,
-  subagentRuns,
   onAddProject,
   onStartRuntimeForProject,
   onOpenSessionHistory,
+  onOpenCheckpoints,
+  compactExpanded,
+  onToggleCompact,
   onSelectProject,
   onSelectRuntime,
   onArchiveRuntime,
@@ -67,8 +72,12 @@ export function Sidebar({
   const [draggingProjectId, setDraggingProjectId] = useState<string | undefined>();
   const [draggingSession, setDraggingSession] = useState<DraggingSession | undefined>();
   const [dragTarget, setDragTarget] = useState<DragTarget | undefined>();
+  const [sidebarScrolling, setSidebarScrolling] = useState(false);
+  const isCompactViewport = useCompactSidebarViewport();
   const rowElementsRef = useRef<Map<string, HTMLElement>>(new Map());
   const previousRowRectsRef = useRef<Map<string, DOMRect>>(new Map());
+  const startupReadBaselineAppliedRef = useRef(false);
+  const sidebarScrollHideTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     setProjectOrder((current) => {
@@ -134,6 +143,12 @@ export function Sidebar({
     writeStringArray(COLLAPSED_PROJECTS_STORAGE_KEY, [...collapsedProjectIds]);
   }, [collapsedProjectIds]);
 
+  useEffect(() => {
+    return () => {
+      if (sidebarScrollHideTimerRef.current !== undefined) window.clearTimeout(sidebarScrollHideTimerRef.current);
+    };
+  }, []);
+
   useLayoutEffect(() => {
     const previousRects = previousRowRectsRef.current;
     if (previousRects.size === 0) return;
@@ -197,6 +212,32 @@ export function Sidebar({
   }, [projectOrder, projects]);
   const sessionById = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
   const activeRuntimeCompletedAt = activeRuntime ? completedAssistantReplyAt(conversationSummaries[activeRuntime.id], messagesByRuntime[activeRuntime.id]) : undefined;
+
+  useEffect(() => {
+    if (startupReadBaselineAppliedRef.current) return;
+    if (runtimes.length === 0 && Object.keys(conversationSummaries).length === 0) return;
+
+    const baselineReadTimestamps = new Map<string, number>();
+    for (const runtime of runtimes) {
+      if (runtime.archivedAt) continue;
+      const completedAt = completedAssistantReplyAt(conversationSummaries[runtime.id], messagesByRuntime[runtime.id]);
+      if (completedAt) baselineReadTimestamps.set(runtime.id, completedAt);
+    }
+
+    startupReadBaselineAppliedRef.current = true;
+    if (baselineReadTimestamps.size === 0) return;
+
+    setReadTimestampsByRuntime((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const [runtimeId, completedAt] of baselineReadTimestamps) {
+        if ((next[runtimeId] ?? 0) >= completedAt) continue;
+        next[runtimeId] = completedAt;
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [runtimes, conversationSummaries, messagesByRuntime]);
 
   useEffect(() => {
     if (!activeRuntime || !activeRuntimeCompletedAt) return;
@@ -314,6 +355,15 @@ export function Sidebar({
     setDragTarget(undefined);
   }
 
+  function handleSidebarScroll() {
+    setSidebarScrolling(true);
+    if (sidebarScrollHideTimerRef.current !== undefined) window.clearTimeout(sidebarScrollHideTimerRef.current);
+    sidebarScrollHideTimerRef.current = window.setTimeout(() => {
+      sidebarScrollHideTimerRef.current = undefined;
+      setSidebarScrolling(false);
+    }, SIDEBAR_SCROLLBAR_VISIBLE_MS);
+  }
+
   function projectDropClass(projectId: string): string {
     if (dragTarget?.kind !== "project" || dragTarget.projectId !== projectId || draggingProjectId === projectId) return "";
     return dragTarget.position === "before" ? "drop-before" : "drop-after";
@@ -326,12 +376,13 @@ export function Sidebar({
     return dragTarget.position === "before" ? "drop-before" : "drop-after";
   }
 
-  const sidebarClassName = `left-sidebar ${projects.length === 0 ? "empty-projects" : ""} ${draggingProjectId ? "dragging-project" : ""} ${draggingSession ? "dragging-session" : ""}`;
+  const sidebarClassName = `left-sidebar ${projects.length === 0 ? "empty-projects" : ""} ${draggingProjectId ? "dragging-project" : ""} ${draggingSession ? "dragging-session" : ""} ${isCompactViewport ? "is-compact-viewport" : ""} ${compactExpanded ? "is-compact-expanded" : ""}`;
 
   return (
     <aside className={sidebarClassName}>
-      <div className="sidebar-content">
-        <div className="brand sidebar-brand no-logo">
+      <div className={`sidebar-content ${sidebarScrolling ? "is-scrolling" : ""}`} onScroll={handleSidebarScroll}>
+        <div className="brand sidebar-brand">
+          <PiLogo compactMode={isCompactViewport} compactExpanded={compactExpanded} onToggleCompact={onToggleCompact} />
           <div className="brand-actions">
             <button
               className="global-new-chat icon-button"
@@ -385,6 +436,16 @@ export function Sidebar({
                     <small>{project.cwd}</small>
                   </button>
                   <button
+                    className="project-checkpoints icon-button"
+                    type="button"
+                    title="查看检查点"
+                    aria-label={`查看 ${project.name} 的检查点`}
+                    onClick={() => onOpenCheckpoints(project.id, activeRuntime?.projectId === project.id ? activeRuntime.id : undefined)}
+                    disabled={connection !== "open"}
+                  >
+                    <Icon name="checkpoint" />
+                  </button>
+                  <button
                     className="project-new-chat icon-button"
                     type="button"
                     title="在此项目中新建对话"
@@ -405,7 +466,6 @@ export function Sidebar({
                       const completedAt = completedAssistantReplyAt(summary, messagesByRuntime[runtime.id]);
                       const hasUnreadReply = Boolean(completedAt && completedAt > (readTimestampsByRuntime[runtime.id] ?? 0));
                       const dotState = sessionDotState(busyByRuntime[runtime.id] ?? false, hasUnreadReply);
-                      const runningSubagents = runningSubagentRunsForRuntime(subagentRuns, runtime.id);
                       return (
                         <div
                           className={`session-row ${runtime.id === activeRuntime?.id ? "selected" : ""} ${draggingSession?.runtimeId === runtime.id ? "dragging" : ""} ${sessionDropClass(project.id, runtime.id)}`}
@@ -431,9 +491,8 @@ export function Sidebar({
                               <span className="session-title">{title}</span>
                               {detail ? <small className="session-detail">{detail}</small> : null}
                             </span>
-                            {runningSubagents.length > 0 ? <small className="session-badge subagent-running-badge">子代理 {runningSubagents.length}</small> : runtime.archivedAt ? <small className="session-badge">归档</small> : null}
+                            {runtime.archivedAt ? <small className="session-badge">归档</small> : null}
                           </button>
-                          {runningSubagents.length > 0 ? <SubagentRuntimePopover runs={runningSubagents} /> : null}
                           {!runtime.archivedAt ? (
                             <button
                               className="session-archive icon-button"
@@ -478,20 +537,18 @@ export function Sidebar({
   );
 }
 
-function SubagentRuntimePopover({ runs }: { runs: SubagentRun[] }) {
-  return (
-    <div className="subagent-runtime-popover" role="status">
-      <strong>运行中的子代理</strong>
-      <ul>
-        {runs.map((run) => (
-          <li key={run.id}>
-            <span>{run.agent}</span>
-            <small>{run.runs.length || 1} 个 child · {subagentStatusLabel(run.status)}</small>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
+function useCompactSidebarViewport(): boolean {
+  const [matches, setMatches] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 700px)");
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  return matches;
 }
 
 type SessionDotState = "task-idle" | "task-busy" | "task-unread";
@@ -503,6 +560,7 @@ function sessionDotState(busy: boolean, hasUnreadReply: boolean): SessionDotStat
 }
 
 function completedAssistantReplyAt(summary: RuntimeConversationSummary | undefined, messages: ConversationMessage[] | undefined): number | undefined {
+  if (summary?.latestAssistantCompletedAt) return summary.latestAssistantCompletedAt;
   const assistantMessage = latestCompletedAssistantMessage(messages);
   const assistantUpdatedAt = assistantMessage?.updatedAt ?? assistantMessage?.timestamp;
   if (assistantUpdatedAt) return assistantUpdatedAt;

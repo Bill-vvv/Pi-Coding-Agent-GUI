@@ -112,6 +112,10 @@ export class AppDatabase {
     return this.conversations.listConversationMessages(runtimeId, limit);
   }
 
+  listConversationMessagesBefore(runtimeId: string, beforeMessageId: string, limit = 100): { messages: ConversationMessage[]; hasMoreBefore: boolean } {
+    return this.conversations.listConversationMessagesBefore(runtimeId, beforeMessageId, limit);
+  }
+
   listRuntimeConversationSummaries(limit = 100): RuntimeConversationSummary[] {
     return this.conversations.listRuntimeConversationSummaries(limit);
   }

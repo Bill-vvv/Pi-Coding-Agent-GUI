@@ -65,7 +65,7 @@
   z-index: 30;
   display: grid;
   place-items: start center;
-  background: rgb(0 0 0 / 34%);
+  background: var(--color-extension-backdrop);
   padding: 8vh 1rem 1rem;
 }
 

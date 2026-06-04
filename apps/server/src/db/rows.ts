@@ -72,6 +72,7 @@ export type RuntimeConversationSummaryRow = {
   first_message_text: string | null;
   latest_message_text: string | null;
   latest_updated_at: number | null;
+  latest_assistant_completed_at: number | null;
   message_count: number;
 };
 

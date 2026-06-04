@@ -9,6 +9,7 @@ import type {
   GuiSession,
   PiRpcCommand,
   Project,
+  RewindCheckpoint,
   ResponseMode,
   Runtime,
   RuntimeConversationSummary,
@@ -23,6 +24,9 @@ export type ClientCommand =
   | { type: "project.create"; requestId?: string; name?: string; cwd: string; defaultModel?: string }
   | { type: "session.list"; requestId?: string; projectId?: string }
   | { type: "session.resume"; requestId?: string; sessionId: string; model?: string; thinkingLevel?: ThinkingLevel; responseMode?: ResponseMode }
+  | { type: "checkpoint.list"; requestId?: string; projectId: string }
+  | { type: "checkpoint.restore"; requestId?: string; runtimeId: string; checkpointId: string; restoreFiles: boolean }
+  | { type: "checkpoint.fastForward"; requestId?: string; runtimeId: string; restoreFiles: boolean }
   | { type: "settings.get"; requestId?: string }
   | { type: "settings.update"; requestId?: string; settings: AppSettings }
   | { type: "runtime.start"; requestId?: string; projectId: string; model?: string; thinkingLevel?: ThinkingLevel; responseMode?: ResponseMode }
@@ -37,6 +41,7 @@ export type ClientCommand =
   | { type: "runtime.commands.list"; requestId?: string; runtimeId: string }
   | { type: "extension.ui.respond"; requestId?: string; runtimeId: string; responseId: string; response: ExtensionUiResponse }
   | { type: "conversation.open"; requestId?: string; runtimeId: string; limit?: number }
+  | { type: "conversation.page"; requestId?: string; runtimeId: string; beforeMessageId: string; limit?: number }
   | { type: "subagent.detail.open"; requestId?: string; runId: string; childRunId?: string; limit?: number }
   | { type: "event.replay"; requestId?: string; afterEventId?: number; limit?: number; projectId?: string; runtimeId?: string };
 
@@ -47,9 +52,12 @@ export type ServerEvent =
   | { type: "project.created"; project: Project }
   | { type: "session.list"; sessions: GuiSession[]; projectId?: string }
   | { type: "session.updated"; session: GuiSession }
+  | { type: "checkpoint.list"; projectId: string; checkpoints: RewindCheckpoint[] }
+  | { type: "checkpoint.updated"; projectId: string; checkpoint: RewindCheckpoint }
   | { type: "settings.updated"; settings: AppSettings }
   | { type: "runtime.status"; runtime: Runtime }
   | { type: "conversation.snapshot"; runtimeId: string; projectId: string; messages: ConversationMessage[]; contextUsage?: ConversationContextUsage; busy: boolean }
+  | { type: "conversation.page"; runtimeId: string; projectId: string; messages: ConversationMessage[]; beforeMessageId: string; hasMoreBefore: boolean }
   | { type: "conversation.message"; message: ConversationMessage }
   | { type: "conversation.delta"; delta: ConversationDelta }
   | { type: "conversation.context"; runtimeId: string; projectId: string; contextUsage: ConversationContextUsage }

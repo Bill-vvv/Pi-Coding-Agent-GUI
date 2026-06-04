@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -30,6 +30,12 @@ function createHarness(supervisorOverrides: Partial<RuntimeSupervisor> = {}) {
 
 async function sendCommand(handle: (socket: WsClient, data: Buffer | string) => Promise<void>, socket: WsClient, command: ClientCommand | Record<string, unknown> | string) {
   await handle(socket, typeof command === "string" ? command : JSON.stringify(command));
+}
+
+function writeCheckpointStore(cwd: string, records: unknown[]): void {
+  const dir = join(cwd, ".pi", "rewind");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "checkpoints.jsonl"), records.map((record) => JSON.stringify(record)).join("\n") + "\n");
 }
 
 test("command handler rejects invalid JSON commands with an unknown command result", async () => {
@@ -268,5 +274,94 @@ test("command handler filters replayed events by runtime and project", async () 
   const result = sent.find((event) => event.type === "command.result");
   assert.equal(result?.success, true);
   assert.deepEqual(result?.data, { count: 1 });
+  db.close();
+});
+
+test("command handler lists rewind checkpoints for a project", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "pi-gui-checkpoint-command-"));
+  const { db, sent, socket, handle } = createHarness();
+  db.createProject({ id: "project-1", name: "Project", cwd: projectDir, lastOpenedAt: 1 });
+  await writeCheckpointStore(projectDir, [
+    { kind: "checkpoint", version: 1, id: "checkpoint-1", entryId: "entry-1", prompt: "Do work", createdAt: 10, cwd: projectDir, git: { available: true, dirty: false, backend: "patch" } },
+  ]);
+
+  await sendCommand(handle, socket, { type: "checkpoint.list", requestId: "req-checkpoints", projectId: "project-1" });
+
+  const listEvent = sent.find((event) => event.type === "checkpoint.list");
+  assert.equal(listEvent?.projectId, "project-1");
+  assert.deepEqual(listEvent?.checkpoints.map((checkpoint) => checkpoint.id), ["checkpoint-1"]);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.equal(result?.requestId, "req-checkpoints");
+  db.close();
+});
+
+test("command handler restores checkpoints through runtime prompt", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "pi-gui-checkpoint-restore-"));
+  const calls: unknown[] = [];
+  const runtime = { id: "runtime-1", projectId: "project-1", cwd: projectDir, status: "running" as const };
+  const { db, sent, socket, handle } = createHarness({
+    getRuntime: (runtimeId: string) => (runtimeId === runtime.id ? runtime : undefined),
+    prompt: async (runtimeId: string, message: string) => {
+      calls.push({ runtimeId, message });
+    },
+  } as Partial<RuntimeSupervisor>);
+  db.createProject({ id: "project-1", name: "Project", cwd: projectDir, lastOpenedAt: 1 });
+  await writeCheckpointStore(projectDir, [
+    { kind: "checkpoint", version: 1, id: "checkpoint-restore", entryId: "entry-1", prompt: "Do work", createdAt: 10, cwd: projectDir, git: { available: true, dirty: false, backend: "patch" } },
+  ]);
+
+  await sendCommand(handle, socket, { type: "checkpoint.restore", requestId: "req-restore", runtimeId: "runtime-1", checkpointId: "checkpoint-restore", restoreFiles: false });
+
+  assert.deepEqual(calls, [{ runtimeId: "runtime-1", message: "/restore checkpoint-restore --no-restore --force" }]);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.deepEqual(result?.data, { checkpointId: "checkpoint-restore", restoreFiles: false });
+  db.close();
+});
+
+test("command handler fast-forwards through runtime prompt", async () => {
+  const calls: unknown[] = [];
+  const runtime = { id: "runtime-1", projectId: "project-1", cwd: process.cwd(), status: "running" as const };
+  const { db, sent, socket, handle } = createHarness({
+    getRuntime: (runtimeId: string) => (runtimeId === runtime.id ? runtime : undefined),
+    prompt: async (runtimeId: string, message: string) => {
+      calls.push({ runtimeId, message });
+    },
+  } as Partial<RuntimeSupervisor>);
+
+  await sendCommand(handle, socket, { type: "checkpoint.fastForward", requestId: "req-ff", runtimeId: "runtime-1", restoreFiles: true });
+
+  assert.deepEqual(calls, [{ runtimeId: "runtime-1", message: "/ff --force" }]);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.deepEqual(result?.data, { restoreFiles: true });
+  db.close();
+});
+
+test("command handler sends older conversation pages", async () => {
+  const page: Extract<ServerEvent, { type: "conversation.page" }> = {
+    type: "conversation.page",
+    runtimeId: "runtime-1",
+    projectId: "project-1",
+    beforeMessageId: "message-3",
+    messages: [],
+    hasMoreBefore: false,
+  };
+  const calls: unknown[] = [];
+  const { db, sent, socket, handle } = createHarness({
+    conversationPageBefore: (runtimeId: string, beforeMessageId: string, limit: number | undefined) => {
+      calls.push({ runtimeId, beforeMessageId, limit });
+      return page;
+    },
+  } as Partial<RuntimeSupervisor>);
+
+  await sendCommand(handle, socket, { type: "conversation.page", requestId: "req-page", runtimeId: "runtime-1", beforeMessageId: "message-3", limit: 20 });
+
+  assert.deepEqual(calls, [{ runtimeId: "runtime-1", beforeMessageId: "message-3", limit: 20 }]);
+  assert.deepEqual(sent.find((event) => event.type === "conversation.page"), page);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.deepEqual(result?.data, { count: 0 });
   db.close();
 });

@@ -8,6 +8,7 @@ const DEFAULT_UI_PREFERENCES: UiPreferences = {
   chatFontSize: "medium",
   theme: "dark",
   accentColor: "amber",
+  desktopNotificationsEnabled: false,
 };
 
 export function useUiPreferences() {
@@ -29,8 +30,9 @@ function readUiPreferences(): UiPreferences {
     return {
       uiFontSize: isUiFontSize(parsed.uiFontSize) ? parsed.uiFontSize : DEFAULT_UI_PREFERENCES.uiFontSize,
       chatFontSize: isChatFontSize(parsed.chatFontSize) ? parsed.chatFontSize : DEFAULT_UI_PREFERENCES.chatFontSize,
-      theme: parsed.theme === "system" || parsed.theme === "dark" ? parsed.theme : DEFAULT_UI_PREFERENCES.theme,
+      theme: isThemeMode(parsed.theme) ? parsed.theme : DEFAULT_UI_PREFERENCES.theme,
       accentColor: isAccentColor(parsed.accentColor) ? parsed.accentColor : DEFAULT_UI_PREFERENCES.accentColor,
+      desktopNotificationsEnabled: typeof parsed.desktopNotificationsEnabled === "boolean" ? parsed.desktopNotificationsEnabled : DEFAULT_UI_PREFERENCES.desktopNotificationsEnabled,
     };
   } catch {
     return DEFAULT_UI_PREFERENCES;
@@ -59,6 +61,10 @@ function isUiFontSize(value: unknown): value is UiPreferences["uiFontSize"] {
 
 function isChatFontSize(value: unknown): value is UiPreferences["chatFontSize"] {
   return value === "small" || value === "medium" || value === "large";
+}
+
+function isThemeMode(value: unknown): value is UiPreferences["theme"] {
+  return value === "dark" || value === "light" || value === "system";
 }
 
 function isAccentColor(value: unknown): value is UiPreferences["accentColor"] {

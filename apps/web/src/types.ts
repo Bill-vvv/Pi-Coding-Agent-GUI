@@ -21,7 +21,7 @@ export type PendingProjectStart = { cwd: string; message?: string; requestId: st
 
 export type UiFontSize = "small" | "medium" | "large";
 export type ChatFontSize = "small" | "medium" | "large";
-export type ThemeMode = "dark" | "system";
+export type ThemeMode = "dark" | "light" | "system";
 export type AccentColor = "amber" | "blue" | "green" | "rose";
 
 export type UiPreferences = {
@@ -29,4 +29,5 @@ export type UiPreferences = {
   chatFontSize: ChatFontSize;
   theme: ThemeMode;
   accentColor: AccentColor;
+  desktopNotificationsEnabled: boolean;
 };

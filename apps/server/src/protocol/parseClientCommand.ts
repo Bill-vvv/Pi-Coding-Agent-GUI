@@ -32,6 +32,29 @@ export function parseClientCommand(value: unknown): ClientCommand {
         thinkingLevel: thinkingLevelOrUndefined(value.thinkingLevel),
         responseMode: responseModeOrUndefined(value.responseMode),
       };
+    case "checkpoint.list":
+      if (typeof value.projectId !== "string") throw new Error("checkpoint.list requires projectId");
+      return { type: "checkpoint.list", requestId: stringOrUndefined(value.requestId), projectId: value.projectId };
+    case "checkpoint.restore":
+      if (typeof value.runtimeId !== "string") throw new Error("checkpoint.restore requires runtimeId");
+      if (typeof value.checkpointId !== "string") throw new Error("checkpoint.restore requires checkpointId");
+      if (typeof value.restoreFiles !== "boolean") throw new Error("checkpoint.restore requires restoreFiles");
+      return {
+        type: "checkpoint.restore",
+        requestId: stringOrUndefined(value.requestId),
+        runtimeId: value.runtimeId,
+        checkpointId: value.checkpointId,
+        restoreFiles: value.restoreFiles,
+      };
+    case "checkpoint.fastForward":
+      if (typeof value.runtimeId !== "string") throw new Error("checkpoint.fastForward requires runtimeId");
+      if (typeof value.restoreFiles !== "boolean") throw new Error("checkpoint.fastForward requires restoreFiles");
+      return {
+        type: "checkpoint.fastForward",
+        requestId: stringOrUndefined(value.requestId),
+        runtimeId: value.runtimeId,
+        restoreFiles: value.restoreFiles,
+      };
     case "settings.get":
       return { type: "settings.get", requestId: stringOrUndefined(value.requestId) };
     case "settings.update":
@@ -141,6 +164,16 @@ export function parseClientCommand(value: unknown): ClientCommand {
         type: "conversation.open",
         requestId: stringOrUndefined(value.requestId),
         runtimeId: value.runtimeId,
+        limit: numberOrUndefined(value.limit),
+      };
+    case "conversation.page":
+      if (typeof value.runtimeId !== "string") throw new Error("conversation.page requires runtimeId");
+      if (typeof value.beforeMessageId !== "string") throw new Error("conversation.page requires beforeMessageId");
+      return {
+        type: "conversation.page",
+        requestId: stringOrUndefined(value.requestId),
+        runtimeId: value.runtimeId,
+        beforeMessageId: value.beforeMessageId,
         limit: numberOrUndefined(value.limit),
       };
     case "subagent.detail.open":
