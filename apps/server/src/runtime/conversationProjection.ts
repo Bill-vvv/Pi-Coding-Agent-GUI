@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { ConversationContextUsage, ConversationDelta, ConversationMessage, Runtime, ServerEvent } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
+import { ConversationMessageCache } from "./conversation/conversationMessageCache.js";
 import { compactText } from "./conversation/conversationText.js";
 import type { NormalizedConversationEvent, NormalizedMessage, NormalizedSnapshotMessage, NormalizedTool } from "./conversation/normalizedEvents.js";
 import { normalizePiPayload } from "./conversation/piPayloadNormalizer.js";
+import { toolStatusLabel, type ToolStatus } from "./conversation/toolStatus.js";
 
 type Broadcast = (event: ServerEvent) => void;
 type RuntimeProvider = () => Runtime | undefined;
@@ -12,8 +14,7 @@ export class ConversationProjection {
   private currentAssistantMessageId?: string;
   private currentUserMessageId?: string;
   private readonly toolMessageIds = new Map<string, string>();
-  private readonly messages = new Map<string, ConversationMessage>();
-  private readonly messageOrder: string[] = [];
+  private readonly cache = new ConversationMessageCache();
 
   constructor(
     private readonly db: AppDatabase,
@@ -24,7 +25,7 @@ export class ConversationProjection {
   snapshot(limit = 100): ServerEvent | undefined {
     const runtime = this.getRuntime();
     if (!runtime) return undefined;
-    const cachedMessages = this.orderedMessages(limit);
+    const cachedMessages = this.cache.ordered(limit);
     return {
       type: "conversation.snapshot",
       runtimeId: runtime.id,
@@ -164,7 +165,7 @@ export class ConversationProjection {
     this.currentAssistantMessageId = undefined;
   }
 
-  private upsertToolMessage(tool: NormalizedTool, status: "running" | "completed" | "failed"): void {
+  private upsertToolMessage(tool: NormalizedTool, status: ToolStatus): void {
     const id = this.toolMessageIds.get(tool.key) ?? `tool-${tool.key}`;
     this.toolMessageIds.set(tool.key, id);
     this.upsertMessage({
@@ -195,13 +196,13 @@ export class ConversationProjection {
     if (messages.length === 0) return;
 
     const existing = this.db.listConversationMessages(runtime.id, 1);
-    if (existing.length === 0 && this.messages.size === 0) {
+    if (existing.length === 0 && this.cache.size === 0) {
       this.db.replaceConversationMessages(runtime.id, messages);
-      this.replaceCachedMessages(messages);
+      this.cache.replace(messages);
     } else {
       for (const message of messages) {
         this.db.upsertConversationMessage(message);
-        this.cacheMessage(message);
+        this.cache.upsert(message);
       }
     }
 
@@ -224,7 +225,7 @@ export class ConversationProjection {
   private upsertMessage(input: Omit<ConversationMessage, "runtimeId" | "projectId" | "updatedAt"> & { updatedAt?: number }, persist = true): ConversationMessage {
     const runtime = this.requireRuntime();
     const existing = this.getMessage(input.id);
-    const message = this.cacheMessage({
+    const message = this.cache.upsert({
       ...existing,
       ...input,
       runtimeId: runtime.id,
@@ -249,7 +250,7 @@ export class ConversationProjection {
       isStreaming: input.isStreaming ?? current.isStreaming,
       updatedAt: Date.now(),
     };
-    this.cacheMessage(next);
+    this.cache.upsert(next);
     this.broadcast({
       type: "conversation.delta",
       delta: {
@@ -277,27 +278,7 @@ export class ConversationProjection {
 
   private getMessage(messageId: string): ConversationMessage | undefined {
     const runtime = this.requireRuntime();
-    return this.messages.get(messageId) ?? this.db.getConversationMessage(runtime.id, messageId);
-  }
-
-  private cacheMessage(message: ConversationMessage): ConversationMessage {
-    if (!this.messages.has(message.id)) this.messageOrder.push(message.id);
-    this.messages.set(message.id, message);
-    return message;
-  }
-
-  private replaceCachedMessages(messages: ConversationMessage[]): void {
-    this.messages.clear();
-    this.messageOrder.length = 0;
-    for (const message of messages) this.cacheMessage(message);
-  }
-
-  private orderedMessages(limit = 100): ConversationMessage[] {
-    const messages = this.messageOrder.flatMap((id) => {
-      const message = this.messages.get(id);
-      return message ? [message] : [];
-    });
-    return messages.slice(-Math.max(1, Math.min(limit, 500)));
+    return this.cache.get(messageId) ?? this.db.getConversationMessage(runtime.id, messageId);
   }
 
   private currentContextWindow(): number | undefined {
@@ -309,10 +290,4 @@ export class ConversationProjection {
     if (!runtime) throw new Error("Conversation runtime is unavailable");
     return runtime;
   }
-}
-
-function toolStatusLabel(status: "running" | "completed" | "failed"): string {
-  if (status === "running") return "运行中";
-  if (status === "failed") return "失败";
-  return "完成";
 }
