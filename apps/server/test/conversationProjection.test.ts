@@ -111,11 +111,11 @@ test("RuntimeSupervisor exposes queue snapshots through standardized runtime.que
   const supervisor = new RuntimeSupervisor(db, (event) => events.push(event));
   const privateSupervisor = supervisor as unknown as {
     runtimes: Map<string, unknown>;
-    handlePiPayload(runtimeId: string, payload: unknown): void;
+    launcher: { handlePiPayload(runtimeId: string, payload: unknown): void };
   };
   privateSupervisor.runtimes.set(runtime.id, { runtime, projection });
 
-  privateSupervisor.handlePiPayload(runtime.id, { type: "queue_update", steering: ["adjust"], followUp: ["next", 1] });
+  privateSupervisor.launcher.handlePiPayload(runtime.id, { type: "queue_update", steering: ["adjust"], followUp: ["next", 1] });
 
   assert.deepEqual(supervisor.listRuntimeQueues(), [
     {
