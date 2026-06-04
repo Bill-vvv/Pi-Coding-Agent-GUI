@@ -1,5 +1,5 @@
 import { useRef, useState, type Dispatch } from "react";
-import type { ConversationMessage, Project, ResponseMode, Runtime, RuntimeConversationSummary, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
+import type { Project, ResponseMode, Runtime, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
 import type { AppAction } from "../state/appReducer";
 import type { GuiSocketSend, PendingProjectStart, PendingPrompt } from "../types";
@@ -7,8 +7,6 @@ import type { GuiSocketSend, PendingProjectStart, PendingPrompt } from "../types
 type UseProjectRuntimeActionsOptions = {
   projects: Project[];
   runtimes: Runtime[];
-  messagesByRuntime: Record<string, ConversationMessage[]>;
-  conversationSummaries: Record<string, RuntimeConversationSummary>;
   activeRuntime?: Runtime;
   activeRuntimeIsBusy: boolean;
   selectedProject?: Project;
@@ -24,8 +22,6 @@ type UseProjectRuntimeActionsOptions = {
 export function useProjectRuntimeActions({
   projects,
   runtimes,
-  messagesByRuntime,
-  conversationSummaries,
   activeRuntime,
   activeRuntimeIsBusy,
   selectedProject,
@@ -150,14 +146,6 @@ export function useProjectRuntimeActions({
   }
 
   function startRuntimeForProject(projectId: string, message?: string): boolean {
-    if (!message?.trim()) {
-      const emptyRuntime = findEmptyRuntimeForProject(projectId);
-      if (emptyRuntime) {
-        dispatch({ type: "select.runtime", projectId, runtimeId: emptyRuntime.id });
-        return true;
-      }
-    }
-
     const requestId = crypto.randomUUID();
     const sent = send({
       type: "runtime.start",
@@ -249,20 +237,6 @@ export function useProjectRuntimeActions({
     }
 
     dispatch({ type: "set.operationError", error: "请先在输入框下方选择项目文件夹" });
-  }
-
-  function findEmptyRuntimeForProject(projectId: string) {
-    const projectRuntimes = runtimes.filter((runtime) => runtime.projectId === projectId && !runtime.archivedAt);
-    const activeEmptyRuntime = activeRuntime && activeRuntime.projectId === projectId && isEmptyRuntime(activeRuntime) ? activeRuntime : undefined;
-    return activeEmptyRuntime ?? projectRuntimes.find(isEmptyRuntime);
-  }
-
-  function isEmptyRuntime(runtime: Runtime): boolean {
-    const summary = conversationSummaries[runtime.id];
-    if (summary?.messageCount) return false;
-
-    const messages = messagesByRuntime[runtime.id] ?? [];
-    return !messages.some((message) => (message.role === "user" || message.role === "assistant") && message.text.trim());
   }
 
   return {

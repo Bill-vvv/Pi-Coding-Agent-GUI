@@ -140,8 +140,6 @@ export function App() {
   } = useProjectRuntimeActions({
     projects,
     runtimes,
-    messagesByRuntime,
-    conversationSummaries,
     activeRuntime,
     activeRuntimeIsBusy,
     selectedProject,
