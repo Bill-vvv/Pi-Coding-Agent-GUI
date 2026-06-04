@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -100,6 +100,47 @@ test("RuntimeSupervisor exposes live projection summaries before messages are pe
   assert.equal(summaries[0]?.runtimeId, runtime.id);
   assert.equal(summaries[0]?.title, "正在实时回答");
   assert.deepEqual(db.listConversationMessages(runtime.id), []);
+  db.close();
+});
+
+test("RuntimeSupervisor falls back to linked Pi session file summaries when DB messages are not hydrated", () => {
+  const { db, runtime } = createHarness();
+  const sessionFile = join(mkdtempSync(join(tmpdir(), "pi-gui-session-summary-")), "session-1.jsonl");
+  writeFileSync(
+    sessionFile,
+    [
+      JSON.stringify({ type: "session", id: "session-1", cwd: runtime.cwd }),
+      JSON.stringify({ type: "message", id: "user-1", timestamp: "2026-06-03T10:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "侧边栏应该显示这个标题" }] } }),
+      JSON.stringify({ type: "message", id: "assistant-1", timestamp: "2026-06-03T10:01:00.000Z", message: { role: "assistant", content: [{ type: "text", text: "侧边栏应该显示这个最新回复" }] } }),
+    ].join("\n"),
+    "utf8",
+  );
+  const linkedRuntime = { ...runtime, status: "stopped" as const, sessionId: "session-1", updatedAt: 200 };
+  db.upsertRuntime(linkedRuntime);
+  db.upsertSession({ id: "session-1", projectId: runtime.projectId, piSessionFile: sessionFile, createdAt: 100, updatedAt: 200, runtimeId: runtime.id });
+  const supervisor = new RuntimeSupervisor(db, () => undefined);
+
+  const summary = supervisor.listRuntimeConversationSummaries()[0];
+
+  assert.equal(summary?.runtimeId, runtime.id);
+  assert.equal(summary?.title, "侧边栏应该显示这个标题");
+  assert.equal(summary?.detail, "侧边栏应该显示这个最新回复");
+  assert.equal(summary?.messageCount, 2);
+  db.close();
+});
+
+test("RuntimeSupervisor keeps indexed session title if the linked Pi session file is unreadable", () => {
+  const { db, runtime } = createHarness();
+  const linkedRuntime = { ...runtime, status: "stopped" as const, sessionId: "session-missing", updatedAt: 200 };
+  db.upsertRuntime(linkedRuntime);
+  db.upsertSession({ id: "session-missing", projectId: runtime.projectId, piSessionFile: join(runtime.cwd, "missing.jsonl"), title: "索引里的标题", createdAt: 100, updatedAt: 200, runtimeId: runtime.id });
+  const supervisor = new RuntimeSupervisor(db, () => undefined);
+
+  const summary = supervisor.listRuntimeConversationSummaries()[0];
+
+  assert.equal(summary?.runtimeId, runtime.id);
+  assert.equal(summary?.title, "索引里的标题");
+  assert.equal(summary?.detail, undefined);
   db.close();
 });
 

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { AppDatabase } from "../src/db.js";
-import { findPiSessionFileById, indexKnownPiSessions } from "../src/services/sessionIndexService.js";
+import { findPiSessionFileById, indexKnownPiSessions, readPiSessionConversationSummary } from "../src/services/sessionIndexService.js";
 
 function withSessionRoot<T>(root: string, run: () => T): T {
   const previous = process.env.PI_GUI_SESSION_ROOT;
@@ -48,6 +48,30 @@ test("indexKnownPiSessions scans Pi session files for known project cwd", () => 
   });
 
   db.close();
+});
+
+test("readPiSessionConversationSummary scans beyond initial metadata lines and extracts latest detail", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-gui-session-summary-"));
+  const sessionFile = join(dir, "session-3.jsonl");
+  const setupLines = Array.from({ length: 20 }, (_, index) => JSON.stringify({ type: "model_change", id: `model-${index}` }));
+  writeFileSync(
+    sessionFile,
+    [
+      JSON.stringify({ type: "session", id: "session-3", cwd: dir }),
+      ...setupLines,
+      JSON.stringify({ type: "message", id: "user-1", timestamp: "2026-06-03T10:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "这是用户提出的第一个问题" }] } }),
+      "{ malformed truncated line",
+      JSON.stringify({ type: "message", id: "assistant-1", timestamp: "2026-06-03T10:01:00.000Z", message: { role: "assistant", content: [{ type: "text", text: "这是 Pi 的最后一句回复" }] } }),
+    ].join("\n"),
+    "utf8",
+  );
+
+  const summary = readPiSessionConversationSummary(sessionFile);
+
+  assert.equal(summary?.title, "这是用户提出的第一个问题");
+  assert.equal(summary?.detail, "这是 Pi 的最后一句回复");
+  assert.equal(summary?.messageCount, 2);
+  assert.equal(summary?.latestAssistantCompletedAt, Date.parse("2026-06-03T10:01:00.000Z"));
 });
 
 test("findPiSessionFileById locates a session file by id", () => {

@@ -2,6 +2,7 @@ import type { DragEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ConversationMessage, GuiSession, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
 import type { ConnectionState } from "../types";
+import { sidebarSessionDetail, sidebarSessionTitle } from "../domain/sidebarSessions";
 import { Icon } from "./Icon";
 import { PiLogo } from "./PiLogo";
 
@@ -461,8 +462,8 @@ export function Sidebar({
                     {projectRuntimes.map((runtime) => {
                       const summary = conversationSummaries[runtime.id];
                       const linkedSession = runtime.sessionId ? sessionById.get(runtime.sessionId) : undefined;
-                      const title = sessionTitle(runtime, summary, linkedSession);
-                      const detail = sessionDetail(runtime, summary, linkedSession);
+                      const title = sidebarSessionTitle(runtime, summary, linkedSession);
+                      const detail = sidebarSessionDetail(runtime, summary, linkedSession);
                       const completedAt = completedAssistantReplyAt(summary, messagesByRuntime[runtime.id]);
                       const hasUnreadReply = Boolean(completedAt && completedAt > (readTimestampsByRuntime[runtime.id] ?? 0));
                       const dotState = sessionDotState(busyByRuntime[runtime.id] ?? false, hasUnreadReply);
@@ -581,30 +582,6 @@ function sessionDotTitle(state: SessionDotState): string {
   if (state === "task-busy") return "Agent 正在生成回复";
   if (state === "task-unread") return "有未读回复，点击查看";
   return "无未读回复";
-}
-
-function sessionTitle(runtime: Runtime, summary: RuntimeConversationSummary | undefined, session: GuiSession | undefined): string {
-  if (summary?.title) return summary.title;
-  if (session?.title) return session.title;
-  if (runtime.sessionId) return "已保存对话";
-  if (runtime.status === "running" || runtime.status === "starting") return "新对话";
-  return `对话 ${runtime.id.slice(0, 8)}`;
-}
-
-function sessionDetail(runtime: Runtime, summary: RuntimeConversationSummary | undefined, session: GuiSession | undefined): string | undefined {
-  if (summary?.detail) return summary.detail;
-  if (summary?.messageCount) return `${summary.messageCount} 条消息`;
-  if (runtime.sessionId) return `Session ${runtime.sessionId.slice(0, 8)}`;
-  if (session) return formatSessionDate(session.updatedAt);
-  return undefined;
-}
-
-function formatSessionDate(timestamp: number): string {
-  try {
-    return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
-  } catch {
-    return "未知时间";
-  }
 }
 
 function clearSessionDotBreatheVars(root: HTMLElement): void {

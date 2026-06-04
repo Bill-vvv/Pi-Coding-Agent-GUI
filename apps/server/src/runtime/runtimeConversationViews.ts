@@ -1,6 +1,7 @@
 import type { Runtime, RuntimeConversationSummary, ServerEvent } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
 import { runtimeConversationSummaryFromMessages } from "../db/summaries.js";
+import { readPiSessionConversationSummary } from "../services/sessionIndexService.js";
 import type { ManagedRuntime } from "./managedRuntime.js";
 
 export function buildRuntimeConversationSummaries({
@@ -37,6 +38,27 @@ export function buildRuntimeConversationSummaries({
       updatedAt: Math.max(persistedSummary.updatedAt ?? 0, liveSummary.updatedAt ?? 0) || undefined,
       messageCount: Math.max(persistedSummary.messageCount, liveSummary.messageCount),
       latestAssistantCompletedAt: Math.max(persistedSummary.latestAssistantCompletedAt ?? 0, liveSummary.latestAssistantCompletedAt ?? 0) || undefined,
+    });
+  }
+
+  for (const runtime of orderedRuntimes) {
+    if (!runtime.sessionId) continue;
+    const existingSummary = summaries.get(runtime.id);
+    if (existingSummary?.title && existingSummary.detail) continue;
+
+    const session = db.getSession(runtime.sessionId);
+    if (!session) continue;
+    const fileSummary = readPiSessionConversationSummary(session.piSessionFile);
+    if (!fileSummary && !session.title) continue;
+
+    summaries.set(runtime.id, {
+      runtimeId: runtime.id,
+      projectId: runtime.projectId,
+      title: existingSummary?.title || session.title || fileSummary?.title || "已保存对话",
+      detail: existingSummary?.detail ?? fileSummary?.detail,
+      updatedAt: Math.max(existingSummary?.updatedAt ?? 0, fileSummary?.updatedAt ?? 0, session.updatedAt, runtime.startedAt ?? 0) || undefined,
+      messageCount: Math.max(existingSummary?.messageCount ?? 0, fileSummary?.messageCount ?? 0),
+      latestAssistantCompletedAt: Math.max(existingSummary?.latestAssistantCompletedAt ?? 0, fileSummary?.latestAssistantCompletedAt ?? 0) || undefined,
     });
   }
 

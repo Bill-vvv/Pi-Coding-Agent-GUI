@@ -1,6 +1,6 @@
 import type { GuiSession, Runtime, ServerEvent } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
-import { findPiSessionFileById } from "../services/sessionIndexService.js";
+import { findPiSessionFileById, readPiSessionConversationSummary } from "../services/sessionIndexService.js";
 import type { ManagedRuntime } from "./managedRuntime.js";
 
 type Broadcast = (event: ServerEvent) => void;
@@ -19,12 +19,13 @@ export class RuntimeSessionLinker {
     if (!sessionId || !sessionFile) return;
 
     const existing = this.db.getSession(sessionId);
+    const fileSummary = existing?.title ? undefined : readPiSessionConversationSummary(sessionFile);
     const now = Date.now();
     const session: GuiSession = this.db.upsertSession({
       id: sessionId,
       projectId: managed.runtime.projectId,
       piSessionFile: sessionFile,
-      title: existing?.title,
+      title: existing?.title ?? fileSummary?.title,
       createdAt: existing?.createdAt ?? managed.runtime.startedAt ?? now,
       updatedAt: now,
       runtimeId: managed.runtime.id,
