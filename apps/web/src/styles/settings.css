@@ -156,6 +156,27 @@
 
 .settings-setting-row.disabled { opacity: 0.62; }
 
+.settings-navigation-row {
+  width: 100%;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.settings-navigation-row:hover {
+  background: var(--color-hover-muted);
+}
+
+.settings-navigation-row svg {
+  justify-self: end;
+  color: var(--color-text-muted);
+}
+
 .settings-setting-copy {
   display: flex;
   min-width: 0;

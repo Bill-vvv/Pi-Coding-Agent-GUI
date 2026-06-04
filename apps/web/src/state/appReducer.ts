@@ -113,7 +113,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "set.projectCwd":
       return { ...state, projectCwd: action.cwd };
     case "select.project":
-      return { ...state, selectedProjectId: action.projectId, selectedRuntimeId: runtimeIdForProject(state, action.projectId) };
+      return { ...state, selectedProjectId: action.projectId, selectedRuntimeId: undefined };
     case "select.runtime": {
       const hydratedRuntimeIds = rememberHydratedRuntime(state.hydratedRuntimeIds, action.runtimeId);
       return {
@@ -181,8 +181,8 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
     case "hello": {
       const nextProjectId = event.projects.some((project) => project.id === state.selectedProjectId) ? state.selectedProjectId : event.projects[0]?.id;
       const nextRuntimeMap = reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, event.runtimes);
-      const nextRuntimeId = validRuntimeIdForProject(event.runtimes, nextProjectId, state.selectedRuntimeId) ?? runtimeIdForProject({ ...state, runtimes: event.runtimes, selectedRuntimeIdByProject: nextRuntimeMap }, nextProjectId);
-      const seededRuntimeMap = nextProjectId && nextRuntimeId ? { ...nextRuntimeMap, [nextProjectId]: nextRuntimeId } : nextRuntimeMap;
+      const nextRuntimeId = validRuntimeIdForProject(event.runtimes, nextProjectId, state.selectedRuntimeId);
+      const seededRuntimeMap = nextRuntimeMap;
       const nextSubagentRuns = event.subagentRuns ? indexSubagentRuns(event.subagentRuns) : state.subagentRuns;
       return applySettingsState(
         {
@@ -202,13 +202,12 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
     }
     case "project.list": {
       const nextProjectId = event.projects.some((project) => project.id === state.selectedProjectId) ? state.selectedProjectId : event.projects[0]?.id;
-      const nextRuntimeId = runtimeIdForProject(state, nextProjectId);
+      const nextRuntimeId = validRuntimeIdForProject(state.runtimes, nextProjectId, state.selectedRuntimeId);
       return {
         ...state,
         projects: event.projects,
         selectedProjectId: nextProjectId,
         selectedRuntimeId: nextRuntimeId,
-        selectedRuntimeIdByProject: nextProjectId && nextRuntimeId ? { ...state.selectedRuntimeIdByProject, [nextProjectId]: nextRuntimeId } : state.selectedRuntimeIdByProject,
       };
     }
     case "project.created":
@@ -391,17 +390,15 @@ function upsertGuiEvent(events: GuiEvent[], event: GuiEvent): GuiEvent[] {
 
 function applyRuntimeStatus(state: AppState, runtime: Runtime): AppState {
   const nextRuntimes = upsertById(state.runtimes, runtime);
-  const shouldRememberRuntime = !runtime.archivedAt && (state.selectedProjectId === runtime.projectId || !state.selectedRuntimeIdByProject[runtime.projectId]);
+  const selectedRuntimeId = validRuntimeIdForProject(nextRuntimes, state.selectedProjectId, state.selectedRuntimeId);
+  const selectedRuntimeIdByProject = selectedRuntimeId === state.selectedRuntimeId
+    ? state.selectedRuntimeIdByProject
+    : reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, nextRuntimes);
   const nextState: AppState = {
     ...state,
     runtimes: nextRuntimes,
-    selectedRuntimeIdByProject: shouldRememberRuntime
-      ? { ...state.selectedRuntimeIdByProject, [runtime.projectId]: runtime.id }
-      : state.selectedRuntimeIdByProject,
-    selectedRuntimeId:
-      shouldRememberRuntime && state.selectedProjectId === runtime.projectId
-        ? runtime.id
-        : validRuntimeIdForProject(nextRuntimes, state.selectedProjectId, state.selectedRuntimeId) ?? runtimeIdForProject({ ...state, runtimes: nextRuntimes }, state.selectedProjectId),
+    selectedRuntimeIdByProject,
+    selectedRuntimeId,
   };
 
   if (runtime.status === "stopped" || runtime.status === "crashed") {
@@ -438,14 +435,6 @@ function applyCommandResult(state: AppState, event: Extract<ServerEvent, { type:
   }
 
   return state;
-}
-
-function runtimeIdForProject(state: AppState, projectId?: string): string | undefined {
-  if (!projectId) return undefined;
-  const remembered = validRuntimeIdForProject(state.runtimes, projectId, state.selectedRuntimeIdByProject[projectId]);
-  if (remembered) return remembered;
-  const projectRuntimes = state.runtimes.filter((runtime) => runtime.projectId === projectId && !runtime.archivedAt);
-  return projectRuntimes.find((runtime) => runtime.status === "running")?.id ?? projectRuntimes[0]?.id;
 }
 
 function validRuntimeIdForProject(runtimes: Runtime[], projectId?: string, runtimeId?: string): string | undefined {

@@ -9,6 +9,7 @@
 @import "./styles/extension-ui.css";
 @import "./styles/model-picker.css";
 @import "./styles/settings.css";
+@import "./styles/token-usage.css";
 @import "./styles/session-history.css";
 @import "./styles/checkpoints.css";
 @import "./styles/thinking-animation.css";

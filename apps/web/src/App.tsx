@@ -6,6 +6,7 @@ import { Composer } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { SubagentDetailDrawer } from "./components/SubagentDetailDrawer";
+import { TokenUsageOverview } from "./components/TokenUsageOverview";
 import { useActiveRuntimeView } from "./hooks/useActiveRuntimeView";
 import { useAppModalState } from "./hooks/useAppModalState";
 import { useCheckpointActions } from "./hooks/useCheckpointActions";
@@ -279,6 +280,11 @@ export function App() {
     setCompactSidebarExpanded(false);
   }
 
+  function openUsageOverview() {
+    closeSettings();
+    dispatch({ type: "select.project", projectId: selectedProject?.id });
+  }
+
   return (
     <main className={`app-shell ${compactSidebarExpanded ? "sidebar-compact-expanded" : ""}`}>
       <Sidebar
@@ -340,7 +346,10 @@ export function App() {
             onOpenArchivedRuntime={(runtimeId: string) => {
               send({ type: "conversation.open", runtimeId, limit: 200 }, { notifyOnDisconnected: false });
             }}
+            onOpenUsageOverview={openUsageOverview}
           />
+        ) : !activeRuntime ? (
+          <TokenUsageOverview projects={projects} />
         ) : (
           <>
             <ChatView

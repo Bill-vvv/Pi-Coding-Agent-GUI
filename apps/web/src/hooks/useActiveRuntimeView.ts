@@ -37,10 +37,7 @@ export function useActiveRuntimeView(state: AppState, models: ModelSummary[]) {
     () => (selectedRuntimeId ? visibleProjectRuntimes.find((runtime) => runtime.id === selectedRuntimeId) : undefined),
     [selectedRuntimeId, visibleProjectRuntimes],
   );
-  const activeRuntime = useMemo(
-    () => selectedRuntime ?? visibleProjectRuntimes.find((runtime) => runtime.status === "running") ?? visibleProjectRuntimes[0],
-    [selectedRuntime, visibleProjectRuntimes],
-  );
+  const activeRuntime = selectedRuntime;
   const selectedModel = useMemo(() => {
     const activeRuntimeModelKey = activeRuntime ? activeRuntime.model : defaultModelKey;
     return activeRuntimeModelKey
