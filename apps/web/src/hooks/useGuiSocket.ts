@@ -36,7 +36,24 @@ export function useGuiSocket({ onEvent, onError, onOpen, onClose }: UseGuiSocket
 
   useEffect(() => {
     let reconnectTimer: number | undefined;
+    let connectionWarningTimer: number | undefined;
     let closedByEffect = false;
+
+    const clearConnectionWarning = () => {
+      if (connectionWarningTimer === undefined) return;
+      window.clearTimeout(connectionWarningTimer);
+      connectionWarningTimer = undefined;
+    };
+
+    const scheduleConnectionWarning = () => {
+      if (closedByEffect || connectionWarningTimer !== undefined) return;
+      connectionWarningTimer = window.setTimeout(() => {
+        connectionWarningTimer = undefined;
+        if (!closedByEffect && wsRef.current?.readyState !== WebSocket.OPEN) {
+          onErrorRef.current("WebSocket 连接中断，正在重连…");
+        }
+      }, CONNECTION_WARNING_GRACE_MS);
+    };
 
     const connect = () => {
       setConnection("connecting");
@@ -44,6 +61,7 @@ export function useGuiSocket({ onEvent, onError, onOpen, onClose }: UseGuiSocket
       wsRef.current = ws;
 
       ws.addEventListener("open", () => {
+        clearConnectionWarning();
         setConnection("open");
         onOpenRef.current?.();
       });
@@ -64,11 +82,12 @@ export function useGuiSocket({ onEvent, onError, onOpen, onClose }: UseGuiSocket
         if (wsRef.current === ws) wsRef.current = null;
         onCloseRef.current?.();
         setConnection("closed");
-        if (!closedByEffect) reconnectTimer = window.setTimeout(connect, 1500);
+        scheduleConnectionWarning();
+        if (!closedByEffect) reconnectTimer = window.setTimeout(connect, RECONNECT_DELAY_MS);
       });
 
       ws.addEventListener("error", () => {
-        onErrorRef.current("WebSocket 连接错误");
+        scheduleConnectionWarning();
       });
     };
 
@@ -77,6 +96,7 @@ export function useGuiSocket({ onEvent, onError, onOpen, onClose }: UseGuiSocket
     return () => {
       closedByEffect = true;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      clearConnectionWarning();
       wsRef.current?.close();
     };
   }, []);
@@ -92,6 +112,9 @@ export function useGuiSocket({ onEvent, onError, onOpen, onClose }: UseGuiSocket
 
   return { connection, send };
 }
+
+const RECONNECT_DELAY_MS = 1500;
+const CONNECTION_WARNING_GRACE_MS = 3000;
 
 function wsUrl(sinceEventId = 0): string {
   const baseUrl = import.meta.env.VITE_WS_URL || `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
