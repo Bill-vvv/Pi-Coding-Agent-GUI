@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { AppSettings, ConversationContextUsage, ConversationMessage, GuiEvent, GuiSession, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
+import type { AppSettings, ConversationContextUsage, ConversationMessage, GuiEvent, GuiSession, Project, Runtime, RuntimeConversationSummary, SubagentRun } from "@pi-gui/shared";
 import { ConversationStore } from "./db/conversations.js";
 import { EventLogStore } from "./db/events.js";
 import { ProjectStore } from "./db/projects.js";
@@ -9,6 +9,7 @@ import { RuntimeStore } from "./db/runtimes.js";
 import { migrateDatabase } from "./db/schema.js";
 import { SessionStore } from "./db/sessions.js";
 import { SettingsStore } from "./db/settings.js";
+import { SubagentRunStore } from "./db/subagentRuns.js";
 
 export class AppDatabase {
   private readonly db: Database.Database;
@@ -18,6 +19,7 @@ export class AppDatabase {
   private readonly runtimes: RuntimeStore;
   private readonly sessions: SessionStore;
   private readonly settings: SettingsStore;
+  private readonly subagentRuns: SubagentRunStore;
 
   constructor(filePath = defaultDbPath()) {
     mkdirSync(dirname(filePath), { recursive: true });
@@ -30,8 +32,10 @@ export class AppDatabase {
     this.runtimes = new RuntimeStore(this.db);
     this.sessions = new SessionStore(this.db);
     this.settings = new SettingsStore(this.db);
+    this.subagentRuns = new SubagentRunStore(this.db);
     this.runtimes.markOrphanedRuntimesCrashed();
     this.runtimes.archiveStoppedRuntimesWithoutSessions();
+    this.subagentRuns.markOrphanedSubagentRunsFailed();
   }
 
   close(): void {
@@ -83,7 +87,9 @@ export class AppDatabase {
   }
 
   listSessions(projectId?: string, limit = 200): GuiSession[] {
-    return this.sessions.listSessions(projectId, limit);
+    const childSessionFiles = this.subagentRuns.listChildSessionFiles();
+    if (childSessionFiles.size === 0) return this.sessions.listSessions(projectId, limit);
+    return this.sessions.listSessions(projectId, limit).filter((session) => !childSessionFiles.has(session.piSessionFile));
   }
 
   getSession(id: string): GuiSession | undefined {
@@ -144,6 +150,26 @@ export class AppDatabase {
 
   recentEvents(limit = 200, maxPayloadBytes?: number): GuiEvent[] {
     return this.eventLog.recentEvents(limit, maxPayloadBytes);
+  }
+
+  upsertSubagentRun(run: SubagentRun): SubagentRun {
+    return this.subagentRuns.upsertSubagentRun(run);
+  }
+
+  getSubagentRun(id: string): SubagentRun | undefined {
+    return this.subagentRuns.getSubagentRun(id);
+  }
+
+  getSubagentRunByParentToolCall(parentRuntimeId: string, parentToolCallId: string): SubagentRun | undefined {
+    return this.subagentRuns.getSubagentRunByParentToolCall(parentRuntimeId, parentToolCallId);
+  }
+
+  listSubagentRuns(parentRuntimeId?: string, limit = 500): SubagentRun[] {
+    return this.subagentRuns.listSubagentRuns(parentRuntimeId, limit);
+  }
+
+  listActiveSubagentRuns(limit = 500): SubagentRun[] {
+    return this.subagentRuns.listActiveSubagentRuns(limit);
   }
 }
 

@@ -14,6 +14,7 @@ import type {
   RuntimeConversationSummary,
   RuntimeQueue,
   SlashCommand,
+  SubagentRun,
   ThinkingLevel,
 } from "./domain.js";
 
@@ -36,10 +37,11 @@ export type ClientCommand =
   | { type: "runtime.commands.list"; requestId?: string; runtimeId: string }
   | { type: "extension.ui.respond"; requestId?: string; runtimeId: string; responseId: string; response: ExtensionUiResponse }
   | { type: "conversation.open"; requestId?: string; runtimeId: string; limit?: number }
+  | { type: "subagent.detail.open"; requestId?: string; runId: string; childRunId?: string; limit?: number }
   | { type: "event.replay"; requestId?: string; afterEventId?: number; limit?: number; projectId?: string; runtimeId?: string };
 
 export type ServerEvent =
-  | { type: "hello"; serverTime: number; projects: Project[]; runtimes: Runtime[]; settings: AppSettings; lastEventId: number; conversationSummaries?: RuntimeConversationSummary[]; sessions?: GuiSession[] }
+  | { type: "hello"; serverTime: number; projects: Project[]; runtimes: Runtime[]; settings: AppSettings; lastEventId: number; conversationSummaries?: RuntimeConversationSummary[]; sessions?: GuiSession[]; subagentRuns?: SubagentRun[] }
   | { type: "command.result"; requestId?: string; command: ClientCommand["type"] | "unknown"; success: boolean; error?: string; data?: unknown }
   | { type: "project.list"; projects: Project[] }
   | { type: "project.created"; project: Project }
@@ -56,4 +58,7 @@ export type ServerEvent =
   | { type: "runtime.commands"; runtimeId: string; projectId: string; commands: SlashCommand[] }
   | { type: "runtime.rpc.response"; runtimeId: string; projectId: string; command: string; success: boolean; data?: unknown; error?: string; label?: string }
   | { type: "extension.ui.request"; runtimeId: string; projectId: string; request: ExtensionUiRequest }
+  | { type: "subagent.snapshot"; runs: SubagentRun[] }
+  | { type: "subagent.run"; run: SubagentRun }
+  | { type: "subagent.detail"; runId: string; childRunId: string; messages: ConversationMessage[]; readAt: number; error?: string }
   | { type: "gui.event"; event: GuiEvent };

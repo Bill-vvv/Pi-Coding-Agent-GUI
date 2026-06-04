@@ -5,6 +5,7 @@ import { createPiRuntimeClient } from "./piRuntimeFactory.js";
 import { attachRuntimeClientEventHandlers, handleRuntimeClientPayload, type RuntimeClientHandlerDependencies } from "./runtimeClientEventHandlers.js";
 import { prepareRuntimeLaunchPlan, type RuntimeResumeOptions } from "./runtimeLaunchPlan.js";
 import { requestRuntimeMessages, requestRuntimeState, requestSessionStats } from "./runtimeStateRequester.js";
+import { SubagentRunProjection } from "./subagent/subagentRunProjection.js";
 
 export type { RuntimeResumeOptions } from "./runtimeLaunchPlan.js";
 
@@ -28,8 +29,10 @@ export class RuntimeLauncher {
       thinkingLevel: plan.thinkingLevel,
       responseMode: plan.responseMode,
     });
-    const projection = new ConversationProjection(db, () => runtimes.get(runtime.id)?.runtime ?? runtime, broadcast);
-    const managed: ManagedRuntime = { runtime, client, serviceTierConfigFile, pendingNativeRpcCommands: new Map(), configRevision: 0, projection };
+    const getRuntime = () => runtimes.get(runtime.id)?.runtime ?? runtime;
+    const projection = new ConversationProjection(db, getRuntime, broadcast);
+    const subagents = new SubagentRunProjection(db, getRuntime, broadcast);
+    const managed: ManagedRuntime = { runtime, client, serviceTierConfigFile, pendingNativeRpcCommands: new Map(), configRevision: 0, projection, subagents };
     runtimes.set(runtime.id, managed);
     attachRuntimeClientEventHandlers(this.options, runtime.id, managed);
 

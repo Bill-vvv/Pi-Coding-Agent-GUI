@@ -8,7 +8,7 @@ import { normalizePiPayload } from "./conversation/piPayloadNormalizer.js";
 import { toolStatusLabel, type ToolStatus } from "./conversation/toolStatus.js";
 
 type Broadcast = (event: ServerEvent) => void;
-type RuntimeProvider = () => Runtime | undefined;
+export type RuntimeProvider = () => Runtime | undefined;
 
 export class ConversationProjection {
   private currentAssistantMessageId?: string;

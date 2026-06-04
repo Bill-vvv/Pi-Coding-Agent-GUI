@@ -84,6 +84,28 @@ export function migrateDatabase(db: Database.Database): void {
       foreign key(project_id) references projects(id)
     );
 
+    create table if not exists subagent_runs (
+      id text primary key,
+      project_id text not null,
+      parent_runtime_id text not null,
+      parent_tool_call_id text not null,
+      parent_tool_message_id text not null,
+      agent text not null,
+      mode text not null,
+      context_mode text,
+      status text not null,
+      started_at integer not null,
+      updated_at integer not null,
+      finished_at integer,
+      final_text text,
+      error_message text,
+      runs_json text not null,
+      foreign key(project_id) references projects(id)
+    );
+
+    create index if not exists subagent_runs_parent_runtime_idx on subagent_runs(parent_runtime_id, updated_at);
+    create index if not exists subagent_runs_status_idx on subagent_runs(status, updated_at);
+
     create table if not exists settings (
       key text primary key,
       value text not null,

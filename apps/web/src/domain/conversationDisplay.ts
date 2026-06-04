@@ -1,4 +1,5 @@
-import { isSerializedToolCallText, stripSerializedToolCallsFromText, type ConversationMessage } from "@pi-gui/shared";
+import { isSerializedToolCallText, stripSerializedToolCallsFromText, type ConversationMessage, type SubagentRun } from "@pi-gui/shared";
+import { subagentRunIsActive } from "./subagents";
 
 // Conversation display modes are intentionally centralized so future modes
 // (for example detailed/raw) can switch rendering policy without changing ChatView.
@@ -68,10 +69,18 @@ export type ConversationDisplayBlock =
       thinkingMessages: ConversationMessage[];
       model: ToolGroupDisplayModel;
       isStreaming: boolean;
+    }
+  | {
+      type: "subagent_group";
+      id: string;
+      run: SubagentRun;
+      sourceToolMessage?: ConversationMessage;
+      isStreaming: boolean;
     };
 
 export type ConversationDisplayOptions = {
   activeRuntimeIsBusy?: boolean;
+  subagentRuns?: SubagentRun[];
 };
 
 const TOOL_STATUS_SUFFIX_RE = /\s+(运行中|完成|失败)$/;
@@ -87,6 +96,7 @@ export function buildConversationDisplayBlocks(
   options: ConversationDisplayOptions = {},
 ): ConversationDisplayBlock[] {
   const blocks: ConversationDisplayBlock[] = [];
+  const subagentRunByToolMessageId = new Map((options.subagentRuns ?? []).map((run) => [run.parentToolMessageId, run]));
   let segmentBlocks: ConversationDisplayBlock[] = [];
   let segmentTools: ConversationMessage[] = [];
   let segmentThinkingMessages: ConversationMessage[] = [];
@@ -127,6 +137,11 @@ export function buildConversationDisplayBlocks(
     }
 
     if (displayKind === "tool") {
+      const subagentRun = subagentRunByToolMessageId.get(displayMessage.id);
+      if (subagentRun) {
+        segmentBlocks.push(subagentGroupBlock(subagentRun, displayMessage));
+        continue;
+      }
       if (processInsertIndex === undefined) processInsertIndex = segmentBlocks.length;
       segmentTools.push(displayMessage);
       continue;
@@ -230,6 +245,16 @@ function toolGroupBlock(tools: ConversationMessage[], thinkingMessages: Conversa
     thinkingMessages,
     model,
     isStreaming: model.status === "running",
+  };
+}
+
+function subagentGroupBlock(run: SubagentRun, sourceToolMessage: ConversationMessage): ConversationDisplayBlock {
+  return {
+    type: "subagent_group",
+    id: `subagent-group-${run.id}`,
+    run,
+    sourceToolMessage,
+    isStreaming: subagentRunIsActive(run),
   };
 }
 

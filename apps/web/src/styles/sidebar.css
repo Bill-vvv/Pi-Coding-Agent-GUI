@@ -411,3 +411,66 @@
     transition: none;
   }
 }
+
+.subagent-running-badge {
+  border: 1px solid rgb(217 169 77 / 28%);
+  border-radius: var(--radius-pill);
+  color: var(--color-warning-text);
+  padding: 0.06rem 0.36rem;
+}
+
+.subagent-runtime-popover {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 0.22rem);
+  left: 1.35rem;
+  display: none;
+  width: min(260px, calc(100vw - 2rem));
+  border: 1px solid var(--color-border-panel);
+  border-radius: var(--radius-panel);
+  background: rgb(35 32 28 / 94%);
+  box-shadow: var(--shadow-popover);
+  color: var(--color-text-soft);
+  padding: 0.65rem 0.72rem;
+}
+
+.session-row:hover .subagent-runtime-popover,
+.session-row:focus-within .subagent-runtime-popover {
+  display: block;
+}
+
+.subagent-runtime-popover strong {
+  display: block;
+  color: var(--color-text-primary);
+  font-size: var(--text-caption);
+  margin-bottom: 0.45rem;
+}
+
+.subagent-runtime-popover ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.subagent-runtime-popover li {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.subagent-runtime-popover span {
+  overflow: hidden;
+  color: var(--color-text-soft);
+  font-size: var(--text-control);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-runtime-popover small {
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+}

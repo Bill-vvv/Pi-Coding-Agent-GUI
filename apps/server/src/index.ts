@@ -52,6 +52,7 @@ fastify.get("/ws", { websocket: true }, (socket: WsClient, request: FastifyReque
     lastEventId: db.lastEventId(),
     conversationSummaries: supervisor.listRuntimeConversationSummaries(),
     sessions: db.listSessions(),
+    subagentRuns: supervisor.listSubagentRuns(undefined, 500),
   });
   sendRuntimeQueues(socket);
   sendRuntimeCommands(socket);

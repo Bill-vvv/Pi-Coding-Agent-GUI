@@ -38,6 +38,7 @@ export function handleRuntimePayload({
     broadcast({ type: "extension.ui.request", runtimeId, projectId: managed.runtime.projectId, request: maybeRecord });
   }
 
+  managed.subagents?.handlePiPayload(payload);
   managed.projection.handlePiPayload(payload);
 
   if (maybeRecord?.type === "agent_end" || maybeRecord?.type === "compaction_end") {

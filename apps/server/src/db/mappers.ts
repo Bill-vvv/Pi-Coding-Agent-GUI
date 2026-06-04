@@ -1,5 +1,6 @@
-import type { AppSettings, ConversationContextUsage, ConversationMessage, GuiEvent, GuiSession, Project, Runtime } from "@pi-gui/shared";
-import type { ConversationMessageRow, EventRow, ProjectRow, RuntimeConversationStateRow, RuntimeRow, SessionRow } from "./rows.js";
+import type { AppSettings, ConversationContextUsage, ConversationMessage, GuiEvent, GuiSession, Project, Runtime, SubagentChildRun, SubagentContextMode, SubagentRun } from "@pi-gui/shared";
+import { isRecord } from "@pi-gui/shared";
+import type { ConversationMessageRow, EventRow, ProjectRow, RuntimeConversationStateRow, RuntimeRow, SessionRow, SubagentRunRow } from "./rows.js";
 
 export function projectFromRow(row: ProjectRow): Project {
   return {
@@ -85,4 +86,46 @@ export function eventFromRow(row: EventRow): GuiEvent {
     kind: row.kind,
     payload,
   };
+}
+
+export function subagentRunFromRow(row: SubagentRunRow): SubagentRun {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    parentRuntimeId: row.parent_runtime_id,
+    parentToolCallId: row.parent_tool_call_id,
+    parentToolMessageId: row.parent_tool_message_id,
+    agent: row.agent,
+    mode: row.mode,
+    contextMode: parseSubagentContextMode(row.context_mode),
+    status: row.status,
+    startedAt: row.started_at,
+    updatedAt: row.updated_at,
+    finishedAt: row.finished_at ?? undefined,
+    finalText: row.final_text ?? undefined,
+    errorMessage: row.error_message ?? undefined,
+    runs: parseSubagentChildRuns(row.runs_json),
+  };
+}
+
+function parseSubagentContextMode(value: string | null): SubagentContextMode | undefined {
+  return value === "fork" || value === "isolated" ? value : undefined;
+}
+
+function parseSubagentChildRuns(value: string): SubagentChildRun[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isSubagentChildRun);
+  } catch {
+    return [];
+  }
+}
+
+function isSubagentChildRun(value: unknown): value is SubagentChildRun {
+  return isRecord(value) && typeof value.id === "string" && typeof value.agent === "string" && isSubagentRunStatus(value.status);
+}
+
+function isSubagentRunStatus(value: unknown): value is SubagentRun["status"] {
+  return value === "pending" || value === "running" || value === "succeeded" || value === "failed" || value === "cancelled";
 }

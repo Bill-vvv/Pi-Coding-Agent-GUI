@@ -48,6 +48,68 @@ export type GuiEvent = {
 
 export type ConversationRole = "user" | "assistant" | "tool" | "error" | "log";
 
+export type SubagentRunStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
+export type SubagentRunMode = "single" | "parallel" | "chain";
+export type SubagentContextMode = "fork" | "isolated";
+export type SubagentToolStatus = "running" | "succeeded" | "failed";
+
+export type SubagentUsage = {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  cost?: number;
+  ctxTokens?: number;
+  turns?: number;
+};
+
+export type SubagentToolTrace = {
+  id: string;
+  name: string;
+  args?: string;
+  status: SubagentToolStatus;
+  startedAt?: number;
+  finishedAt?: number;
+};
+
+export type SubagentChildRun = {
+  id: string;
+  agent: string;
+  prompt?: string;
+  step?: number;
+  status: SubagentRunStatus;
+  startedAt?: number;
+  finishedAt?: number;
+  sessionFile?: string;
+  finalText?: string;
+  textTail?: string;
+  thinkingTail?: string;
+  stderrTail?: string;
+  tools?: SubagentToolTrace[];
+  usage?: SubagentUsage;
+  model?: string;
+  thinking?: string;
+  errorMessage?: string;
+};
+
+export type SubagentRun = {
+  id: string;
+  projectId: string;
+  parentRuntimeId: string;
+  parentToolCallId: string;
+  parentToolMessageId: string;
+  agent: string;
+  mode: SubagentRunMode;
+  contextMode?: SubagentContextMode;
+  status: SubagentRunStatus;
+  startedAt: number;
+  updatedAt: number;
+  finishedAt?: number;
+  finalText?: string;
+  errorMessage?: string;
+  runs: SubagentChildRun[];
+};
+
 export type ConversationMessage = {
   id: string;
   runtimeId: string;

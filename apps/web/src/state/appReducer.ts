@@ -10,6 +10,7 @@ import type {
   RuntimeQueue,
   ServerEvent,
   SlashCommand,
+  SubagentRun,
   ThinkingLevel,
   Project,
 } from "@pi-gui/shared";
@@ -18,6 +19,7 @@ import { upsertById } from "../domain/collections";
 import { isTransportConnectionError } from "../domain/connection";
 import { indexConversationSummaries } from "../domain/conversationSummary";
 import { applyConversationDelta, upsertConversationMessage } from "../domain/conversationState";
+import { subagentDetailKey } from "../domain/subagents";
 
 export type AppState = {
   projects: Project[];
@@ -30,6 +32,8 @@ export type AppState = {
   commandsByRuntime: Record<string, SlashCommand[]>;
   guiEvents: GuiEvent[];
   sessions: GuiSession[];
+  subagentRuns: Record<string, SubagentRun>;
+  subagentDetails: Record<string, { childRunId: string; messages: ConversationMessage[]; readAt: number; error?: string }>;
   selectedProjectId?: string;
   selectedRuntimeId?: string;
   selectedRuntimeIdByProject: Record<string, string>;
@@ -53,6 +57,8 @@ export const initialAppState: AppState = {
   commandsByRuntime: {},
   guiEvents: [],
   sessions: [],
+  subagentRuns: {},
+  subagentDetails: {},
   selectedRuntimeIdByProject: {},
   projectCwd: "",
   settings: {},
@@ -135,13 +141,15 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
       const nextRuntimeMap = reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, event.runtimes);
       const nextRuntimeId = validRuntimeIdForProject(event.runtimes, nextProjectId, state.selectedRuntimeId) ?? runtimeIdForProject({ ...state, runtimes: event.runtimes, selectedRuntimeIdByProject: nextRuntimeMap }, nextProjectId);
       const seededRuntimeMap = nextProjectId && nextRuntimeId ? { ...nextRuntimeMap, [nextProjectId]: nextRuntimeId } : nextRuntimeMap;
+      const nextSubagentRuns = event.subagentRuns ? indexSubagentRuns(event.subagentRuns) : state.subagentRuns;
       return applySettingsState(
         {
           ...state,
           projects: event.projects,
           runtimes: event.runtimes,
           persistedConversationSummaries: indexConversationSummaries(event.conversationSummaries ?? []),
-          sessions: event.sessions ?? state.sessions,
+          sessions: filterChildSubagentSessions(event.sessions ?? state.sessions, nextSubagentRuns),
+          subagentRuns: nextSubagentRuns,
           selectedProjectId: nextProjectId,
           selectedRuntimeId: nextRuntimeId,
           selectedRuntimeIdByProject: seededRuntimeMap,
@@ -169,9 +177,9 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
         selectedRuntimeId: undefined,
       };
     case "session.list":
-      return { ...state, sessions: mergeSessionList(state.sessions, event.sessions, event.projectId) };
+      return { ...state, sessions: filterChildSubagentSessions(mergeSessionList(state.sessions, event.sessions, event.projectId), state.subagentRuns) };
     case "session.updated":
-      return { ...state, sessions: upsertById(state.sessions, event.session) };
+      return { ...state, sessions: filterChildSubagentSessions(upsertById(state.sessions, event.session), state.subagentRuns) };
     case "settings.updated":
       return applySettingsState(state, event.settings, fallbackModelKey);
     case "runtime.status":
@@ -224,6 +232,27 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
     case "runtime.rpc.response":
     case "extension.ui.request":
       return state;
+    case "subagent.snapshot": {
+      const nextSubagentRuns = mergeSubagentRuns(state.subagentRuns, event.runs);
+      return { ...state, subagentRuns: nextSubagentRuns, sessions: filterChildSubagentSessions(state.sessions, nextSubagentRuns) };
+    }
+    case "subagent.run": {
+      const nextSubagentRuns = { ...state.subagentRuns, [event.run.id]: event.run };
+      return { ...state, subagentRuns: nextSubagentRuns, sessions: filterChildSubagentSessions(state.sessions, nextSubagentRuns) };
+    }
+    case "subagent.detail":
+      return {
+        ...state,
+        subagentDetails: {
+          ...state.subagentDetails,
+          [subagentDetailKey(event.runId, event.childRunId)]: {
+            childRunId: event.childRunId,
+            messages: event.messages,
+            readAt: event.readAt,
+            error: event.error,
+          },
+        },
+      };
     case "command.result":
       return applyCommandResult(state, event);
     case "gui.event":
@@ -234,6 +263,31 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
 function mergeSessionList(currentSessions: GuiSession[], nextSessions: GuiSession[], projectId?: string): GuiSession[] {
   const retainedSessions = projectId ? currentSessions.filter((session) => session.projectId !== projectId) : [];
   return [...retainedSessions, ...nextSessions].sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+function indexSubagentRuns(runs: SubagentRun[]): Record<string, SubagentRun> {
+  return Object.fromEntries(runs.map((run) => [run.id, run]));
+}
+
+function mergeSubagentRuns(current: Record<string, SubagentRun>, runs: SubagentRun[]): Record<string, SubagentRun> {
+  if (runs.length === 0) return current;
+  return { ...current, ...indexSubagentRuns(runs) };
+}
+
+function filterChildSubagentSessions(sessions: GuiSession[], runs: Record<string, SubagentRun>): GuiSession[] {
+  const childSessionFiles = subagentChildSessionFiles(runs);
+  if (childSessionFiles.size === 0) return sessions;
+  return sessions.filter((session) => !childSessionFiles.has(session.piSessionFile));
+}
+
+function subagentChildSessionFiles(runs: Record<string, SubagentRun>): Set<string> {
+  const files = new Set<string>();
+  for (const run of Object.values(runs)) {
+    for (const child of run.runs) {
+      if (child.sessionFile) files.add(child.sessionFile);
+    }
+  }
+  return files;
 }
 
 function applyGuiEvent(state: AppState, event: GuiEvent): AppState {

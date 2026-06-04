@@ -144,7 +144,14 @@ export function createSocketMessageHandler({ db, supervisor, send, broadcast }: 
           const snapshot = supervisor.conversationSnapshot(command.runtimeId, command.limit);
           if (!snapshot) throw new Error(`Runtime not found: ${command.runtimeId}`);
           send(socket, snapshot);
+          send(socket, { type: "subagent.snapshot", runs: supervisor.listSubagentRuns(command.runtimeId, 500) });
           sendResult(send, socket, command, true, { count: snapshot.type === "conversation.snapshot" ? snapshot.messages.length : 0 });
+          break;
+        }
+        case "subagent.detail.open": {
+          const detail = supervisor.subagentDetail(command.runId, command.childRunId, command.limit);
+          send(socket, detail);
+          sendResult(send, socket, command, true, { count: detail.messages.length });
           break;
         }
         case "event.replay": {

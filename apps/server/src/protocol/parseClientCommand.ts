@@ -143,6 +143,16 @@ export function parseClientCommand(value: unknown): ClientCommand {
         runtimeId: value.runtimeId,
         limit: numberOrUndefined(value.limit),
       };
+    case "subagent.detail.open":
+      if (typeof value.runId !== "string") throw new Error("subagent.detail.open requires runId");
+      if (value.childRunId !== undefined && typeof value.childRunId !== "string") throw new Error("subagent.detail.open childRunId must be a string");
+      return {
+        type: "subagent.detail.open",
+        requestId: stringOrUndefined(value.requestId),
+        runId: value.runId,
+        childRunId: stringOrUndefined(value.childRunId),
+        limit: numberOrUndefined(value.limit),
+      };
     case "event.replay":
       if (value.projectId !== undefined && typeof value.projectId !== "string") throw new Error("event.replay projectId must be a string");
       if (value.runtimeId !== undefined && typeof value.runtimeId !== "string") throw new Error("event.replay runtimeId must be a string");

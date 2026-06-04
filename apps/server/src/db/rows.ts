@@ -1,4 +1,4 @@
-import type { ConversationMessage, GuiEventKind, RuntimeStatus } from "@pi-gui/shared";
+import type { ConversationMessage, GuiEventKind, RuntimeStatus, SubagentRunMode, SubagentRunStatus } from "@pi-gui/shared";
 
 export type ProjectRow = {
   id: string;
@@ -73,4 +73,22 @@ export type RuntimeConversationSummaryRow = {
   latest_message_text: string | null;
   latest_updated_at: number | null;
   message_count: number;
+};
+
+export type SubagentRunRow = {
+  id: string;
+  project_id: string;
+  parent_runtime_id: string;
+  parent_tool_call_id: string;
+  parent_tool_message_id: string;
+  agent: string;
+  mode: SubagentRunMode;
+  context_mode: string | null;
+  status: SubagentRunStatus;
+  started_at: number;
+  updated_at: number;
+  finished_at: number | null;
+  final_text: string | null;
+  error_message: string | null;
+  runs_json: string;
 };

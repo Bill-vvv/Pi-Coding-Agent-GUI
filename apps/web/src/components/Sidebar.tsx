@@ -1,6 +1,7 @@
 import type { DragEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ConversationMessage, GuiSession, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
+import type { ConversationMessage, GuiSession, Project, Runtime, RuntimeConversationSummary, SubagentRun } from "@pi-gui/shared";
+import { runningSubagentRunsForRuntime, subagentStatusLabel } from "../domain/subagents";
 import type { ConnectionState } from "../types";
 import { Icon } from "./Icon";
 
@@ -29,6 +30,7 @@ type SidebarProps = {
   busyByRuntime: Record<string, boolean>;
   messagesByRuntime: Record<string, ConversationMessage[]>;
   conversationSummaries: Record<string, RuntimeConversationSummary>;
+  subagentRuns: Record<string, SubagentRun>;
   onAddProject: () => void;
   onStartRuntimeForProject: (projectId: string) => void;
   onOpenSessionHistory: (projectId: string) => void;
@@ -49,6 +51,7 @@ export function Sidebar({
   busyByRuntime,
   messagesByRuntime,
   conversationSummaries,
+  subagentRuns,
   onAddProject,
   onStartRuntimeForProject,
   onOpenSessionHistory,
@@ -402,6 +405,7 @@ export function Sidebar({
                       const completedAt = completedAssistantReplyAt(summary, messagesByRuntime[runtime.id]);
                       const hasUnreadReply = Boolean(completedAt && completedAt > (readTimestampsByRuntime[runtime.id] ?? 0));
                       const dotState = sessionDotState(busyByRuntime[runtime.id] ?? false, hasUnreadReply);
+                      const runningSubagents = runningSubagentRunsForRuntime(subagentRuns, runtime.id);
                       return (
                         <div
                           className={`session-row ${runtime.id === activeRuntime?.id ? "selected" : ""} ${draggingSession?.runtimeId === runtime.id ? "dragging" : ""} ${sessionDropClass(project.id, runtime.id)}`}
@@ -427,8 +431,9 @@ export function Sidebar({
                               <span className="session-title">{title}</span>
                               {detail ? <small className="session-detail">{detail}</small> : null}
                             </span>
-                            {runtime.archivedAt ? <small className="session-badge">归档</small> : null}
+                            {runningSubagents.length > 0 ? <small className="session-badge subagent-running-badge">子代理 {runningSubagents.length}</small> : runtime.archivedAt ? <small className="session-badge">归档</small> : null}
                           </button>
+                          {runningSubagents.length > 0 ? <SubagentRuntimePopover runs={runningSubagents} /> : null}
                           {!runtime.archivedAt ? (
                             <button
                               className="session-archive icon-button"
@@ -470,6 +475,22 @@ export function Sidebar({
         </div>
       </div>
     </aside>
+  );
+}
+
+function SubagentRuntimePopover({ runs }: { runs: SubagentRun[] }) {
+  return (
+    <div className="subagent-runtime-popover" role="status">
+      <strong>运行中的子代理</strong>
+      <ul>
+        {runs.map((run) => (
+          <li key={run.id}>
+            <span>{run.agent}</span>
+            <small>{run.runs.length || 1} 个 child · {subagentStatusLabel(run.status)}</small>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

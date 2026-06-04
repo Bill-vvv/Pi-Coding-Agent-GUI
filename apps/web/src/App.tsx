@@ -1,9 +1,10 @@
-import { useReducer } from "react";
-import type { ServerEvent } from "@pi-gui/shared";
+import { useEffect, useMemo, useReducer, useState } from "react";
+import type { ServerEvent, SubagentRun } from "@pi-gui/shared";
 import { AppModals } from "./components/AppModals";
 import { ChatView } from "./components/ChatView";
 import { Composer } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
+import { SubagentDetailDrawer } from "./components/SubagentDetailDrawer";
 import { useActiveRuntimeView } from "./hooks/useActiveRuntimeView";
 import { useAppModalState } from "./hooks/useAppModalState";
 import { useCommandMenuHotkey } from "./hooks/useCommandMenuHotkey";
@@ -18,6 +19,7 @@ import { useProjectRuntimeActions } from "./hooks/useProjectRuntimeActions";
 import { useRuntimeCommandRefresh } from "./hooks/useRuntimeCommandRefresh";
 import { useSessionRestoreActions } from "./hooks/useSessionRestoreActions";
 import { useUiPreferences } from "./hooks/useUiPreferences";
+import { subagentCopyText, subagentDetailKey, subagentRunIsActive } from "./domain/subagents";
 import { appReducer, initialAppState } from "./state/appReducer";
 
 export function App() {
@@ -26,6 +28,7 @@ export function App() {
   const { modelPickerOpen, setModelPickerOpen, settingsOpen, setSettingsOpen, toggleModelPicker, closeModelPicker, closeSettings } = useAppModalState();
   const commandMenuOpenSignal = useCommandMenuHotkey();
   const { uiPreferences, setUiPreferences } = useUiPreferences();
+  const [subagentDrawer, setSubagentDrawer] = useState<{ runId: string; childRunId?: string } | undefined>();
 
   const {
     projects,
@@ -40,6 +43,8 @@ export function App() {
     responseMode: defaultResponseMode,
     operationError,
     notice,
+    subagentRuns,
+    subagentDetails,
   } = state;
 
   const { connection, send, connectionWarning } = useGuiSocket({
@@ -144,6 +149,23 @@ export function App() {
   });
   useRuntimeCommandRefresh({ connection, activeRuntime, send });
 
+  const activeRuntimeSubagentRuns = useMemo(
+    () => Object.values(subagentRuns).filter((run) => run.parentRuntimeId === activeRuntime?.id),
+    [activeRuntime?.id, subagentRuns],
+  );
+  const selectedSubagentRun = subagentDrawer ? subagentRuns[subagentDrawer.runId] : undefined;
+  const selectedSubagentChildRunId = selectedSubagentRun ? subagentDrawer?.childRunId ?? selectedSubagentRun.runs[0]?.id : undefined;
+  const selectedSubagentDetail = selectedSubagentRun && selectedSubagentChildRunId ? subagentDetails[subagentDetailKey(selectedSubagentRun.id, selectedSubagentChildRunId)] : undefined;
+  const selectedSubagentRunIsActive = selectedSubagentRun ? subagentRunIsActive(selectedSubagentRun) : false;
+
+  useEffect(() => {
+    if (!selectedSubagentRun || !selectedSubagentChildRunId) return;
+    requestSubagentDetail(selectedSubagentRun.id, selectedSubagentChildRunId);
+    if (!selectedSubagentRunIsActive) return;
+    const timer = window.setInterval(() => requestSubagentDetail(selectedSubagentRun.id, selectedSubagentChildRunId), 1600);
+    return () => window.clearInterval(timer);
+  }, [selectedSubagentRun?.id, selectedSubagentRunIsActive, selectedSubagentChildRunId, send]);
+
   function handleServerEvent(event: ServerEvent) {
     dispatch({ type: "server.event", event });
     handleServerSideEffects(event);
@@ -153,6 +175,19 @@ export function App() {
     handleProjectRuntimeServerEvent(event);
     handleSessionRestoreServerEvent(event);
     handleExtensionUiServerEvent(event);
+  }
+
+  function requestSubagentDetail(runId: string, childRunId?: string) {
+    send({ type: "subagent.detail.open", runId, childRunId, limit: 240 }, { notifyOnDisconnected: false });
+  }
+
+  function copySubagentOutput(run: SubagentRun) {
+    const text = subagentCopyText(run);
+    if (!text) return;
+    void navigator.clipboard.writeText(text).then(
+      () => dispatch({ type: "set.notice", notice: "已复制子代理结果" }),
+      () => dispatch({ type: "set.operationError", error: "复制子代理结果失败" }),
+    );
   }
 
   return (
@@ -175,6 +210,7 @@ export function App() {
         onArchiveRuntime={archiveRuntime}
         onOpenSettings={() => setSettingsOpen(true)}
         conversationSummaries={conversationSummaries}
+        subagentRuns={subagentRuns}
       />
 
       <section className="main-chat">
@@ -186,6 +222,9 @@ export function App() {
           conversationSummary={activeRuntimeConversationSummary}
           messages={conversationMessages}
           activeRuntimeIsBusy={activeRuntimeIsBusy}
+          subagentRuns={activeRuntimeSubagentRuns}
+          onOpenSubagentRun={(runId) => setSubagentDrawer({ runId })}
+          onCopySubagentOutput={copySubagentOutput}
           onDismissOperationError={() => dispatch({ type: "clear.operationError" })}
           onDismissNotice={() => dispatch({ type: "clear.notice" })}
         />
@@ -219,6 +258,13 @@ export function App() {
         />
       </section>
 
+      <SubagentDetailDrawer
+        run={selectedSubagentRun}
+        selectedChildRunId={selectedSubagentChildRunId}
+        detail={selectedSubagentDetail}
+        onClose={() => setSubagentDrawer(undefined)}
+        onSelectChildRun={(childRunId) => selectedSubagentRun && setSubagentDrawer({ runId: selectedSubagentRun.id, childRunId })}
+      />
 
       <AppModals
         extensionUiRequest={extensionUiDialog?.request}

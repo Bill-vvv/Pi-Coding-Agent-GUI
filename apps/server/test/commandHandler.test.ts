@@ -190,6 +190,26 @@ test("command handler delegates extension UI responses", async () => {
   db.close();
 });
 
+test("command handler sends subagent detail snapshots", async () => {
+  const calls: unknown[] = [];
+  const detail: Extract<ServerEvent, { type: "subagent.detail" }> = { type: "subagent.detail", runId: "run-1", childRunId: "child-1", messages: [], readAt: 123 };
+  const { db, sent, socket, handle } = createHarness({
+    subagentDetail: (runId: string, childRunId: string | undefined, limit: number | undefined) => {
+      calls.push({ runId, childRunId, limit });
+      return detail;
+    },
+  } as Partial<RuntimeSupervisor>);
+
+  await sendCommand(handle, socket, { type: "subagent.detail.open", requestId: "req-subagent-detail", runId: "run-1", childRunId: "child-1", limit: 12 });
+
+  assert.deepEqual(calls, [{ runId: "run-1", childRunId: "child-1", limit: 12 }]);
+  assert.deepEqual(sent.find((event) => event.type === "subagent.detail"), detail);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.deepEqual(result?.data, { count: 0 });
+  db.close();
+});
+
 test("command handler delegates runtime.start with model options", async () => {
   const calls: unknown[] = [];
   const runtime = { id: "runtime-1", projectId: "project-1", cwd: process.cwd(), status: "running" as const };

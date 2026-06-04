@@ -1,4 +1,4 @@
-import type { PiRpcCommand, Runtime, RuntimeConversationSummary, RuntimeQueue, ServerEvent, SlashCommand } from "@pi-gui/shared";
+import type { PiRpcCommand, Runtime, RuntimeConversationSummary, RuntimeQueue, ServerEvent, SlashCommand, SubagentRun } from "@pi-gui/shared";
 import { AppDatabase } from "../db.js";
 import type { ManagedRuntime, RuntimeConfigOptions } from "./managedRuntime.js";
 import { applyManagedRuntimeConfiguration, requestRuntimeSlashCommands, runtimeWithConfiguredOptions, sendAbort, sendExtensionUiResponse, sendNativeRpcCommand, sendPrompt, type RuntimeConfigureOptions } from "./runtimeCommandSender.js";
@@ -7,6 +7,7 @@ import { RuntimeEventSink } from "./runtimeEventSink.js";
 import { RuntimeLauncher } from "./runtimeLauncher.js";
 import { RuntimeLiveState } from "./runtimeLiveState.js";
 import { RuntimeSessionLinker } from "./runtimeSessionLinker.js";
+import { parseSubagentChildSession } from "./subagent/childSessionParser.js";
 
 type Broadcast = (event: ServerEvent) => void;
 
@@ -63,6 +64,14 @@ export class RuntimeSupervisor {
       orderedRuntimes: this.listRuntimes(),
       limit,
     });
+  }
+
+  listSubagentRuns(parentRuntimeId?: string, limit = 500): SubagentRun[] {
+    return this.db.listSubagentRuns(parentRuntimeId, limit);
+  }
+
+  listActiveSubagentRuns(limit = 500): SubagentRun[] {
+    return this.db.listActiveSubagentRuns(limit);
   }
 
   startRuntime(projectId: string, options: RuntimeConfigOptions = {}): Runtime {
@@ -194,6 +203,13 @@ export class RuntimeSupervisor {
 
   conversationSnapshot(runtimeId: string, limit?: number): ServerEvent | undefined {
     return runtimeConversationSnapshot(this.db, this.runtimes, runtimeId, limit);
+  }
+
+  subagentDetail(runId: string, childRunId?: string, limit?: number): Extract<ServerEvent, { type: "subagent.detail" }> {
+    const run = this.db.getSubagentRun(runId);
+    if (!run) throw new Error(`Sub-agent run not found: ${runId}`);
+    const detail = parseSubagentChildSession(run, childRunId, limit);
+    return { type: "subagent.detail", ...detail };
   }
 
   private requireManaged(runtimeId: string): ManagedRuntime {
