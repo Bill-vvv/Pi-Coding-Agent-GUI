@@ -6,6 +6,7 @@ import { isRecord } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
 import { parseClientCommand } from "../protocol/parseClientCommand.js";
 import type { RuntimeSupervisor } from "../runtime/runtimeSupervisor.js";
+import { indexKnownPiSessions } from "../services/sessionIndexService.js";
 import type { WsClient } from "./wsHub.js";
 
 type CommandHandlerDependencies = {
@@ -56,9 +57,15 @@ export function createSocketMessageHandler({ db, supervisor, send, broadcast }: 
           break;
         }
         case "session.list": {
+          indexKnownPiSessions(db);
           const sessions = db.listSessions(command.projectId);
-          send(socket, { type: "session.list", sessions });
+          send(socket, { type: "session.list", sessions, projectId: command.projectId });
           sendResult(send, socket, command, true, { sessions });
+          break;
+        }
+        case "session.resume": {
+          const runtime = supervisor.resumeSession(command.sessionId, { model: command.model, thinkingLevel: command.thinkingLevel, responseMode: command.responseMode });
+          sendResult(send, socket, command, true, { runtime });
           break;
         }
         case "settings.get": {
@@ -80,6 +87,11 @@ export function createSocketMessageHandler({ db, supervisor, send, broadcast }: 
         }
         case "runtime.resume": {
           const runtime = supervisor.resumeRuntime(command.runtimeId, { model: command.model, thinkingLevel: command.thinkingLevel, responseMode: command.responseMode });
+          sendResult(send, socket, command, true, { runtime });
+          break;
+        }
+        case "runtime.restart": {
+          const runtime = supervisor.restartRuntime(command.runtimeId, { model: command.model, thinkingLevel: command.thinkingLevel, responseMode: command.responseMode });
           sendResult(send, socket, command, true, { runtime });
           break;
         }
@@ -108,6 +120,21 @@ export function createSocketMessageHandler({ db, supervisor, send, broadcast }: 
           sendResult(send, socket, command, true);
           break;
         }
+        case "runtime.rpc": {
+          supervisor.executeRpcCommand(command.runtimeId, command.command, command.label);
+          sendResult(send, socket, command, true);
+          break;
+        }
+        case "runtime.commands.list": {
+          const commands = supervisor.requestSlashCommands(command.runtimeId);
+          sendResult(send, socket, command, true, { commands: commands ?? [] });
+          break;
+        }
+        case "extension.ui.respond": {
+          supervisor.respondExtensionUi(command.runtimeId, command.responseId, command.response);
+          sendResult(send, socket, command, true);
+          break;
+        }
         case "runtime.abort": {
           supervisor.abort(command.runtimeId);
           sendResult(send, socket, command, true);
@@ -121,7 +148,7 @@ export function createSocketMessageHandler({ db, supervisor, send, broadcast }: 
           break;
         }
         case "event.replay": {
-          const events = db.listEvents(command.afterEventId ?? 0, command.limit ?? 500);
+          const events = db.listEvents(command.afterEventId ?? 0, command.limit ?? 500, { projectId: command.projectId, runtimeId: command.runtimeId });
           for (const event of events) send(socket, { type: "gui.event", event });
           sendResult(send, socket, command, true, { count: events.length });
           break;

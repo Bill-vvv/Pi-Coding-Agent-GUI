@@ -22,6 +22,16 @@ export function parseClientCommand(value: unknown): ClientCommand {
     case "session.list":
       if (value.projectId !== undefined && typeof value.projectId !== "string") throw new Error("session.list projectId must be a string");
       return { type: "session.list", requestId: stringOrUndefined(value.requestId), projectId: stringOrUndefined(value.projectId) };
+    case "session.resume":
+      if (typeof value.sessionId !== "string") throw new Error("session.resume requires sessionId");
+      return {
+        type: "session.resume",
+        requestId: stringOrUndefined(value.requestId),
+        sessionId: value.sessionId,
+        model: stringOrUndefined(value.model),
+        thinkingLevel: thinkingLevelOrUndefined(value.thinkingLevel),
+        responseMode: responseModeOrUndefined(value.responseMode),
+      };
     case "settings.get":
       return { type: "settings.get", requestId: stringOrUndefined(value.requestId) };
     case "settings.update":
@@ -49,6 +59,16 @@ export function parseClientCommand(value: unknown): ClientCommand {
       if (typeof value.runtimeId !== "string") throw new Error("runtime.resume requires runtimeId");
       return {
         type: "runtime.resume",
+        requestId: stringOrUndefined(value.requestId),
+        runtimeId: value.runtimeId,
+        model: stringOrUndefined(value.model),
+        thinkingLevel: thinkingLevelOrUndefined(value.thinkingLevel),
+        responseMode: responseModeOrUndefined(value.responseMode),
+      };
+    case "runtime.restart":
+      if (typeof value.runtimeId !== "string") throw new Error("runtime.restart requires runtimeId");
+      return {
+        type: "runtime.restart",
         requestId: stringOrUndefined(value.requestId),
         runtimeId: value.runtimeId,
         model: stringOrUndefined(value.model),
@@ -85,9 +105,36 @@ export function parseClientCommand(value: unknown): ClientCommand {
         message: value.message,
         streamingBehavior: value.streamingBehavior,
       };
+    case "runtime.rpc":
+      if (typeof value.runtimeId !== "string") throw new Error("runtime.rpc requires runtimeId");
+      if (!isRecord(value.command) || typeof value.command.type !== "string") throw new Error("runtime.rpc requires command.type");
+      return {
+        type: "runtime.rpc",
+        requestId: stringOrUndefined(value.requestId),
+        runtimeId: value.runtimeId,
+        command: { ...value.command, type: value.command.type },
+        label: stringOrUndefined(value.label),
+      };
     case "runtime.abort":
       if (typeof value.runtimeId !== "string") throw new Error("runtime.abort requires runtimeId");
       return { type: "runtime.abort", requestId: stringOrUndefined(value.requestId), runtimeId: value.runtimeId };
+    case "runtime.commands.list":
+      if (typeof value.runtimeId !== "string") throw new Error("runtime.commands.list requires runtimeId");
+      return { type: "runtime.commands.list", requestId: stringOrUndefined(value.requestId), runtimeId: value.runtimeId };
+    case "extension.ui.respond":
+      if (typeof value.runtimeId !== "string") throw new Error("extension.ui.respond requires runtimeId");
+      if (typeof value.responseId !== "string") throw new Error("extension.ui.respond requires responseId");
+      if (!isRecord(value.response)) throw new Error("extension.ui.respond requires response");
+      if (!("cancelled" in value.response) && !("value" in value.response) && !("confirmed" in value.response)) {
+        throw new Error("extension.ui.respond response must contain cancelled, value, or confirmed");
+      }
+      return {
+        type: "extension.ui.respond",
+        requestId: stringOrUndefined(value.requestId),
+        runtimeId: value.runtimeId,
+        responseId: value.responseId,
+        response: parseExtensionUiResponse(value.response),
+      };
     case "conversation.open":
       if (typeof value.runtimeId !== "string") throw new Error("conversation.open requires runtimeId");
       return {
@@ -97,15 +144,26 @@ export function parseClientCommand(value: unknown): ClientCommand {
         limit: numberOrUndefined(value.limit),
       };
     case "event.replay":
+      if (value.projectId !== undefined && typeof value.projectId !== "string") throw new Error("event.replay projectId must be a string");
+      if (value.runtimeId !== undefined && typeof value.runtimeId !== "string") throw new Error("event.replay runtimeId must be a string");
       return {
         type: "event.replay",
         requestId: stringOrUndefined(value.requestId),
         afterEventId: numberOrUndefined(value.afterEventId),
         limit: numberOrUndefined(value.limit),
+        projectId: stringOrUndefined(value.projectId),
+        runtimeId: stringOrUndefined(value.runtimeId),
       };
     default:
       throw new Error(`Unknown command type: ${value.type}`);
   }
+}
+
+function parseExtensionUiResponse(value: Record<string, unknown>) {
+  if (value.cancelled === true) return { cancelled: true as const };
+  if (typeof value.value === "string") return { value: value.value };
+  if (typeof value.confirmed === "boolean") return { confirmed: value.confirmed };
+  throw new Error("extension.ui.respond response payload is invalid");
 }
 
 function stringOrUndefined(value: unknown): string | undefined {

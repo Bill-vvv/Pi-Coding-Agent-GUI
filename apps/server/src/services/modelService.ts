@@ -1,6 +1,8 @@
 import { execFile, spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import type { ModelSummary, ThinkingLevel } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
+import { LfJsonlParser, type JsonlParseBatch } from "../runtime/jsonlFraming.js";
 
 export async function listPiModels(): Promise<ModelSummary[]> {
   const fromRpc = await listPiModelsViaRpc().catch(() => []);
@@ -21,7 +23,9 @@ function listPiModelsViaRpc(timeoutMs = 12_000): Promise<ModelSummary[]> {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });
-    let stdoutBuffer = "";
+    const stdoutParser = new LfJsonlParser();
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     let stderrBuffer = "";
     let settled = false;
 
@@ -34,30 +38,14 @@ function listPiModelsViaRpc(timeoutMs = 12_000): Promise<ModelSummary[]> {
       else resolve(models);
     };
 
-    const timer = setTimeout(() => settle([], new Error("Timed out while reading Pi models")), timeoutMs);
-    proc.stderr.on("data", (chunk: Buffer) => {
-      stderrBuffer += chunk.toString("utf8");
-    });
-    proc.on("error", (error) => settle([], error));
-    proc.on("exit", () => {
-      if (!settled) settle([], new Error(stderrBuffer || "Pi RPC exited before model list response"));
-    });
-    proc.stdout.on("data", (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString("utf8");
-      while (true) {
-        const newlineIndex = stdoutBuffer.indexOf("\n");
-        if (newlineIndex === -1) break;
-        let line = stdoutBuffer.slice(0, newlineIndex);
-        stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
-        if (line.endsWith("\r")) line = line.slice(0, -1);
-        if (!line) continue;
-        let message: unknown;
-        try {
-          message = JSON.parse(line) as unknown;
-        } catch (error) {
-          settle([], new Error(`Failed to parse Pi model RPC JSONL record: ${(error as Error).message}`));
-          return;
-        }
+    const handleBatch = (batch: JsonlParseBatch) => {
+      const [error] = batch.errors;
+      if (error) {
+        settle([], error);
+        return;
+      }
+
+      for (const message of batch.records) {
         if (!isRecord(message) || message.type !== "response" || message.id !== "gui-models") continue;
         if (message.success !== true) {
           settle([], new Error(typeof message.error === "string" ? message.error : "get_available_models failed"));
@@ -66,7 +54,24 @@ function listPiModelsViaRpc(timeoutMs = 12_000): Promise<ModelSummary[]> {
         const data = isRecord(message.data) ? message.data : undefined;
         const models = Array.isArray(data?.models) ? data.models : [];
         settle(models.map(modelSummaryFromRpcModel).filter((model): model is ModelSummary => Boolean(model)));
+        return;
       }
+    };
+
+    const timer = setTimeout(() => settle([], new Error("Timed out while reading Pi models")), timeoutMs);
+    proc.stderr.on("data", (chunk: Buffer) => {
+      stderrBuffer += stderrDecoder.write(chunk);
+    });
+    proc.on("error", (error) => settle([], error));
+    proc.on("exit", () => {
+      stderrBuffer += stderrDecoder.end();
+      if (!settled) {
+        handleBatch(stdoutParser.end(stdoutDecoder.end()));
+        if (!settled) settle([], new Error(stderrBuffer || "Pi RPC exited before model list response"));
+      }
+    });
+    proc.stdout.on("data", (chunk: Buffer) => {
+      handleBatch(stdoutParser.push(stdoutDecoder.write(chunk)));
     });
     proc.stdin.write(`${JSON.stringify({ id: "gui-models", type: "get_available_models" })}\n`);
   });

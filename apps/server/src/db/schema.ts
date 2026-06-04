@@ -20,6 +20,9 @@ export function migrateDatabase(db: Database.Database): void {
       started_at integer,
       archived_at integer,
       ended_at integer,
+      model text,
+      thinking_level text,
+      response_mode text,
       created_at integer not null,
       updated_at integer not null,
       foreign key(project_id) references projects(id)
@@ -90,11 +93,33 @@ export function migrateDatabase(db: Database.Database): void {
 
   ensureColumn(db, "runtimes", "archived_at", "integer");
   ensureColumn(db, "runtimes", "ended_at", "integer");
+  const addedRuntimeConfigColumns = [
+    ensureColumn(db, "runtimes", "model", "text"),
+    ensureColumn(db, "runtimes", "thinking_level", "text"),
+    ensureColumn(db, "runtimes", "response_mode", "text"),
+  ].some(Boolean);
+  if (addedRuntimeConfigColumns) backfillRuntimeConfig(db);
 }
 
-function ensureColumn(db: Database.Database, tableName: string, columnName: string, columnType: string): void {
+function backfillRuntimeConfig(db: Database.Database): void {
+  db.exec(`
+    update runtimes
+    set model = (select value from settings where key = 'defaultModel')
+    where model is null and exists (select 1 from settings where key = 'defaultModel');
+
+    update runtimes
+    set thinking_level = coalesce((select value from settings where key = 'defaultThinkingLevel'), 'medium')
+    where thinking_level is null;
+
+    update runtimes
+    set response_mode = coalesce((select value from settings where key = 'responseMode'), 'normal')
+    where response_mode is null;
+  `);
+}
+
+function ensureColumn(db: Database.Database, tableName: string, columnName: string, columnType: string): boolean {
   const columns = db.prepare(`pragma table_info(${tableName})`).all() as Array<{ name: string }>;
-  if (!columns.some((column) => column.name === columnName)) {
-    db.prepare(`alter table ${tableName} add column ${columnName} ${columnType}`).run();
-  }
+  if (columns.some((column) => column.name === columnName)) return false;
+  db.prepare(`alter table ${tableName} add column ${columnName} ${columnType}`).run();
+  return true;
 }

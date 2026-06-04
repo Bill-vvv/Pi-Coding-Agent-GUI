@@ -39,6 +39,9 @@ export function runtimeFromRow(row: RuntimeRow): Runtime {
     sessionId: row.session_id ?? undefined,
     startedAt: row.started_at ?? undefined,
     archivedAt: row.archived_at ?? undefined,
+    model: row.model ?? undefined,
+    thinkingLevel: row.thinking_level ? parseThinkingLevel(row.thinking_level) : undefined,
+    responseMode: row.response_mode === "fast" ? "fast" : row.response_mode === "normal" ? "normal" : undefined,
   };
 }
 

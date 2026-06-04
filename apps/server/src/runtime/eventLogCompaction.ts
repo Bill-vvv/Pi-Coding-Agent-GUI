@@ -74,6 +74,7 @@ function compactResponsePayload(response: Record<string, unknown>): Record<strin
       sessionId: data.sessionId,
       isStreaming: data.isStreaming,
       isCompacting: data.isCompacting,
+      thinkingLevel: data.thinkingLevel,
       model: data.model,
     });
     return compacted;

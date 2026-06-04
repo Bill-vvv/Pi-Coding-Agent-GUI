@@ -17,6 +17,9 @@ export type RuntimeRow = {
   session_id: string | null;
   started_at: number | null;
   archived_at: number | null;
+  model: string | null;
+  thinking_level: string | null;
+  response_mode: string | null;
 };
 
 export type SessionRow = {

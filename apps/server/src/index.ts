@@ -2,9 +2,12 @@ import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyRequest } from "fastify";
 import { AppDatabase } from "./db.js";
+import { registerEnvironmentRoutes } from "./routes/environmentRoutes.js";
 import { registerFsRoutes } from "./routes/fsRoutes.js";
 import { RuntimeSupervisor } from "./runtime/runtimeSupervisor.js";
+import { buildSessionModelDebugSnapshot } from "./services/modelDebugService.js";
 import { listPiModels } from "./services/modelService.js";
+import { indexKnownPiSessions } from "./services/sessionIndexService.js";
 import { createSocketMessageHandler } from "./ws/commandHandler.js";
 import { WsHub, type WsClient } from "./ws/wsHub.js";
 
@@ -18,6 +21,7 @@ const allowedCorsOrigins = [
 
 const fastify = Fastify({ logger: true });
 const db = new AppDatabase();
+indexKnownPiSessions(db);
 const wsHub = new WsHub();
 const supervisor = new RuntimeSupervisor(db, (event) => wsHub.broadcast(event));
 const handleSocketMessage = createSocketMessageHandler({
@@ -30,12 +34,15 @@ const handleSocketMessage = createSocketMessageHandler({
 await fastify.register(cors, { origin: allowedCorsOrigins });
 await fastify.register(websocket);
 await registerFsRoutes(fastify);
+await registerEnvironmentRoutes(fastify);
 
 fastify.get("/health", async () => ({ ok: true, time: Date.now() }));
 
 fastify.get("/api/projects", async () => ({ projects: db.listProjects() }));
 
 fastify.get("/api/models", async () => ({ models: await listPiModels() }));
+
+fastify.get("/api/debug/session-models", async () => buildSessionModelDebugSnapshot(db, supervisor));
 
 fastify.get("/ws", { websocket: true }, (socket: WsClient, request: FastifyRequest) => {
   wsHub.add(socket);
@@ -46,9 +53,11 @@ fastify.get("/ws", { websocket: true }, (socket: WsClient, request: FastifyReque
     runtimes: supervisor.listRuntimes(),
     settings: db.getSettings(),
     lastEventId: db.lastEventId(),
-    conversationSummaries: db.listRuntimeConversationSummaries(),
+    conversationSummaries: supervisor.listRuntimeConversationSummaries(),
     sessions: db.listSessions(),
   });
+  sendRuntimeQueues(socket);
+  sendRuntimeCommands(socket);
   replayEventsForConnection(socket, parseSinceEventId(request));
 
   socket.on("message", (data) => {
@@ -68,6 +77,18 @@ fastify.get("/ws", { websocket: true }, (socket: WsClient, request: FastifyReque
 });
 
 await fastify.listen({ host, port });
+
+function sendRuntimeQueues(socket: WsClient): void {
+  for (const snapshot of supervisor.listRuntimeQueues()) {
+    wsHub.send(socket, { type: "runtime.queue", ...snapshot });
+  }
+}
+
+function sendRuntimeCommands(socket: WsClient): void {
+  for (const snapshot of supervisor.listRuntimeCommands()) {
+    wsHub.send(socket, { type: "runtime.commands", ...snapshot });
+  }
+}
 
 function replayEventsForConnection(socket: WsClient, sinceEventId: number | undefined): void {
   const events = sinceEventId !== undefined ? db.listEvents(sinceEventId, 1000) : db.recentEvents(300, 512 * 1024);

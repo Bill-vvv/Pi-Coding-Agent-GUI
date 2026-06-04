@@ -71,3 +71,42 @@ test("AppDatabase session upsert preserves existing title when next update omits
   assert.equal(updated.runtimeId, "runtime-2");
   db.close();
 });
+
+test("AppDatabase session upsert preserves existing runtime link when scan update omits it", () => {
+  const db = createTestDatabase();
+  db.createProject({ id: "project-1", name: "Project", cwd: process.cwd(), lastOpenedAt: 1 });
+
+  db.upsertSession({
+    id: "session-1",
+    projectId: "project-1",
+    piSessionFile: "/tmp/session-1.jsonl",
+    createdAt: 100,
+    updatedAt: 101,
+    runtimeId: "runtime-1",
+  });
+  const updated = db.upsertSession({
+    id: "session-1",
+    projectId: "project-1",
+    piSessionFile: "/tmp/session-1.jsonl",
+    title: "扫描标题",
+    createdAt: 100,
+    updatedAt: 200,
+  });
+
+  assert.equal(updated.runtimeId, "runtime-1");
+  assert.equal(updated.title, "扫描标题");
+  assert.equal(updated.updatedAt, 200);
+  db.close();
+});
+
+test("AppDatabase returns latest non-archived runtime by session id", () => {
+  const db = createTestDatabase();
+  db.createProject({ id: "project-1", name: "Project", cwd: process.cwd(), lastOpenedAt: 1 });
+
+  db.upsertRuntime({ id: "runtime-old", projectId: "project-1", cwd: process.cwd(), status: "stopped", sessionId: "session-1", startedAt: 100 });
+  db.upsertRuntime({ id: "runtime-new", projectId: "project-1", cwd: process.cwd(), status: "stopped", sessionId: "session-1", startedAt: 200 });
+  db.archiveRuntime("runtime-new", Date.now());
+
+  assert.equal(db.getLatestRuntimeBySessionId("session-1")?.id, "runtime-old");
+  db.close();
+});

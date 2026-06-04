@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev": "npm run build -w @pi-gui/shared && concurrently -n server,web -c blue,green \"npm run dev -w @pi-gui/server\" \"npm run dev -w @pi-gui/web\"",
+    "dev:watch": "npm run build -w @pi-gui/shared && concurrently -n server,web -c blue,green \"npm run dev:watch -w @pi-gui/server\" \"npm run dev -w @pi-gui/web\"",
     "build": "npm run build -w @pi-gui/shared && npm run build -w @pi-gui/server && npm run build -w @pi-gui/web",
     "typecheck": "npm run build -w @pi-gui/shared && npm run typecheck -ws",
     "test": "npm run test -w @pi-gui/server",

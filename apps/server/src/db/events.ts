@@ -39,11 +39,23 @@ export class EventLogStore {
     };
   }
 
-  listEvents(afterEventId = 0, limit = 500): GuiEvent[] {
+  listEvents(afterEventId = 0, limit = 500, filters: { projectId?: string; runtimeId?: string } = {}): GuiEvent[] {
     const boundedLimit = Math.max(1, Math.min(limit, 2000));
+    const conditions = ["id > ?"];
+    const params: Array<string | number> = [afterEventId];
+
+    if (filters.projectId) {
+      conditions.push("project_id = ?");
+      params.push(filters.projectId);
+    }
+    if (filters.runtimeId) {
+      conditions.push("runtime_id = ?");
+      params.push(filters.runtimeId);
+    }
+
     const rows = this.db
-      .prepare("select * from events where id > ? order by id asc limit ?")
-      .all(afterEventId, boundedLimit) as EventRow[];
+      .prepare(`select * from events where ${conditions.join(" and ")} order by id asc limit ?`)
+      .all(...params, boundedLimit) as EventRow[];
     return rows.map(eventFromRow);
   }
 

@@ -1,17 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { ConversationContextUsage, ConversationDelta, ConversationMessage, Runtime, ServerEvent } from "@pi-gui/shared";
-import { isRecord, stripSerializedToolCallsFromText } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
+import { compactText } from "./conversation/conversationText.js";
+import type { NormalizedConversationEvent, NormalizedMessage, NormalizedSnapshotMessage, NormalizedTool } from "./conversation/normalizedEvents.js";
+import { normalizePiPayload } from "./conversation/piPayloadNormalizer.js";
 
 type Broadcast = (event: ServerEvent) => void;
 type RuntimeProvider = () => Runtime | undefined;
-
-type ExtractedMessageContent = {
-  text: string;
-  thinking?: string;
-};
-
-type PiMessageRole = "user" | "assistant" | "tool" | "toolResult" | "bashExecution";
 
 export class ConversationProjection {
   private currentAssistantMessageId?: string;
@@ -53,267 +48,149 @@ export class ConversationProjection {
   }
 
   handlePiPayload(payload: unknown): void {
-    if (!isRecord(payload)) return;
-
-    if (payload.type === "response") {
-      this.handleResponse(payload);
+    const normalizedEvents = normalizePiPayload(payload, { currentContextWindow: this.currentContextWindow() });
+    if (normalizedEvents.length > 0) {
+      for (const event of normalizedEvents) this.handleNormalizedEvent(event);
+      return;
     }
 
-    switch (payload.type) {
-      case "agent_start":
-      case "compaction_start":
-        this.setBusy(true);
-        return;
-      case "agent_end":
-      case "compaction_end":
-        this.setBusy(false);
-        return;
-      case "message_start":
-        this.handleMessageStart(payload);
-        return;
-      case "message_update":
-        this.handleMessageUpdate(payload);
-        return;
-      case "message_end":
-        this.handleMessageEnd(payload);
-        return;
-      case "tool_execution_start":
-        this.handleToolExecutionStart(payload);
-        return;
-      case "tool_execution_update":
-        this.handleToolExecutionUpdate(payload);
-        return;
-      case "tool_execution_end":
-        this.handleToolExecutionEnd(payload);
-        return;
-      default:
-        return;
-    }
+    return;
   }
 
-  private handleResponse(payload: Record<string, unknown>): void {
-    if (payload.success !== true) return;
-    const command = typeof payload.command === "string" ? payload.command : undefined;
-    const data = isRecord(payload.data) ? payload.data : undefined;
-
-    if (command === "get_messages" && data) {
-      this.applyMessagesSnapshot(data.messages);
-      return;
-    }
-
-    if (command === "get_session_stats" && data) {
-      const nextUsage = contextUsageFromSessionStats(data, this.currentContextWindow());
-      if (nextUsage) this.updateContext(nextUsage);
-      return;
-    }
-
-    if (command === "get_state" && data) {
-      const model = isRecord(data.model) ? data.model : undefined;
-      const contextWindow = numberOrUndefined(model?.contextWindow) ?? numberOrUndefined(model?.context_window);
-      if (contextWindow !== undefined) {
-        this.updateContext({ ...this.db.getConversationContext(this.requireRuntime().id), contextWindow, updatedAt: Date.now() });
+  private handleNormalizedEvent(event: NormalizedConversationEvent): void {
+    switch (event.type) {
+      case "busy.changed":
+        this.setBusy(event.busy);
+        return;
+      case "context.usage":
+        this.updateContext(event.usage);
+        return;
+      case "context.window":
+        this.updateContext({ ...this.db.getConversationContext(this.requireRuntime().id), contextWindow: event.contextWindow, updatedAt: Date.now() });
+        return;
+      case "messages.snapshot":
+        this.applyMessagesSnapshot(event.messages);
+        return;
+      case "message.started":
+        this.handleNormalizedMessageStart(event.message);
+        return;
+      case "message.finished":
+        this.handleNormalizedMessageEnd(event.message);
+        return;
+      case "assistant.delta": {
+        const message = this.ensureAssistantMessage(Date.now());
+        this.applyDelta(message.id, {
+          appendText: event.appendText,
+          appendThinking: event.appendThinking,
+          text: event.text,
+          thinking: event.thinking,
+          isStreaming: event.isStreaming,
+        });
+        return;
       }
-      if (typeof data.isStreaming === "boolean") this.setBusy(data.isStreaming);
-      if (typeof data.isCompacting === "boolean" && data.isCompacting) this.setBusy(true);
-      return;
-    }
-
-    if (command === "set_model" && data) {
-      const contextWindow = numberOrUndefined(data.contextWindow) ?? numberOrUndefined(data.context_window);
-      if (contextWindow !== undefined) {
-        this.updateContext({ ...this.db.getConversationContext(this.requireRuntime().id), contextWindow, updatedAt: Date.now() });
-      }
-    }
-  }
-
-  private handleMessageStart(payload: Record<string, unknown>): void {
-    const message = isRecord(payload.message) ? payload.message : undefined;
-    if (!message) return;
-    const role = messageRoleFromPiMessage(message);
-    const timestamp = timestampFromPiMessage(message, Date.now());
-    const content = extractPiMessageContent(message);
-
-    if (role === "user") {
-      const id = messageIdFromPiMessage(message) ?? `user-${randomUUID()}`;
-      this.currentUserMessageId = id;
-      if (content.text) {
-        this.upsertMessage({ id, role: "user", text: content.text, timestamp, isStreaming: false });
-      }
-      return;
-    }
-
-    if (role === "assistant") {
-      const id = messageIdFromPiMessage(message) ?? `assistant-${randomUUID()}`;
-      this.currentAssistantMessageId = id;
-      if (content.text || content.thinking) {
+      case "assistant.error": {
+        const message = this.ensureAssistantMessage(Date.now());
         this.upsertMessage({
-          id,
-          role: "assistant",
-          text: content.text,
-          thinking: content.thinking,
-          timestamp,
-          isStreaming: true,
-        }, false);
+          id: message.id,
+          role: "error",
+          text: message.text || `${event.reason}: ${event.errorText}`,
+          thinking: message.thinking,
+          timestamp: Date.now(),
+          isStreaming: false,
+        });
+        this.currentAssistantMessageId = undefined;
+        return;
       }
+      case "tool.started":
+        this.upsertToolMessage(event.tool, "running");
+        return;
+      case "tool.updated":
+        this.upsertToolMessage(event.tool, "running");
+        return;
+      case "tool.finished":
+        this.upsertToolMessage(event.tool, event.tool.isError ? "failed" : "completed");
+        return;
     }
   }
 
-  private handleMessageUpdate(payload: Record<string, unknown>): void {
-    const assistantMessageEvent = isRecord(payload.assistantMessageEvent) ? payload.assistantMessageEvent : undefined;
-    if (!assistantMessageEvent) return;
-
-    if (assistantMessageEvent.type === "text_delta" && typeof assistantMessageEvent.delta === "string") {
-      const message = this.ensureAssistantMessage(Date.now());
-      this.applyDelta(message.id, { appendText: assistantMessageEvent.delta, isStreaming: true });
+  private handleNormalizedMessageStart(message: NormalizedMessage): void {
+    if (message.role === "user") {
+      const id = message.id ?? `user-${randomUUID()}`;
+      this.currentUserMessageId = id;
+      if (message.text) {
+        this.upsertMessage({ id, role: "user", text: message.text, timestamp: message.timestamp, isStreaming: false });
+      }
       return;
     }
 
-    if (assistantMessageEvent.type === "text_end" && typeof assistantMessageEvent.content === "string") {
-      const message = this.ensureAssistantMessage(Date.now());
-      this.applyDelta(message.id, { text: assistantMessageEvent.content, isStreaming: true });
-      return;
-    }
-
-    if (assistantMessageEvent.type === "thinking_delta" && typeof assistantMessageEvent.delta === "string") {
-      const message = this.ensureAssistantMessage(Date.now());
-      this.applyDelta(message.id, { appendThinking: assistantMessageEvent.delta, isStreaming: true });
-      return;
-    }
-
-    if (assistantMessageEvent.type === "thinking_end" && typeof assistantMessageEvent.content === "string") {
-      const message = this.ensureAssistantMessage(Date.now());
-      this.applyDelta(message.id, { thinking: assistantMessageEvent.content, isStreaming: true });
-      return;
-    }
-
-    if (assistantMessageEvent.type === "error") {
-      const message = this.ensureAssistantMessage(Date.now());
-      const reason = typeof assistantMessageEvent.reason === "string" ? assistantMessageEvent.reason : "stream_error";
-      const errorText = typeof assistantMessageEvent.error === "string" ? assistantMessageEvent.error : JSON.stringify(assistantMessageEvent);
+    const id = message.id ?? `assistant-${randomUUID()}`;
+    this.currentAssistantMessageId = id;
+    if (message.text || message.thinking) {
       this.upsertMessage({
-        id: message.id,
-        role: "error",
-        text: message.text || `${reason}: ${errorText}`,
+        id,
+        role: "assistant",
+        text: message.text,
         thinking: message.thinking,
-        timestamp: Date.now(),
-        isStreaming: false,
-      });
-      this.currentAssistantMessageId = undefined;
+        timestamp: message.timestamp,
+        isStreaming: true,
+      }, false);
     }
   }
 
-  private handleMessageEnd(payload: Record<string, unknown>): void {
-    const message = isRecord(payload.message) ? payload.message : undefined;
-    if (!message) return;
-    const role = messageRoleFromPiMessage(message);
-    const timestamp = timestampFromPiMessage(message, Date.now());
-    const content = extractPiMessageContent(message);
-    const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage : undefined;
-
-    if (role === "user") {
-      const id = this.currentUserMessageId ?? messageIdFromPiMessage(message) ?? `user-${randomUUID()}`;
-      if (content.text || errorMessage) {
-        this.upsertMessage({ id, role: errorMessage ? "error" : "user", text: content.text || errorMessage || "", timestamp, isStreaming: false });
+  private handleNormalizedMessageEnd(message: NormalizedMessage): void {
+    if (message.role === "user") {
+      const id = this.currentUserMessageId ?? message.id ?? `user-${randomUUID()}`;
+      if (message.text || message.errorMessage) {
+        this.upsertMessage({ id, role: message.errorMessage ? "error" : "user", text: message.text || message.errorMessage || "", timestamp: message.timestamp, isStreaming: false });
       }
       this.currentUserMessageId = undefined;
       return;
     }
 
-    if (role === "assistant") {
-      const id = this.currentAssistantMessageId ?? messageIdFromPiMessage(message) ?? `assistant-${randomUUID()}`;
-      const existing = this.getMessage(id);
-      const text = content.text || errorMessage || existing?.text || "";
-      const thinking = content.thinking || existing?.thinking;
-      if (text || thinking || errorMessage) {
-        this.upsertMessage({
-          id,
-          role: errorMessage ? "error" : "assistant",
-          text,
-          thinking,
-          timestamp,
-          isStreaming: false,
-        });
-      }
-      this.currentAssistantMessageId = undefined;
+    const id = this.currentAssistantMessageId ?? message.id ?? `assistant-${randomUUID()}`;
+    const existing = this.getMessage(id);
+    const text = message.text || message.errorMessage || existing?.text || "";
+    const thinking = message.thinking || existing?.thinking;
+    if (text || thinking || message.errorMessage) {
+      this.upsertMessage({
+        id,
+        role: message.errorMessage ? "error" : "assistant",
+        text,
+        thinking,
+        timestamp: message.timestamp,
+        isStreaming: false,
+      });
     }
+    this.currentAssistantMessageId = undefined;
   }
 
-  private handleToolExecutionStart(payload: Record<string, unknown>): void {
-    const key = toolKeyFromPayload(payload);
-    const id = this.toolMessageIds.get(key) ?? `tool-${key}`;
-    this.toolMessageIds.set(key, id);
+  private upsertToolMessage(tool: NormalizedTool, status: "running" | "completed" | "failed"): void {
+    const id = this.toolMessageIds.get(tool.key) ?? `tool-${tool.key}`;
+    this.toolMessageIds.set(tool.key, id);
     this.upsertMessage({
       id,
       role: "tool",
-      title: `${toolNameFromPayload(payload)} 运行中`,
-      text: "",
-      timestamp: Date.now(),
-      isStreaming: true,
+      title: `${tool.name} ${toolStatusLabel(status)}`,
+      text: tool.text,
+      timestamp: tool.timestamp,
+      isStreaming: status === "running",
     });
   }
 
-  private handleToolExecutionUpdate(payload: Record<string, unknown>): void {
-    const key = toolKeyFromPayload(payload);
-    const id = this.toolMessageIds.get(key) ?? `tool-${key}`;
-    this.toolMessageIds.set(key, id);
-    this.upsertMessage({
-      id,
-      role: "tool",
-      title: `${toolNameFromPayload(payload)} 运行中`,
-      text: textFromResult(payload.partialResult) || textFromResult(payload.result),
-      timestamp: Date.now(),
-      isStreaming: true,
-    });
-  }
-
-  private handleToolExecutionEnd(payload: Record<string, unknown>): void {
-    const key = toolKeyFromPayload(payload);
-    const id = this.toolMessageIds.get(key) ?? `tool-${key}`;
-    this.toolMessageIds.set(key, id);
-    const isError = payload.isError === true;
-    this.upsertMessage({
-      id,
-      role: "tool",
-      title: `${toolNameFromPayload(payload)} ${isError ? "失败" : "完成"}`,
-      text: textFromResult(payload.result),
-      timestamp: Date.now(),
-      isStreaming: false,
-    });
-  }
-
-  private applyMessagesSnapshot(value: unknown): void {
+  private applyMessagesSnapshot(snapshotMessages: NormalizedSnapshotMessage[]): void {
     const runtime = this.requireRuntime();
-    if (!Array.isArray(value)) return;
-
-    const messages: ConversationMessage[] = [];
-    value.forEach((item, index) => {
-      if (!isRecord(item)) return;
-      const role = messageRoleFromPiMessage(item);
-      const timestamp = timestampFromPiMessage(item, Date.now() + index);
-
-      if (role === "user" || role === "assistant") {
-        const content = extractPiMessageContent(item);
-        const errorMessage = typeof item.errorMessage === "string" ? item.errorMessage : undefined;
-        if (!content.text && !content.thinking && !errorMessage) return;
-        messages.push({
-          id: messageIdFromPiMessage(item) ?? `snapshot-${index}-${timestamp}`,
-          runtimeId: runtime.id,
-          projectId: runtime.projectId,
-          role: errorMessage ? "error" : role,
-          text: content.text || errorMessage || "",
-          thinking: content.thinking,
-          timestamp,
-          updatedAt: Date.now(),
-          isStreaming: false,
-        });
-        return;
-      }
-
-      if (role === "tool" || role === "toolResult" || role === "bashExecution") {
-        const toolMessage = toolConversationMessageFromPiMessage(item, runtime, index, timestamp);
-        if (toolMessage) messages.push(toolMessage);
-      }
-    });
+    const messages = snapshotMessages.map((message): ConversationMessage => ({
+      id: message.id,
+      runtimeId: runtime.id,
+      projectId: runtime.projectId,
+      role: message.role,
+      text: message.text,
+      thinking: message.thinking,
+      title: message.title,
+      timestamp: message.timestamp,
+      updatedAt: Date.now(),
+      isStreaming: message.isStreaming ?? false,
+    }));
 
     if (messages.length === 0) return;
 
@@ -434,182 +311,8 @@ export class ConversationProjection {
   }
 }
 
-function contextUsageFromSessionStats(data: Record<string, unknown>, currentContextWindow?: number): ConversationContextUsage | undefined {
-  const contextUsage = isRecord(data.contextUsage) ? data.contextUsage : undefined;
-  if (!contextUsage) return undefined;
-  const tokens = numberOrUndefined(contextUsage.tokens);
-  const contextWindow = numberOrUndefined(contextUsage.contextWindow) ?? currentContextWindow;
-  const reportedPercent = numberOrUndefined(contextUsage.percent);
-  return {
-    tokens,
-    contextWindow,
-    percent: tokens !== undefined && contextWindow !== undefined && contextWindow > 0 ? (tokens / contextWindow) * 100 : reportedPercent,
-    updatedAt: Date.now(),
-  };
-}
-
-function extractPiMessageContent(message: Record<string, unknown>): ExtractedMessageContent {
-  const content = message.content;
-  if (typeof content === "string") return { text: stripSerializedToolCallsFromText(content) };
-  if (isRecord(content) && isToolCallContentPart(content)) return { text: "" };
-  if (!Array.isArray(content)) return { text: textFromResult(content) };
-
-  const textParts: string[] = [];
-  const thinkingParts: string[] = [];
-  for (const part of content) {
-    if (!isRecord(part)) {
-      const text = textFromResult(part);
-      if (text) textParts.push(text);
-      continue;
-    }
-    if (part.type === "text" && typeof part.text === "string") {
-      const text = stripSerializedToolCallsFromText(part.text);
-      if (text) textParts.push(text);
-      continue;
-    }
-    if (part.type === "thinking" && typeof part.thinking === "string") {
-      if (part.thinking) thinkingParts.push(part.thinking);
-      continue;
-    }
-    if (part.type === "output_text" && typeof part.text === "string") {
-      const text = stripSerializedToolCallsFromText(part.text);
-      if (text) textParts.push(text);
-      continue;
-    }
-    if (isToolCallContentPart(part)) {
-      continue;
-    }
-    const fallback = textFromResult(part);
-    if (fallback && fallback !== "{}") textParts.push(fallback);
-  }
-
-  return {
-    text: textParts.filter(Boolean).join("\n"),
-    thinking: thinkingParts.filter(Boolean).join("\n") || undefined,
-  };
-}
-
-function textFromResult(value: unknown): string {
-  if (typeof value === "string") return stripSerializedToolCallsFromText(value);
-  if (value === null || value === undefined) return "";
-  if (Array.isArray(value)) return value.map(textFromResult).filter(Boolean).join("\n");
-  if (!isRecord(value)) return String(value);
-  if (isToolCallContentPart(value)) return "";
-
-  if (typeof value.text === "string") return stripSerializedToolCallsFromText(value.text);
-  if (typeof value.content === "string") return stripSerializedToolCallsFromText(value.content);
-  if (typeof value.output === "string") return stripSerializedToolCallsFromText(value.output);
-  if (typeof value.result === "string") return stripSerializedToolCallsFromText(value.result);
-  if (typeof value.thinking === "string") return "";
-
-  const nestedContent = textFromResult(value.content);
-  if (nestedContent) return nestedContent;
-  const nestedResult = textFromResult(value.result);
-  if (nestedResult) return nestedResult;
-
-  return JSON.stringify(value, null, 2);
-}
-
-function isToolCallContentPart(part: Record<string, unknown>): boolean {
-  return part.type === "toolCall" || part.type === "tool_call" || part.type === "tool_use" || part.type === "toolResult" || part.type === "tool_result";
-}
-
-
-function toolConversationMessageFromPiMessage(
-  message: Record<string, unknown>,
-  runtime: Runtime,
-  index: number,
-  timestamp: number,
-): ConversationMessage | undefined {
-  const text = toolResultTextFromPiMessage(message);
-  const toolName = toolNameFromPiMessage(message);
-  const isError = message.isError === true || (typeof message.exitCode === "number" && message.exitCode !== 0);
-  const fallbackId = message.role === "bashExecution" ? `bash-${timestamp}-${index}` : `tool-snapshot-${index}-${timestamp}`;
-  const id = toolConversationIdFromPiMessage(message) ?? fallbackId;
-
-  if (!text && !toolName) return undefined;
-
-  return {
-    id,
-    runtimeId: runtime.id,
-    projectId: runtime.projectId,
-    role: "tool",
-    title: `${toolName || "tool"} ${isError ? "失败" : "完成"}`,
-    text,
-    timestamp,
-    updatedAt: Date.now(),
-    isStreaming: false,
-  };
-}
-
-function toolConversationIdFromPiMessage(message: Record<string, unknown>): string | undefined {
-  const rawToolCallId = message.toolCallId ?? message.tool_call_id ?? message.callId;
-  if (typeof rawToolCallId === "string" || typeof rawToolCallId === "number") return `tool-${rawToolCallId}`;
-  const messageId = messageIdFromPiMessage(message);
-  return messageId ? `tool-${messageId}` : undefined;
-}
-
-function toolNameFromPiMessage(message: Record<string, unknown>): string {
-  if (typeof message.toolName === "string") return message.toolName;
-  if (typeof message.name === "string") return message.name;
-  if (message.role === "bashExecution") return "bash";
-  return "tool";
-}
-
-function toolResultTextFromPiMessage(message: Record<string, unknown>): string {
-  if (message.role === "bashExecution") {
-    const output = typeof message.output === "string" ? message.output : "";
-    const exitCode = typeof message.exitCode === "number" ? `exitCode: ${message.exitCode}` : "";
-    return output || exitCode;
-  }
-  return textFromResult(message.content) || textFromResult(message.result) || textFromResult(message.output);
-}
-
-function messageRoleFromPiMessage(message: Record<string, unknown>): PiMessageRole | undefined {
-  if (
-    message.role === "user" ||
-    message.role === "assistant" ||
-    message.role === "tool" ||
-    message.role === "toolResult" ||
-    message.role === "bashExecution"
-  ) {
-    return message.role;
-  }
-  return undefined;
-}
-
-function messageIdFromPiMessage(message: Record<string, unknown>): string | undefined {
-  const rawId = message.id ?? message.messageId ?? message.message_id;
-  return typeof rawId === "string" || typeof rawId === "number" ? String(rawId) : undefined;
-}
-
-function timestampFromPiMessage(message: Record<string, unknown>, fallback: number): number {
-  if (typeof message.timestamp === "number" && Number.isFinite(message.timestamp)) return message.timestamp;
-  if (typeof message.createdAt === "number" && Number.isFinite(message.createdAt)) return message.createdAt;
-  if (typeof message.updatedAt === "number" && Number.isFinite(message.updatedAt)) return message.updatedAt;
-  if (typeof message.timestamp === "string") {
-    const parsed = Date.parse(message.timestamp);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return fallback;
-}
-
-function toolKeyFromPayload(payload: Record<string, unknown>): string {
-  const rawKey = payload.toolCallId ?? payload.tool_call_id ?? payload.callId ?? payload.id ?? payload.requestId;
-  return typeof rawKey === "string" || typeof rawKey === "number" ? String(rawKey) : randomUUID();
-}
-
-function toolNameFromPayload(payload: Record<string, unknown>): string {
-  return typeof payload.toolName === "string" ? payload.toolName : typeof payload.name === "string" ? payload.name : "tool";
-}
-
-function numberOrUndefined(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-const MAX_CONVERSATION_TEXT_CHARS = 200_000;
-
-function compactText(text: string): string {
-  if (text.length <= MAX_CONVERSATION_TEXT_CHARS) return text;
-  return `${text.slice(0, MAX_CONVERSATION_TEXT_CHARS)}\n…[truncated ${text.length - MAX_CONVERSATION_TEXT_CHARS} chars]`;
+function toolStatusLabel(status: "running" | "completed" | "failed"): string {
+  if (status === "running") return "运行中";
+  if (status === "failed") return "失败";
+  return "完成";
 }

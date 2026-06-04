@@ -4,14 +4,20 @@ import { dirname, resolve } from "node:path";
 import type { AppSettings, ConversationContextUsage, ConversationMessage, GuiEvent, GuiSession, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
 import { ConversationStore } from "./db/conversations.js";
 import { EventLogStore } from "./db/events.js";
-import { parseThinkingLevel, projectFromRow, runtimeFromRow, sessionFromRow } from "./db/mappers.js";
-import type { ProjectRow, RuntimeRow, SessionRow } from "./db/rows.js";
+import { ProjectStore } from "./db/projects.js";
+import { RuntimeStore } from "./db/runtimes.js";
 import { migrateDatabase } from "./db/schema.js";
+import { SessionStore } from "./db/sessions.js";
+import { SettingsStore } from "./db/settings.js";
 
 export class AppDatabase {
   private readonly db: Database.Database;
   private readonly conversations: ConversationStore;
   private readonly eventLog: EventLogStore;
+  private readonly projects: ProjectStore;
+  private readonly runtimes: RuntimeStore;
+  private readonly sessions: SessionStore;
+  private readonly settings: SettingsStore;
 
   constructor(filePath = defaultDbPath()) {
     mkdirSync(dirname(filePath), { recursive: true });
@@ -20,7 +26,12 @@ export class AppDatabase {
     migrateDatabase(this.db);
     this.conversations = new ConversationStore(this.db);
     this.eventLog = new EventLogStore(this.db);
-    this.markOrphanedRuntimesCrashed();
+    this.projects = new ProjectStore(this.db);
+    this.runtimes = new RuntimeStore(this.db);
+    this.sessions = new SessionStore(this.db);
+    this.settings = new SettingsStore(this.db);
+    this.runtimes.markOrphanedRuntimesCrashed();
+    this.runtimes.archiveStoppedRuntimesWithoutSessions();
   }
 
   close(): void {
@@ -28,139 +39,59 @@ export class AppDatabase {
   }
 
   listProjects(): Project[] {
-    const rows = this.db.prepare("select * from projects order by last_opened_at desc").all() as ProjectRow[];
-    return rows.map(projectFromRow);
+    return this.projects.listProjects();
   }
 
   getProject(id: string): Project | undefined {
-    const row = this.db.prepare("select * from projects where id = ?").get(id) as ProjectRow | undefined;
-    return row ? projectFromRow(row) : undefined;
+    return this.projects.getProject(id);
   }
 
   createProject(project: Project): Project {
-    this.db
-      .prepare(
-        `insert into projects (id, name, cwd, last_opened_at, default_model)
-         values (@id, @name, @cwd, @lastOpenedAt, @defaultModel)`,
-      )
-      .run({ ...project, defaultModel: project.defaultModel ?? null });
-    return project;
+    return this.projects.createProject(project);
   }
 
   touchProject(id: string, timestamp = Date.now()): void {
-    this.db.prepare("update projects set last_opened_at = ? where id = ?").run(timestamp, id);
+    this.projects.touchProject(id, timestamp);
   }
 
   getSettings(): AppSettings {
-    const rows = this.db.prepare("select key, value from settings").all() as Array<{ key: string; value: string }>;
-    const settings: AppSettings = {};
-    for (const row of rows) {
-      if (row.key === "defaultModel") settings.defaultModel = row.value;
-      if (row.key === "defaultThinkingLevel") settings.defaultThinkingLevel = parseThinkingLevel(row.value);
-      if (row.key === "responseMode") settings.responseMode = row.value === "fast" ? "fast" : "normal";
-    }
-    return settings;
+    return this.settings.getSettings();
   }
 
   updateSettings(settings: AppSettings): AppSettings {
-    const now = Date.now();
-    if (settings.defaultModel !== undefined) {
-      this.upsertSetting("defaultModel", settings.defaultModel.trim(), now);
-    }
-    if (settings.defaultThinkingLevel !== undefined) {
-      this.upsertSetting("defaultThinkingLevel", settings.defaultThinkingLevel, now);
-    }
-    if (settings.responseMode !== undefined) {
-      this.upsertSetting("responseMode", settings.responseMode, now);
-    }
-    return this.getSettings();
+    return this.settings.updateSettings(settings);
   }
 
   upsertRuntime(runtime: Runtime): Runtime {
-    const now = Date.now();
-    this.db
-      .prepare(
-        `insert into runtimes (id, project_id, cwd, status, pid, session_id, started_at, archived_at, created_at, updated_at)
-         values (@id, @projectId, @cwd, @status, @pid, @sessionId, @startedAt, @archivedAt, @createdAt, @updatedAt)
-         on conflict(id) do update set
-           status = excluded.status,
-           pid = excluded.pid,
-           session_id = excluded.session_id,
-           started_at = excluded.started_at,
-           archived_at = coalesce(excluded.archived_at, runtimes.archived_at),
-           updated_at = excluded.updated_at`,
-      )
-      .run({
-        id: runtime.id,
-        projectId: runtime.projectId,
-        cwd: runtime.cwd,
-        status: runtime.status,
-        pid: runtime.pid ?? null,
-        sessionId: runtime.sessionId ?? null,
-        startedAt: runtime.startedAt ?? null,
-        archivedAt: runtime.archivedAt ?? null,
-        createdAt: now,
-        updatedAt: now,
-      });
-    return runtime;
+    return this.runtimes.upsertRuntime(runtime);
   }
 
   listRuntimes(limit = 100): Runtime[] {
-    const rows = this.db
-      .prepare("select * from runtimes order by updated_at desc limit ?")
-      .all(limit) as RuntimeRow[];
-    return rows.map(runtimeFromRow);
+    return this.runtimes.listRuntimes(limit);
   }
 
   getRuntime(id: string): Runtime | undefined {
-    const row = this.db.prepare("select * from runtimes where id = ?").get(id) as RuntimeRow | undefined;
-    return row ? runtimeFromRow(row) : undefined;
+    return this.runtimes.getRuntime(id);
+  }
+
+  getLatestRuntimeBySessionId(sessionId: string): Runtime | undefined {
+    return this.runtimes.getLatestRuntimeBySessionId(sessionId);
   }
 
   archiveRuntime(id: string, timestamp = Date.now()): Runtime | undefined {
-    this.db
-      .prepare("update runtimes set archived_at = coalesce(archived_at, ?), updated_at = ? where id = ?")
-      .run(timestamp, timestamp, id);
-    return this.getRuntime(id);
+    return this.runtimes.archiveRuntime(id, timestamp);
   }
 
   listSessions(projectId?: string, limit = 200): GuiSession[] {
-    const boundedLimit = Math.max(1, Math.min(limit, 1000));
-    const rows = projectId
-      ? (this.db
-          .prepare("select * from sessions where project_id = ? order by updated_at desc limit ?")
-          .all(projectId, boundedLimit) as SessionRow[])
-      : (this.db.prepare("select * from sessions order by updated_at desc limit ?").all(boundedLimit) as SessionRow[]);
-    return rows.map(sessionFromRow);
+    return this.sessions.listSessions(projectId, limit);
   }
 
   getSession(id: string): GuiSession | undefined {
-    const row = this.db.prepare("select * from sessions where id = ?").get(id) as SessionRow | undefined;
-    return row ? sessionFromRow(row) : undefined;
+    return this.sessions.getSession(id);
   }
 
   upsertSession(session: GuiSession): GuiSession {
-    this.db
-      .prepare(
-        `insert into sessions (id, project_id, pi_session_file, title, created_at, updated_at, runtime_id)
-         values (@id, @projectId, @piSessionFile, @title, @createdAt, @updatedAt, @runtimeId)
-         on conflict(id) do update set
-           project_id = excluded.project_id,
-           pi_session_file = excluded.pi_session_file,
-           title = coalesce(excluded.title, sessions.title),
-           updated_at = excluded.updated_at,
-           runtime_id = excluded.runtime_id`,
-      )
-      .run({
-        id: session.id,
-        projectId: session.projectId,
-        piSessionFile: session.piSessionFile,
-        title: session.title ?? null,
-        createdAt: session.createdAt,
-        updatedAt: session.updatedAt,
-        runtimeId: session.runtimeId ?? null,
-      });
-    return this.getSession(session.id) ?? session;
+    return this.sessions.upsertSession(session);
   }
 
   upsertConversationMessage(message: ConversationMessage): ConversationMessage {
@@ -207,71 +138,12 @@ export class AppDatabase {
     return this.eventLog.appendEvent(input);
   }
 
-  listEvents(afterEventId = 0, limit = 500): GuiEvent[] {
-    return this.eventLog.listEvents(afterEventId, limit);
+  listEvents(afterEventId = 0, limit = 500, filters: { projectId?: string; runtimeId?: string } = {}): GuiEvent[] {
+    return this.eventLog.listEvents(afterEventId, limit, filters);
   }
 
   recentEvents(limit = 200, maxPayloadBytes?: number): GuiEvent[] {
     return this.eventLog.recentEvents(limit, maxPayloadBytes);
-  }
-
-  private upsertSetting(key: string, value: string, timestamp: number): void {
-    if (value) {
-      this.db
-        .prepare(
-          `insert into settings (key, value, updated_at)
-           values (?, ?, ?)
-           on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
-        )
-        .run(key, value, timestamp);
-    } else {
-      this.db.prepare("delete from settings where key = ?").run(key);
-    }
-  }
-
-  private markOrphanedRuntimesCrashed(): void {
-    const orphaned = this.db
-      .prepare("select * from runtimes where status in ('starting', 'running')")
-      .all() as RuntimeRow[];
-    if (orphaned.length === 0) return;
-
-    const timestamp = Date.now();
-    const updateRuntimes = this.db.prepare(
-      `update runtimes
-       set status = 'crashed', pid = null, ended_at = coalesce(ended_at, ?), updated_at = ?
-       where status in ('starting', 'running')`,
-    );
-    const insertEvent = this.db.prepare(
-      `insert into events (runtime_id, project_id, timestamp, kind, payload)
-       values (?, ?, ?, ?, ?)`,
-    );
-    const clearBusy = this.db.prepare(
-      `update runtime_conversation_state
-       set busy = 0, updated_at = ?
-       where runtime_id = ?`,
-    );
-
-    this.db.transaction((rows: RuntimeRow[]) => {
-      updateRuntimes.run(timestamp, timestamp);
-      for (const row of rows) {
-        const crashedRuntime = runtimeFromRow({ ...row, status: "crashed", pid: null });
-        clearBusy.run(timestamp, row.id);
-        insertEvent.run(row.id, row.project_id, timestamp, "runtime_status", JSON.stringify(crashedRuntime));
-        insertEvent.run(
-          row.id,
-          row.project_id,
-          timestamp,
-          "error",
-          JSON.stringify({
-            message: "GUI server restarted while this runtime was running; the previous Pi RPC process cannot be reattached.",
-            reason: "orphaned_runtime_on_startup",
-            previousStatus: row.status,
-            previousPid: row.pid,
-            status: "crashed",
-          }),
-        );
-      }
-    })(orphaned);
   }
 }
 

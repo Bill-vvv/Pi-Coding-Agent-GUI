@@ -22,7 +22,7 @@ function readServiceTier(): ServiceTier | undefined {
 function isOpenAIServiceTierPayload(payload: unknown, context: unknown): payload is Record<string, unknown> {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
 
-  const model = context && typeof context === "object" && "model" in context ? (context as { model?: unknown }).model : undefined;
+  const model = contextModelFromContext(context);
   const api = model && typeof model === "object" && "api" in model ? (model as { api?: unknown }).api : undefined;
   const provider = model && typeof model === "object" && "provider" in model ? (model as { provider?: unknown }).provider : undefined;
   if (typeof api === "string" && typeof provider === "string") {
@@ -36,7 +36,40 @@ function isOpenAIServiceTierPayload(payload: unknown, context: unknown): payload
 export default function serviceTierExtension(pi: { on: (event: "before_provider_request", handler: (event: { payload: unknown }, context: unknown) => unknown) => void }) {
   pi.on("before_provider_request", (event, context) => {
     const serviceTier = readServiceTier();
+    logModelRequest(event.payload, context, serviceTier);
     if (!serviceTier || !isOpenAIServiceTierPayload(event.payload, context)) return undefined;
     return { ...event.payload, service_tier: serviceTier };
   });
+}
+
+function contextModelFromContext(context: unknown): unknown {
+  return context && typeof context === "object" && "model" in context ? (context as { model?: unknown }).model : undefined;
+}
+
+function logModelRequest(payload: unknown, context: unknown, serviceTier: ServiceTier | undefined): void {
+  try {
+    const model = contextModelFromContext(context);
+    const provider = model && typeof model === "object" && "provider" in model ? (model as { provider?: unknown }).provider : undefined;
+    const modelId = model && typeof model === "object" && "id" in model ? (model as { id?: unknown }).id : undefined;
+    const api = model && typeof model === "object" && "api" in model ? (model as { api?: unknown }).api : undefined;
+    const payloadModel = payload && typeof payload === "object" && "model" in payload ? (payload as { model?: unknown }).model : undefined;
+    const normalizedProvider = typeof provider === "string" ? provider : undefined;
+    const normalizedModelId = typeof modelId === "string" ? modelId : undefined;
+    const contextModel = normalizedProvider && normalizedModelId ? `${normalizedProvider}/${normalizedModelId}` : undefined;
+
+    console.error(
+      `PI_GUI_MODEL_REQUEST ${JSON.stringify({
+        timestamp: Date.now(),
+        model: contextModel ?? (typeof payloadModel === "string" ? payloadModel : undefined),
+        contextModel,
+        payloadModel: typeof payloadModel === "string" ? payloadModel : undefined,
+        provider: normalizedProvider,
+        modelId: normalizedModelId,
+        api: typeof api === "string" ? api : undefined,
+        serviceTier,
+      })}`,
+    );
+  } catch {
+    // Never let debug logging affect the provider request.
+  }
 }

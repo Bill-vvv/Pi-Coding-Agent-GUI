@@ -21,6 +21,19 @@ test("AppDatabase appends and replays GUI events after an event id", () => {
   assert.deepEqual(db.listEvents(first.id, 10), [second, third]);
 });
 
+test("AppDatabase filters replayed GUI events by project and runtime", () => {
+  const db = createTestDatabase();
+
+  const first = db.appendEvent({ runtimeId: "runtime-1", projectId: "project-1", kind: "stderr", payload: "one" });
+  const second = db.appendEvent({ runtimeId: "runtime-2", projectId: "project-1", kind: "stderr", payload: "two" });
+  const third = db.appendEvent({ runtimeId: "runtime-3", projectId: "project-2", kind: "stderr", payload: "three" });
+
+  assert.deepEqual(db.listEvents(0, 10, { projectId: "project-1" }).map((event) => event.id), [first.id, second.id]);
+  assert.deepEqual(db.listEvents(0, 10, { runtimeId: "runtime-2" }).map((event) => event.id), [second.id]);
+  assert.deepEqual(db.listEvents(first.id, 10, { projectId: "project-2" }).map((event) => event.id), [third.id]);
+  db.close();
+});
+
 test("AppDatabase recentEvents returns oldest-to-newest order for selected recent events", () => {
   const db = createTestDatabase();
 

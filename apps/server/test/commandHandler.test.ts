@@ -83,10 +83,110 @@ test("command handler lists sessions with optional project filtering", async () 
   await sendCommand(handle, socket, { type: "session.list", requestId: "req-sessions", projectId: "project-1" });
 
   const listEvent = sent.find((event) => event.type === "session.list");
+  assert.equal(listEvent?.projectId, "project-1");
   assert.deepEqual(listEvent?.sessions.map((session) => session.id), ["session-1"]);
   const result = sent.find((event) => event.type === "command.result");
   assert.equal(result?.success, true);
   assert.equal(result?.requestId, "req-sessions");
+  db.close();
+});
+
+test("command handler delegates session.resume with model options", async () => {
+  const calls: unknown[] = [];
+  const runtime = { id: "runtime-from-session", projectId: "project-1", cwd: process.cwd(), status: "running" as const };
+  const { db, sent, socket, handle } = createHarness({
+    resumeSession: (sessionId: string, options: unknown) => {
+      calls.push({ sessionId, options });
+      return runtime;
+    },
+  } as Partial<RuntimeSupervisor>);
+
+  await sendCommand(handle, socket, {
+    type: "session.resume",
+    requestId: "req-session-resume",
+    sessionId: "session-1",
+    model: "openai:gpt-5",
+    thinkingLevel: "high",
+    responseMode: "fast",
+  });
+
+  assert.deepEqual(calls, [{ sessionId: "session-1", options: { model: "openai:gpt-5", thinkingLevel: "high", responseMode: "fast" } }]);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.deepEqual(result?.data, { runtime });
+  db.close();
+});
+
+test("command handler delegates runtime.restart with model options", async () => {
+  const calls: unknown[] = [];
+  const runtime = { id: "runtime-restarted", projectId: "project-1", cwd: process.cwd(), status: "running" as const };
+  const { db, sent, socket, handle } = createHarness({
+    restartRuntime: (runtimeId: string, options: unknown) => {
+      calls.push({ runtimeId, options });
+      return runtime;
+    },
+  } as Partial<RuntimeSupervisor>);
+
+  await sendCommand(handle, socket, {
+    type: "runtime.restart",
+    requestId: "req-runtime-restart",
+    runtimeId: "runtime-crashed",
+    model: "openai:gpt-5",
+    thinkingLevel: "high",
+    responseMode: "fast",
+  });
+
+  assert.deepEqual(calls, [{ runtimeId: "runtime-crashed", options: { model: "openai:gpt-5", thinkingLevel: "high", responseMode: "fast" } }]);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.deepEqual(result?.data, { runtime });
+  db.close();
+});
+
+test("command handler delegates runtime.commands.list", async () => {
+  const calls: string[] = [];
+  const commands = [{ name: "fix-tests", description: "Fix tests", source: "prompt" as const }];
+  const { db, sent, socket, handle } = createHarness({
+    requestSlashCommands: (runtimeId: string) => {
+      calls.push(runtimeId);
+      return commands;
+    },
+  } as Partial<RuntimeSupervisor>);
+
+  await sendCommand(handle, socket, { type: "runtime.commands.list", requestId: "req-commands", runtimeId: "runtime-1" });
+
+  assert.deepEqual(calls, ["runtime-1"]);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.deepEqual(result?.data, { commands });
+  db.close();
+});
+
+test("command handler delegates native runtime RPC commands", async () => {
+  const calls: unknown[] = [];
+  const { db, sent, socket, handle } = createHarness({
+    executeRpcCommand: (runtimeId: string, command: unknown, label: unknown) => calls.push({ runtimeId, command, label }),
+  } as Partial<RuntimeSupervisor>);
+
+  await sendCommand(handle, socket, { type: "runtime.rpc", requestId: "req-rpc", runtimeId: "runtime-1", command: { type: "compact" }, label: "/compact" });
+
+  assert.deepEqual(calls, [{ runtimeId: "runtime-1", command: { type: "compact" }, label: "/compact" }]);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  db.close();
+});
+
+test("command handler delegates extension UI responses", async () => {
+  const calls: unknown[] = [];
+  const { db, sent, socket, handle } = createHarness({
+    respondExtensionUi: (runtimeId: string, responseId: string, response: unknown) => calls.push({ runtimeId, responseId, response }),
+  } as Partial<RuntimeSupervisor>);
+
+  await sendCommand(handle, socket, { type: "extension.ui.respond", requestId: "req-ui", runtimeId: "runtime-1", responseId: "ui-1", response: { value: "ok" } });
+
+  assert.deepEqual(calls, [{ runtimeId: "runtime-1", responseId: "ui-1", response: { value: "ok" } }]);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
   db.close();
 });
 
@@ -126,6 +226,24 @@ test("command handler replays events through gui.event envelopes", async () => {
   assert.deepEqual(
     sent.filter((event) => event.type === "gui.event").map((event) => event.event),
     [second],
+  );
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.deepEqual(result?.data, { count: 1 });
+  db.close();
+});
+
+test("command handler filters replayed events by runtime and project", async () => {
+  const { db, sent, socket, handle } = createHarness();
+  const first = db.appendEvent({ runtimeId: "runtime-1", projectId: "project-1", kind: "stderr", payload: "one" });
+  db.appendEvent({ runtimeId: "runtime-2", projectId: "project-1", kind: "stderr", payload: "two" });
+  const third = db.appendEvent({ runtimeId: "runtime-3", projectId: "project-2", kind: "stderr", payload: "three" });
+
+  await sendCommand(handle, socket, { type: "event.replay", requestId: "req-filter", afterEventId: first.id, limit: 10, projectId: "project-2" });
+
+  assert.deepEqual(
+    sent.filter((event) => event.type === "gui.event").map((event) => event.event),
+    [third],
   );
   const result = sent.find((event) => event.type === "command.result");
   assert.equal(result?.success, true);
