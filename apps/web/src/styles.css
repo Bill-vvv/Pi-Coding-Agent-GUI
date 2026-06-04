@@ -6,6 +6,7 @@
 @import "./styles/chat.css";
 @import "./styles/composer.css";
 @import "./styles/command-menu.css";
+@import "./styles/extension-ui.css";
 @import "./styles/model-picker.css";
 @import "./styles/settings.css";
 @import "./styles/session-history.css";

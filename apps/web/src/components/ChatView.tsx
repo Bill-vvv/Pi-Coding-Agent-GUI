@@ -4,8 +4,10 @@ import type { ConversationMessage } from "../types";
 import { isTransportConnectionError } from "../domain/connection";
 import { messageRoleLabel } from "../domain/conversation";
 import { buildConversationDisplayBlocks, type ConversationDisplayBlock, type ConversationDisplayMode } from "../domain/conversationDisplay";
+import type { RuntimeExtensionUiChrome } from "../domain/extensionUiChrome";
 import { subagentCopyText, subagentRunPreview, subagentStatusLabel } from "../domain/subagents";
 import { estimateVirtualRange, prependScrollTop } from "../domain/virtualList";
+import { ExtensionUiStatusStrip } from "./ExtensionUiChrome";
 import { Icon } from "./Icon";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ThinkingStatus } from "./ThinkingAnimation";
@@ -20,6 +22,7 @@ type ChatViewProps = {
   activeRuntimeIsBusy: boolean;
   hasMoreBefore?: boolean;
   subagentRuns?: SubagentRun[];
+  extensionUi?: RuntimeExtensionUiChrome;
   displayMode?: ConversationDisplayMode;
   onLoadOlderMessages?: () => void;
   onOpenSubagentRun?: (runId: string) => void;
@@ -38,6 +41,7 @@ export const ChatView = memo(function ChatView({
   activeRuntimeIsBusy,
   hasMoreBefore = false,
   subagentRuns = [],
+  extensionUi,
   displayMode = "normal",
   onLoadOlderMessages,
   onOpenSubagentRun,
@@ -49,6 +53,7 @@ export const ChatView = memo(function ChatView({
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoFollowRef = useRef(true);
   const prependAnchorRef = useRef<{ scrollTop: number; scrollHeight: number } | undefined>(undefined);
+  const [virtualLayoutRevision, setVirtualLayoutRevision] = useState(0);
   const blocks = useMemo(() => buildConversationDisplayBlocks(messages, displayMode, { activeRuntimeIsBusy, subagentRuns }), [activeRuntimeIsBusy, displayMode, messages, subagentRuns]);
   const transportError = isTransportConnectionError(operationError) ? operationError : undefined;
   const visibleOperationError = transportError ? undefined : operationError;
@@ -58,6 +63,9 @@ export const ChatView = memo(function ChatView({
   const dismissOperationErrorRef = useRef(onDismissOperationError);
   const dismissNoticeRef = useRef(onDismissNotice);
   const blockActions = useMemo(() => ({ onOpenSubagentRun, onCopySubagentOutput }), [onCopySubagentOutput, onOpenSubagentRun]);
+  const handleVirtualLayoutChange = useCallback(() => {
+    setVirtualLayoutRevision((value) => value + 1);
+  }, []);
 
   useLayoutEffect(() => {
     visibleOperationErrorRef.current = visibleOperationError;
@@ -100,7 +108,7 @@ export const ChatView = memo(function ChatView({
     if (prependAnchorRef.current) return;
     if (!shouldAutoFollowRef.current) return;
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, activeRuntimeIsBusy, subagentRuns]);
+  }, [messages, activeRuntimeIsBusy, subagentRuns, virtualLayoutRevision]);
 
   function handleConversationScroll() {
     const surface = surfaceRef.current;
@@ -132,6 +140,7 @@ export const ChatView = memo(function ChatView({
                 {conversationSummary?.detail ? <small className="conversation-header-detail">{conversationSummary.detail}</small> : null}
                 {activeRuntime.sessionId ? <small className="conversation-header-session">Session {activeRuntime.sessionId.slice(0, 8)}</small> : null}
                 {activeRuntime.archivedAt ? <small>已归档</small> : null}
+                <ExtensionUiStatusStrip chrome={extensionUi} />
               </>
             ) : null}
             {connectionStatusMessage ? <small className="connection-status-warning">{connectionStatusMessage}</small> : null}
@@ -146,7 +155,7 @@ export const ChatView = memo(function ChatView({
                   <button type="button" onClick={handleLoadOlderMessages}>加载更早消息</button>
                 </div>
               ) : null}
-              <VirtualConversationBlockList blocks={blocks} surfaceRef={surfaceRef} actions={blockActions} />
+              <VirtualConversationBlockList blocks={blocks} surfaceRef={surfaceRef} actions={blockActions} onLayoutChange={handleVirtualLayoutChange} />
               {activeRuntimeIsBusy && !blocks.some((block) => block.isStreaming) ? (
                 <article className="chat-message assistant streaming thinking-placeholder">
                   <ThinkingStatus variant="coreloop" />
@@ -165,27 +174,44 @@ const VirtualConversationBlockList = memo(function VirtualConversationBlockList(
   blocks,
   surfaceRef,
   actions,
+  onLayoutChange,
 }: {
   blocks: ConversationDisplayBlock[];
   surfaceRef: RefObject<HTMLDivElement | null>;
   actions: ConversationBlockActions;
+  onLayoutChange?: () => void;
 }) {
   const heightByBlockIdRef = useRef<Map<string, number>>(new Map());
   const [measurementRevision, setMeasurementRevision] = useState(0);
   const [viewport, setViewport] = useState({ scrollTop: 0, height: 640 });
 
+  const updateViewport = useCallback(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const nextViewport = { scrollTop: surface.scrollTop, height: surface.clientHeight || 640 };
+    setViewport((current) => (current.scrollTop === nextViewport.scrollTop && current.height === nextViewport.height ? current : nextViewport));
+  }, [surfaceRef]);
+
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
     if (!surface) return;
-    const updateViewport = () => setViewport({ scrollTop: surface.scrollTop, height: surface.clientHeight || 640 });
     updateViewport();
     surface.addEventListener("scroll", updateViewport, { passive: true });
     window.addEventListener("resize", updateViewport);
+    const resizeObserver = new ResizeObserver(updateViewport);
+    resizeObserver.observe(surface);
     return () => {
       surface.removeEventListener("scroll", updateViewport);
       window.removeEventListener("resize", updateViewport);
+      resizeObserver.disconnect();
     };
-  }, [surfaceRef]);
+  }, [surfaceRef, updateViewport]);
+
+  useLayoutEffect(() => {
+    updateViewport();
+    const frame = window.requestAnimationFrame(updateViewport);
+    return () => window.cancelAnimationFrame(frame);
+  }, [blocks.length, measurementRevision, updateViewport]);
 
   const measuredHeights = useMemo(
     () => blocks.map((block) => heightByBlockIdRef.current.get(block.id) ?? ESTIMATED_CONVERSATION_BLOCK_HEIGHT),
@@ -205,7 +231,8 @@ const VirtualConversationBlockList = memo(function VirtualConversationBlockList(
     if (height <= 0 || Math.abs((heightByBlockIdRef.current.get(blockId) ?? 0) - height) <= 1) return;
     heightByBlockIdRef.current.set(blockId, height);
     setMeasurementRevision((value) => value + 1);
-  }, []);
+    onLayoutChange?.();
+  }, [onLayoutChange]);
 
   return (
     <>

@@ -21,6 +21,7 @@ import { upsertById } from "../domain/collections";
 import { isTransportConnectionError } from "../domain/connection";
 import { indexConversationSummaries } from "../domain/conversationSummary";
 import { applyConversationDeltas, applyConversationDelta, evictInactiveRuntimeMessages, mergeConversationSnapshot, prependConversationPage, rememberHydratedRuntime, upsertConversationMessage } from "../domain/conversationState";
+import { applyExtensionUiChromeRequest, extensionUiChromeRequestFromPayload, type ExtensionUiChromeByRuntime } from "../domain/extensionUiChrome";
 import { subagentDetailKey } from "../domain/subagents";
 
 export type AppState = {
@@ -34,6 +35,7 @@ export type AppState = {
   busyByRuntime: Record<string, boolean>;
   queueByRuntime: Record<string, RuntimeQueue>;
   commandsByRuntime: Record<string, SlashCommand[]>;
+  extensionUiByRuntime: ExtensionUiChromeByRuntime;
   guiEvents: GuiEvent[];
   sessions: GuiSession[];
   checkpointsByProject: Record<string, RewindCheckpoint[]>;
@@ -62,6 +64,7 @@ export const initialAppState: AppState = {
   busyByRuntime: {},
   queueByRuntime: {},
   commandsByRuntime: {},
+  extensionUiByRuntime: {},
   guiEvents: [],
   sessions: [],
   checkpointsByProject: {},
@@ -300,8 +303,12 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
         commandsByRuntime: { ...state.commandsByRuntime, [event.runtimeId]: event.commands },
       };
     case "runtime.rpc.response":
-    case "extension.ui.request":
       return state;
+    case "extension.ui.request":
+      return {
+        ...state,
+        extensionUiByRuntime: applyExtensionUiChromeRequest(state.extensionUiByRuntime, event.runtimeId, event.request),
+      };
     case "subagent.snapshot": {
       const nextSubagentRuns = mergeSubagentRuns(state.subagentRuns, event.runs);
       return { ...state, subagentRuns: nextSubagentRuns, sessions: filterChildSubagentSessions(state.sessions, nextSubagentRuns) };
@@ -361,9 +368,17 @@ function subagentChildSessionFiles(runs: Record<string, SubagentRun>): Set<strin
 }
 
 function applyGuiEvent(state: AppState, event: GuiEvent): AppState {
-  return {
+  const nextState = {
     ...state,
     guiEvents: upsertGuiEvent(state.guiEvents, event),
+  };
+
+  const request = event.kind === "pi_event" ? extensionUiChromeRequestFromPayload(event.payload) : undefined;
+  if (!request) return nextState;
+
+  return {
+    ...nextState,
+    extensionUiByRuntime: applyExtensionUiChromeRequest(nextState.extensionUiByRuntime, event.runtimeId, request),
   };
 }
 

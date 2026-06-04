@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import type { ModelSummary, Project, ResponseMode, Runtime, RuntimeQueue, SlashCommand, ThinkingLevel } from "@pi-gui/shared";
+import type { RuntimeExtensionUiChrome } from "../domain/extensionUiChrome";
 import type { ConnectionState, ConversationContextUsage } from "../types";
 import { ContextIndicator } from "./ContextIndicator";
+import { ExtensionUiWidgetStack } from "./ExtensionUiChrome";
 import { Icon } from "./Icon";
 import { ModelPicker } from "./ModelPicker";
 
@@ -18,6 +20,7 @@ type ComposerProps = {
   contextUsage?: ConversationContextUsage;
   activeRuntimeQueue?: RuntimeQueue;
   slashCommands: SlashCommand[];
+  extensionUi?: RuntimeExtensionUiChrome;
   commandMenuOpenSignal: number;
   connection: ConnectionState;
   activeRuntime?: Runtime;
@@ -49,6 +52,7 @@ const NATIVE_COMMANDS: ComposerCommandOption[] = [
   { name: "model", title: "/model", description: "打开原生模型选择器", source: "gui" },
   { name: "scoped-models", title: "/scoped-models", description: "管理模型循环范围", source: "gui" },
   { name: "settings", title: "/settings", description: "打开 GUI 设置", source: "gui" },
+  { name: "goal", title: "/goal [text|clear]", description: "设置、查看或清除当前 Pi session goal", source: "gui" },
   { name: "resume", title: "/resume", description: "打开 session history", source: "gui" },
   { name: "new", title: "/new", description: "创建新的 Pi session", source: "gui" },
   { name: "name", title: "/name <name>", description: "设置当前会话名称", source: "gui", argRequired: true },
@@ -79,6 +83,7 @@ export function Composer({
   contextUsage,
   activeRuntimeQueue,
   slashCommands,
+  extensionUi,
   commandMenuOpenSignal,
   connection,
   activeRuntime,
@@ -241,6 +246,8 @@ export function Composer({
         submit(streamingBehavior);
       }}
     >
+      <ExtensionUiWidgetStack chrome={extensionUi} placement="aboveEditor" />
+
       {queuedPromptItems.length > 0 ? (
         <div className="composer-queued-prompt-notice" aria-live="polite" aria-label="等待处理的 follow up 和 steer up">
           {queuedPromptItems.map((item) => (
@@ -385,6 +392,8 @@ export function Composer({
           <ContextIndicator usage={contextUsage} activeRuntime={activeRuntime} />
         </div>
       </div>
+
+      <ExtensionUiWidgetStack chrome={extensionUi} placement="belowEditor" />
     </form>
   );
 }

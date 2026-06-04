@@ -54,6 +54,7 @@ export function App() {
     notice,
     subagentRuns,
     subagentDetails,
+    extensionUiByRuntime,
   } = state;
 
   useEffect(() => {
@@ -196,6 +197,7 @@ export function App() {
     () => Object.values(subagentRuns).filter((run) => run.parentRuntimeId === activeRuntime?.id),
     [activeRuntime?.id, subagentRuns],
   );
+  const activeRuntimeExtensionUi = activeRuntime ? extensionUiByRuntime[activeRuntime.id] : undefined;
   const selectedSubagentRun = subagentDrawer ? subagentRuns[subagentDrawer.runId] : undefined;
   const selectedSubagentChildRunId = selectedSubagentRun ? subagentDrawer?.childRunId ?? selectedSubagentRun.runs[0]?.id : undefined;
   const selectedSubagentDetail = selectedSubagentRun && selectedSubagentChildRunId ? subagentDetails[subagentDetailKey(selectedSubagentRun.id, selectedSubagentChildRunId)] : undefined;
@@ -351,6 +353,7 @@ export function App() {
               activeRuntimeIsBusy={activeRuntimeIsBusy}
               hasMoreBefore={activeRuntime ? hasMoreBeforeByRuntime[activeRuntime.id] !== false && conversationMessages.length > 0 : false}
               subagentRuns={activeRuntimeSubagentRuns}
+              extensionUi={activeRuntimeExtensionUi}
               onLoadOlderMessages={activeRuntime ? loadOlderActiveConversationMessages : undefined}
               onOpenSubagentRun={openSubagentRun}
               onCopySubagentOutput={copySubagentOutput}
@@ -371,6 +374,7 @@ export function App() {
               contextUsage={activeRuntimeContextUsage}
               activeRuntimeQueue={activeRuntimeQueue}
               slashCommands={activeRuntimeCommands}
+              extensionUi={activeRuntimeExtensionUi}
               commandMenuOpenSignal={commandMenuOpenSignal}
               connection={connection}
               activeRuntime={activeRuntime}
