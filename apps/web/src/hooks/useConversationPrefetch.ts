@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import type { Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
 import type { ConnectionState, GuiSocketSend } from "../types";
 
+const ACTIVE_CONVERSATION_OPEN_LIMIT = 500;
 const SIDEBAR_CONVERSATION_PREFETCH_LIMIT = 120;
 const SIDEBAR_CONVERSATION_PREFETCH_MAX = 80;
 
@@ -43,7 +44,7 @@ export function useConversationPrefetch({
     if (connection !== "open" || !activeRuntime) return;
     if (openedRuntimeIdsRef.current.has(activeRuntime.id)) return;
     openedRuntimeIdsRef.current.add(activeRuntime.id);
-    if (!send({ type: "conversation.open", runtimeId: activeRuntime.id, limit: 120 }, { notifyOnDisconnected: false })) {
+    if (!send({ type: "conversation.open", runtimeId: activeRuntime.id, limit: ACTIVE_CONVERSATION_OPEN_LIMIT }, { notifyOnDisconnected: false })) {
       openedRuntimeIdsRef.current.delete(activeRuntime.id);
     }
   }, [connection, activeRuntime?.id, send]);

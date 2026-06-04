@@ -18,7 +18,7 @@ import { isRecord } from "@pi-gui/shared";
 import { upsertById } from "../domain/collections";
 import { isTransportConnectionError } from "../domain/connection";
 import { indexConversationSummaries } from "../domain/conversationSummary";
-import { applyConversationDelta, upsertConversationMessage } from "../domain/conversationState";
+import { applyConversationDelta, mergeConversationSnapshot, upsertConversationMessage } from "../domain/conversationState";
 import { subagentDetailKey } from "../domain/subagents";
 
 export type AppState = {
@@ -187,7 +187,7 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
     case "conversation.snapshot":
       return {
         ...state,
-        messagesByRuntime: { ...state.messagesByRuntime, [event.runtimeId]: event.messages },
+        messagesByRuntime: { ...state.messagesByRuntime, [event.runtimeId]: mergeConversationSnapshot(state.messagesByRuntime[event.runtimeId] ?? [], event.messages) },
         busyByRuntime: { ...state.busyByRuntime, [event.runtimeId]: event.busy },
         contextUsageByRuntime: event.contextUsage
           ? { ...state.contextUsageByRuntime, [event.runtimeId]: event.contextUsage }

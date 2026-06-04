@@ -10,6 +10,27 @@ import { toolStatusLabel, type ToolStatus } from "./conversation/toolStatus.js";
 type Broadcast = (event: ServerEvent) => void;
 export type RuntimeProvider = () => Runtime | undefined;
 
+function mergeConversationMessages(persistedMessages: ConversationMessage[], cachedMessages: ConversationMessage[], limit: number): ConversationMessage[] {
+  const boundedLimit = Math.max(1, Math.min(limit, 500));
+  const ids: string[] = [];
+  const messagesById = new Map<string, ConversationMessage>();
+
+  for (const message of persistedMessages) {
+    if (!messagesById.has(message.id)) ids.push(message.id);
+    messagesById.set(message.id, message);
+  }
+
+  for (const message of cachedMessages) {
+    if (!messagesById.has(message.id)) ids.push(message.id);
+    messagesById.set(message.id, message);
+  }
+
+  return ids.flatMap((id) => {
+    const message = messagesById.get(id);
+    return message ? [message] : [];
+  }).slice(-boundedLimit);
+}
+
 export class ConversationProjection {
   private currentAssistantMessageId?: string;
   private currentUserMessageId?: string;
@@ -25,12 +46,16 @@ export class ConversationProjection {
   snapshot(limit = 100): ServerEvent | undefined {
     const runtime = this.getRuntime();
     if (!runtime) return undefined;
-    const cachedMessages = this.cache.ordered(limit);
+    const messages = mergeConversationMessages(
+      this.db.listConversationMessages(runtime.id, limit),
+      this.cache.ordered(limit),
+      limit,
+    );
     return {
       type: "conversation.snapshot",
       runtimeId: runtime.id,
       projectId: runtime.projectId,
-      messages: cachedMessages.length > 0 ? cachedMessages : this.db.listConversationMessages(runtime.id, limit),
+      messages,
       contextUsage: this.db.getConversationContext(runtime.id),
       busy: this.db.getConversationBusy(runtime.id),
     };

@@ -65,6 +65,28 @@ test("ConversationProjection turns streaming assistant deltas into snapshot mess
   db.close();
 });
 
+test("ConversationProjection snapshots merge persisted history with live cached output", () => {
+  const { db, runtime, projection } = createHarness();
+  db.upsertConversationMessage({
+    id: "user-1",
+    runtimeId: runtime.id,
+    projectId: runtime.projectId,
+    role: "user",
+    text: "此前的交互内容",
+    timestamp: 100,
+    updatedAt: 100,
+  });
+
+  projection.handlePiPayload({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "很长输出的实时片段" } });
+
+  const snapshot = projection.snapshot();
+
+  assert.equal(snapshot?.type, "conversation.snapshot");
+  assert.deepEqual(snapshot?.messages.map((message) => message.text), ["此前的交互内容", "很长输出的实时片段"]);
+  assert.deepEqual(db.listConversationMessages(runtime.id).map((message) => message.text), ["此前的交互内容"]);
+  db.close();
+});
+
 test("RuntimeSupervisor exposes live projection summaries before messages are persisted", () => {
   const { db, runtime, projection } = createHarness();
   const supervisor = new RuntimeSupervisor(db, () => undefined);
@@ -101,7 +123,7 @@ test("RuntimeSupervisor keeps persisted titles when live projections only contai
 
   assert.equal(summary?.title, "原始用户问题");
   assert.equal(summary?.detail, "实时回复片段");
-  assert.equal(summary?.messageCount, 1);
+  assert.equal(summary?.messageCount, 2);
   db.close();
 });
 
