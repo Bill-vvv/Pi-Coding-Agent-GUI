@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
 import type { ConversationMessage } from "../types";
 import { messageRoleLabel } from "../domain/conversation";
 import { buildConversationDisplayBlocks, type ConversationDisplayBlock, type ConversationDisplayMode } from "../domain/conversationDisplay";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { ThinkingStatus } from "./ThinkingAnimation";
 
 type ChatViewProps = {
   lastError?: string;
@@ -15,18 +16,31 @@ type ChatViewProps = {
 };
 
 export function ChatView({ lastError, activeRuntime, conversationSummary, messages, activeRuntimeIsBusy, displayMode = "normal" }: ChatViewProps) {
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const blocks = buildConversationDisplayBlocks(messages, displayMode);
+  const shouldAutoFollowRef = useRef(true);
+  const blocks = buildConversationDisplayBlocks(messages, displayMode, { activeRuntimeIsBusy });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    shouldAutoFollowRef.current = true;
+  }, [activeRuntime?.id]);
+
+  useLayoutEffect(() => {
+    if (!shouldAutoFollowRef.current) return;
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, activeRuntimeIsBusy]);
+
+  function handleConversationScroll() {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    shouldAutoFollowRef.current = isNearBottom(surface);
+  }
 
   return (
     <>
       {lastError ? <div className="error-banner floating-error">{lastError}</div> : null}
 
-      <div className="conversation-surface">
+      <div className="conversation-surface" ref={surfaceRef} onScroll={handleConversationScroll}>
         {activeRuntime ? (
           <div className="conversation-header">
             <strong title={conversationSummary?.title}>{conversationSummary?.title ?? `对话 ${activeRuntime.id.slice(0, 8)}`}</strong>
@@ -40,11 +54,11 @@ export function ChatView({ lastError, activeRuntime, conversationSummary, messag
           <div className="message-list">
             {blocks.map((block) => renderBlock(block))}
             {activeRuntimeIsBusy && !blocks.some((block) => block.isStreaming) ? (
-              <article className="chat-message assistant streaming">
-                <MarkdownMessage text="Pi 正在思考…" />
+              <article className="chat-message assistant streaming thinking-placeholder">
+                <ThinkingStatus variant="coreloop" />
               </article>
             ) : null}
-            <div ref={bottomRef} />
+            <div className="conversation-bottom-sentinel" ref={bottomRef} />
           </div>
         ) : null}
       </div>
@@ -82,51 +96,88 @@ function ToolGroupBlock({ block }: { block: Extract<ConversationDisplayBlock, { 
 
   return (
     <article className={`chat-message tool-group ${model.status}${block.isStreaming ? " streaming" : ""}`} key={block.id}>
-      <details className={`tool-group-details ${model.status}`}>
+      <details className={`tool-group-details ${model.status}`} open={model.status === "running"}>
         <summary>
-          <span className="tool-group-title">{model.title}</span>
-          <span className="tool-group-status">{model.statusLabel}</span>
+          {model.status === "running" ? (
+            <ThinkingStatus className="tool-group-processing-animation" variant="coreloop" size={38} />
+          ) : model.title ? (
+            <span className="tool-group-title">{model.title}</span>
+          ) : null}
           <span className="tool-group-summary">{model.summary}</span>
         </summary>
-        <div className="tool-group-detail">
-          {model.thinking.length > 0 ? (
-            <section className="process-thinking-section">
-              <div className="tool-message-detail-title">思考过程</div>
-              <div className="process-thinking-content">
-                <MarkdownMessage text={formatThinkingText(model.thinking)} />
-              </div>
-            </section>
-          ) : null}
-
-          {model.tools.length > 0 ? (
-            <section className="process-tools-section">
-              <div className="tool-message-detail-title">工具明细</div>
-              <ol className="tool-group-items">
-                {model.tools.map((tool, index) => (
-                  <li key={`${tool.name}-${index}`}>
-                    <details className={`tool-group-item-details ${tool.status}`}>
-                      <summary>
-                        <span className="tool-group-item-index">{index + 1}</span>
-                        <span className="tool-group-item-name">{tool.name}</span>
-                        <span className="tool-group-item-status">{tool.statusLabel}</span>
-                        <span className="tool-group-item-summary">{tool.summary}</span>
-                      </summary>
-                      <div className="tool-group-item-detail">
-                        {tool.detail ? <pre>{tool.detail}</pre> : <p>暂无可展开内容</p>}
-                      </div>
-                    </details>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          ) : null}
-        </div>
+        {model.status === "running" ? <CurrentProcessDetail block={block} /> : <FullProcessDetail block={block} />}
       </details>
     </article>
+  );
+}
+
+function CurrentProcessDetail({ block }: { block: Extract<ConversationDisplayBlock, { type: "tool_group" }> }) {
+  const current = block.model.current;
+
+  return (
+    <div className="tool-group-detail compact">
+      {current ? (
+        <section className={`process-current-section ${current.kind} ${current.status}`}>
+          <div className="process-current-header">
+            <span className="process-current-title">{current.title}</span>
+            <span className="process-current-status">{current.statusLabel}</span>
+          </div>
+          <div className="process-current-content">
+            {current.kind === "thinking" ? <MarkdownMessage text={current.content} /> : <pre>{current.content}</pre>}
+          </div>
+        </section>
+      ) : (
+        <p className="process-current-empty">等待下一步动作…</p>
+      )}
+    </div>
+  );
+}
+
+function FullProcessDetail({ block }: { block: Extract<ConversationDisplayBlock, { type: "tool_group" }> }) {
+  const { model } = block;
+
+  return (
+    <div className="tool-group-detail">
+      {model.thinking.length > 0 ? (
+        <section className="process-thinking-section">
+          <div className="tool-message-detail-title">思考过程</div>
+          <div className="process-thinking-content">
+            <MarkdownMessage text={formatThinkingText(model.thinking)} />
+          </div>
+        </section>
+      ) : null}
+
+      {model.tools.length > 0 ? (
+        <section className="process-tools-section">
+          <div className="tool-message-detail-title">工具明细</div>
+          <ol className="tool-group-items">
+            {model.tools.map((tool, index) => (
+              <li key={`${tool.name}-${index}`}>
+                <details className={`tool-group-item-details ${tool.status}`}>
+                  <summary>
+                    <span className="tool-group-item-index">{index + 1}</span>
+                    <span className="tool-group-item-name">{tool.name}</span>
+                    <span className="tool-group-item-status">{tool.statusLabel}</span>
+                    <span className="tool-group-item-summary">{tool.summary}</span>
+                  </summary>
+                  <div className="tool-group-item-detail">
+                    {tool.detail ? <pre>{tool.detail}</pre> : <p>暂无可展开内容</p>}
+                  </div>
+                </details>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+    </div>
   );
 }
 
 function formatThinkingText(thinking: Extract<ConversationDisplayBlock, { type: "tool_group" }>["model"]["thinking"]): string {
   if (thinking.length === 1) return thinking[0]?.text ?? "";
   return thinking.map((item, index) => `#### 第 ${index + 1} 段${item.isStreaming ? "（进行中）" : ""}\n\n${item.text}`).join("\n\n---\n\n");
+}
+
+function isNearBottom(element: HTMLElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight < 96;
 }

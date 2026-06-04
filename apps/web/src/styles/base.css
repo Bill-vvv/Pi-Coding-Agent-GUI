@@ -11,12 +11,16 @@
   --panel-float-gap: 12px;
   --chat-header-top-offset: var(--panel-float-gap);
   --composer-bottom-offset: var(--panel-float-gap);
+  --edge-fade-height: clamp(4.75rem, 12vh, 5rem);
+  --composer-reserved-space: clamp(7.25rem, 18vh, 9rem);
 
   --text-root: 15px;
   --text-caption: 0.74rem;
   --text-meta: 0.82rem;
   --text-control: 0.9rem;
   --text-body: 1rem;
+  --chat-text-body: var(--text-body);
+  --chat-line-body: 1.75;
   --line-control: 1.35;
   --line-body: 1.75;
 
@@ -57,20 +61,46 @@
   --color-warning-text: #e6c981;
   --color-accent-primary: #d9a94d;
   --color-overlay: rgb(18 18 17 / 72%);
+  --background-noise-opacity: 0.075;
+  --background-noise-size: 128px;
 
   --radius-control: 10px;
   --radius-panel: 16px;
   --radius-composer: 24px;
   --radius-pill: 999px;
 
-  --shadow-sidebar: 0 20px 70px rgb(0 0 0 / 18%), inset 0 1px 0 rgb(255 255 255 / 4%);
-  --shadow-composer: 0 18px 60px rgb(0 0 0 / 28%), inset 0 1px 0 rgb(255 255 255 / 5%);
-  --shadow-popover: 0 24px 80px rgb(0 0 0 / 42%), inset 0 1px 0 rgb(255 255 255 / 6%);
+  --shadow-sidebar: none;
+  --shadow-composer: none;
+  --shadow-popover: none;
 
   font-family: var(--font-ui);
   background: var(--color-bg-app);
   color: var(--color-text-primary);
 }
+
+html[data-ui-font-size="small"] { --text-root: 14px; }
+html[data-ui-font-size="medium"] { --text-root: 15px; }
+html[data-ui-font-size="large"] { --text-root: 16px; }
+
+html[data-chat-font-size="small"] {
+  --chat-text-body: 0.94rem;
+  --chat-line-body: 1.68;
+}
+
+html[data-chat-font-size="medium"] {
+  --chat-text-body: var(--text-body);
+  --chat-line-body: 1.75;
+}
+
+html[data-chat-font-size="large"] {
+  --chat-text-body: 1.08rem;
+  --chat-line-body: 1.82;
+}
+
+html[data-accent-color="amber"] { --color-accent-primary: #d9a94d; }
+html[data-accent-color="blue"] { --color-accent-primary: #7aa7ff; }
+html[data-accent-color="green"] { --color-accent-primary: #76c893; }
+html[data-accent-color="rose"] { --color-accent-primary: #e58aa8; }
 
 * { box-sizing: border-box; }
 

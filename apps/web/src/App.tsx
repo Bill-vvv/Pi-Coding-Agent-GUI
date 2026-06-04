@@ -1,43 +1,57 @@
-import type { FormEvent } from "react";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { AppSettings, ModelSummary, ResponseMode, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
-import { isRecord } from "@pi-gui/shared";
+import { useEffect, useMemo, useReducer, useState } from "react";
+import type { ServerEvent } from "@pi-gui/shared";
 import { ChatView } from "./components/ChatView";
 import { Composer } from "./components/Composer";
+import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
+import { ModelDebugPage } from "./components/ModelDebugPage";
 import { PathPickerModal } from "./components/PathPickerModal";
+import { SessionHistoryModal } from "./components/SessionHistoryModal";
+import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
+import { ThinkingAnimationLab } from "./components/ThinkingAnimationLab";
 import { mergeConversationSummaries } from "./domain/conversationSummary";
-import { modelKey, selectedModelKeyFor, THINKING_LEVELS } from "./domain/models";
+import { modelKey, modelSummaryFromKey, THINKING_LEVELS } from "./domain/models";
+import { useComposerCommands } from "./hooks/useComposerCommands";
+import { useConversationPrefetch } from "./hooks/useConversationPrefetch";
+import { useExtensionUiRequests } from "./hooks/useExtensionUiRequests";
 import { useGuiSocket } from "./hooks/useGuiSocket";
 import { useModelCatalog } from "./hooks/useModelCatalog";
-import { usePathPicker } from "./hooks/usePathPicker";
+import { useModelRuntimeSettings } from "./hooks/useModelRuntimeSettings";
+import { usePathPickerFlow } from "./hooks/usePathPickerFlow";
+import { useProjectRuntimeActions } from "./hooks/useProjectRuntimeActions";
+import { useSessionRestoreActions } from "./hooks/useSessionRestoreActions";
+import { useUiPreferences } from "./hooks/useUiPreferences";
 import { appReducer, initialAppState } from "./state/appReducer";
-import type { PendingProjectStart, PendingPrompt } from "./types";
 
 export function App() {
-  const openedRuntimeIdsRef = useRef<Set<string>>(new Set());
-  const pendingPromptRef = useRef<PendingPrompt | undefined>(undefined);
-  const pendingProjectStartRef = useRef<PendingProjectStart | undefined>(undefined);
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const models = useModelCatalog();
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const [prompt, setPrompt] = useState("");
-  const pathPicker = usePathPicker();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [commandMenuOpenSignal, setCommandMenuOpenSignal] = useState(0);
+  const { uiPreferences, setUiPreferences } = useUiPreferences();
+  const debugRoute = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return window.location.pathname === "/debug/models" || params.has("modelDebug");
+  }, []);
+  const showThinkingPreview = useMemo(() => new URLSearchParams(window.location.search).has("thinkingPreview"), []);
 
   const {
     projects,
     runtimes,
+    sessions,
     messagesByRuntime,
     persistedConversationSummaries,
     contextUsageByRuntime,
     busyByRuntime,
+    commandsByRuntime,
     selectedProjectId,
     selectedRuntimeId,
     projectCwd,
     settings,
-    selectedModelKey,
-    selectedThinkingLevel,
-    responseMode,
+    selectedModelKey: defaultModelKey,
+    selectedThinkingLevel: defaultThinkingLevel,
+    responseMode: defaultResponseMode,
     lastError,
     showArchived,
   } = state;
@@ -46,9 +60,7 @@ export function App() {
     onEvent: handleServerEvent,
     onError: (message) => dispatch({ type: "set.lastError", error: message }),
     onOpen: () => dispatch({ type: "set.lastError", error: undefined }),
-    onClose: () => openedRuntimeIdsRef.current.clear(),
   });
-
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? projects[0];
   const selectedProjectRuntimes = useMemo(
     () => runtimes.filter((runtime) => runtime.projectId === selectedProject?.id),
@@ -60,196 +72,133 @@ export function App() {
   );
   const selectedRuntime = selectedRuntimeId ? visibleProjectRuntimes.find((runtime) => runtime.id === selectedRuntimeId) : undefined;
   const activeRuntime = selectedRuntime ?? visibleProjectRuntimes.find((runtime) => runtime.status === "running") ?? visibleProjectRuntimes[0];
-  const selectedModel = models.find((model) => modelKey(model) === selectedModelKey) ?? models[0];
+  const activeRuntimeModelKey = activeRuntime ? activeRuntime.model : defaultModelKey;
+  const selectedModel = activeRuntimeModelKey
+    ? models.find((model) => modelKey(model) === activeRuntimeModelKey) ?? modelSummaryFromKey(activeRuntimeModelKey)
+    : undefined;
+  const selectedThinkingLevel = activeRuntime ? activeRuntime.thinkingLevel ?? "medium" : defaultThinkingLevel;
+  const responseMode = activeRuntime ? activeRuntime.responseMode ?? "normal" : defaultResponseMode;
   const availableThinkingLevels = selectedModel?.supportedThinkingLevels ?? THINKING_LEVELS.map((level) => level.value);
   const conversationMessages = activeRuntime ? messagesByRuntime[activeRuntime.id] ?? [] : [];
+  const lastAssistantText = [...conversationMessages].reverse().find((message) => message.role === "assistant" && message.text.trim())?.text;
   const conversationSummaries = useMemo(
     () => mergeConversationSummaries(persistedConversationSummaries, messagesByRuntime),
     [persistedConversationSummaries, messagesByRuntime],
   );
   const activeRuntimeConversationSummary = activeRuntime ? conversationSummaries[activeRuntime.id] : undefined;
   const activeRuntimeContextUsage = activeRuntime ? contextUsageByRuntime[activeRuntime.id] : undefined;
+  const activeRuntimeCommands = activeRuntime ? commandsByRuntime[activeRuntime.id] ?? [] : [];
   const activeRuntimeIsBusy = activeRuntime ? busyByRuntime[activeRuntime.id] ?? false : false;
+  const { markRuntimeConversationStale } = useConversationPrefetch({
+    connection,
+    activeRuntime,
+    runtimes,
+    busyByRuntime,
+    conversationSummaries,
+    showArchived,
+    send,
+  });
+  const { defaultRuntimeModelKey, chooseModel, chooseThinkingLevel, chooseResponseMode } = useModelRuntimeSettings({
+    models,
+    settings,
+    defaultModelKey,
+    defaultThinkingLevel,
+    defaultResponseMode,
+    activeRuntime,
+    responseMode,
+    dispatch,
+    send,
+  });
+  const {
+    sessionHistoryProjectId,
+    pendingHistoryRestoreId,
+    openSessionHistory,
+    closeSessionHistory,
+    resumeSessionFromHistory,
+    handleSessionRestoreServerEvent,
+  } = useSessionRestoreActions({
+    defaultRuntimeModelKey,
+    defaultThinkingLevel,
+    defaultResponseMode,
+    send,
+  });
+  const sessionHistoryProject = sessionHistoryProjectId ? projects.find((project) => project.id === sessionHistoryProjectId) : undefined;
+  const {
+    prompt,
+    setPrompt,
+    createProjectOnly,
+    startRuntimeForSidebarProject,
+    archiveRuntime,
+    submitPrompt,
+    handleProjectRuntimeServerEvent,
+  } = useProjectRuntimeActions({
+    projects,
+    runtimes,
+    messagesByRuntime,
+    conversationSummaries,
+    activeRuntime,
+    activeRuntimeIsBusy,
+    selectedProject,
+    projectCwd,
+    defaultRuntimeModelKey,
+    defaultThinkingLevel,
+    defaultResponseMode,
+    dispatch,
+    send,
+    markRuntimeConversationStale,
+  });
+  const { pathPicker, openPathPicker, choosePickerCwd, title: pathPickerTitle, confirmLabel: pathPickerConfirmLabel } = usePathPickerFlow({
+    projectCwd,
+    createProjectOnly,
+    dispatch,
+  });
+  const { extensionUiDialog, handleExtensionUiServerEvent, sendExtensionUiResponse } = useExtensionUiRequests({
+    dispatch,
+    send,
+    setPrompt,
+  });
+  const { executeCommandInput } = useComposerCommands({
+    activeRuntime,
+    activeRuntimeIsBusy,
+    selectedProject,
+    lastAssistantText,
+    dispatch,
+    send,
+    setPrompt,
+    setModelPickerOpen,
+    setSettingsOpen,
+    openSessionHistory,
+    startRuntimeForSidebarProject,
+  });
 
   useEffect(() => {
-    if (connection !== "open" || !activeRuntime) return;
-    if (openedRuntimeIdsRef.current.has(activeRuntime.id)) return;
-    openedRuntimeIdsRef.current.add(activeRuntime.id);
-    send({ type: "conversation.open", runtimeId: activeRuntime.id, limit: 120 });
-  }, [connection, activeRuntime?.id, send]);
+    if (connection !== "open" || activeRuntime?.status !== "running") return;
+    send({ type: "runtime.commands.list", runtimeId: activeRuntime.id });
+  }, [activeRuntime?.id, activeRuntime?.status, connection, send]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandMenuOpenSignal((value) => value + 1);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  if (debugRoute) return <ModelDebugPage />;
+  if (showThinkingPreview) return <ThinkingAnimationLab />;
 
   function handleServerEvent(event: ServerEvent) {
-    dispatch({ type: "server.event", event, fallbackModelKey: selectedModelKeyFor(models[0]) });
+    dispatch({ type: "server.event", event });
     handleServerSideEffects(event);
   }
 
   function handleServerSideEffects(event: ServerEvent) {
-    if (event.type === "project.created" && pendingProjectStartRef.current) {
-      const pending = pendingProjectStartRef.current;
-      pendingProjectStartRef.current = undefined;
-      dispatch({ type: "set.projectCwd", cwd: "" });
-      startRuntimeForProject(event.project.id, pending.message);
-      return;
-    }
-
-    if (event.type !== "command.result" || !event.success) return;
-
-    if ((event.command === "runtime.start" || event.command === "runtime.resume") && isRecord(event.data) && isRecord(event.data.runtime) && typeof event.data.runtime.id === "string") {
-      const runtime = event.data.runtime as { id: string; projectId?: unknown };
-      const runtimeId = runtime.id;
-      const projectId = typeof runtime.projectId === "string" ? runtime.projectId : undefined;
-      openedRuntimeIdsRef.current.delete(runtimeId);
-      if (projectId && pendingPromptRef.current?.projectId === projectId) {
-        const pending = pendingPromptRef.current;
-        pendingPromptRef.current = undefined;
-        send({ type: "runtime.prompt", runtimeId, message: pending.message });
-      }
-    }
-  }
-
-  function createProjectFromCwd(cwd: string, message?: string) {
-    const existingProject = projects.find((project) => project.cwd === cwd);
-    if (existingProject) {
-      dispatch({ type: "select.project", projectId: existingProject.id });
-      startRuntimeForProject(existingProject.id, message);
-      return;
-    }
-    pendingProjectStartRef.current = { cwd, message };
-    send({ type: "project.create", cwd });
-  }
-
-  async function openPathPicker() {
-    await pathPicker.openPicker(projectCwd || undefined);
-  }
-
-  function choosePickerCwd() {
-    dispatch({ type: "set.projectCwd", cwd: pathPicker.cwd });
-    pathPicker.closePicker();
-  }
-
-  function startRuntimeForProject(projectId: string, message?: string) {
-    if (message?.trim()) pendingPromptRef.current = { projectId, message };
-    send({
-      type: "runtime.start",
-      projectId,
-      model: selectedModel ? modelKey(selectedModel) : undefined,
-      thinkingLevel: selectedThinkingLevel,
-      responseMode,
-    });
-  }
-
-  function startRuntimeForSidebarProject(projectId: string) {
-    dispatch({ type: "select.project", projectId });
-    startRuntimeForProject(projectId);
-  }
-
-  function resumeRuntime(runtimeId: string, message?: string) {
-    const runtime = runtimes.find((item) => item.id === runtimeId);
-    if (!runtime) return;
-    if (message?.trim()) pendingPromptRef.current = { projectId: runtime.projectId, message };
-    dispatch({ type: "select.project", projectId: runtime.projectId });
-    send({
-      type: "runtime.resume",
-      runtimeId,
-      model: selectedModel ? modelKey(selectedModel) : undefined,
-      thinkingLevel: selectedThinkingLevel,
-      responseMode,
-    });
-  }
-
-  function startRuntime() {
-    if (projectCwd.trim()) {
-      createProjectFromCwd(projectCwd.trim());
-      return;
-    }
-    if (selectedProject) {
-      startRuntimeForProject(selectedProject.id);
-      return;
-    }
-    void openPathPicker();
-  }
-
-  function stopRuntime() {
-    if (!activeRuntime) return;
-    send({ type: "runtime.stop", runtimeId: activeRuntime.id });
-  }
-
-  function archiveRuntime(runtimeId: string) {
-    send({ type: "runtime.archive", runtimeId });
-  }
-
-  function updateModelSettings(next: Partial<AppSettings>) {
-    const merged: AppSettings = {
-      ...settings,
-      defaultModel: selectedModel ? modelKey(selectedModel) : settings.defaultModel,
-      defaultThinkingLevel: selectedThinkingLevel,
-      responseMode,
-      ...next,
-    };
-    send({ type: "settings.update", settings: merged });
-  }
-
-  function configureActiveRuntime(next: { model?: ModelSummary; thinkingLevel?: ThinkingLevel; responseMode?: ResponseMode }) {
-    if (!activeRuntime || activeRuntime.status !== "running") return;
-    send({
-      type: "runtime.configure",
-      runtimeId: activeRuntime.id,
-      modelProvider: next.model?.provider,
-      modelId: next.model?.id,
-      thinkingLevel: next.thinkingLevel,
-      responseMode: next.responseMode,
-    });
-  }
-
-  function chooseModel(nextModel: ModelSummary) {
-    const nextResponseMode = nextModel.supportsFast ? responseMode : "normal";
-    dispatch({ type: "select.model", modelKey: modelKey(nextModel), responseMode: nextResponseMode });
-    updateModelSettings({ defaultModel: modelKey(nextModel), responseMode: nextResponseMode });
-    configureActiveRuntime({ model: nextModel, responseMode: nextResponseMode });
-  }
-
-  function chooseThinkingLevel(nextLevel: ThinkingLevel) {
-    dispatch({ type: "select.thinkingLevel", thinkingLevel: nextLevel });
-    updateModelSettings({ defaultThinkingLevel: nextLevel });
-    configureActiveRuntime({ thinkingLevel: nextLevel });
-  }
-
-  function chooseResponseMode(nextMode: ResponseMode) {
-    dispatch({ type: "select.responseMode", responseMode: nextMode });
-    updateModelSettings({ responseMode: nextMode });
-    configureActiveRuntime({ responseMode: nextMode });
-  }
-
-  function submitPrompt(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const message = prompt.trim();
-    if (!message) return;
-
-    if (activeRuntime?.status === "running") {
-      send({ type: "runtime.prompt", runtimeId: activeRuntime.id, message, streamingBehavior: activeRuntimeIsBusy ? "followUp" : undefined });
-      setPrompt("");
-      return;
-    }
-
-    if (projectCwd.trim()) {
-      createProjectFromCwd(projectCwd.trim(), message);
-      setPrompt("");
-      return;
-    }
-
-    if (activeRuntime && (activeRuntime.status === "stopped" || activeRuntime.status === "crashed") && activeRuntime.sessionId) {
-      resumeRuntime(activeRuntime.id, message);
-      setPrompt("");
-      return;
-    }
-
-    if (selectedProject) {
-      startRuntimeForProject(selectedProject.id, message);
-      setPrompt("");
-      return;
-    }
-
-    dispatch({ type: "set.lastError", error: "请先在输入框下方选择项目文件夹" });
+    handleProjectRuntimeServerEvent(event);
+    handleSessionRestoreServerEvent(event);
+    handleExtensionUiServerEvent(event);
   }
 
   return (
@@ -258,16 +207,20 @@ export function App() {
         connection={connection}
         projects={projects}
         runtimes={runtimes}
+        sessions={sessions}
         selectedProject={selectedProject}
         activeRuntime={activeRuntime}
         showArchived={showArchived}
         activeRuntimeIsBusy={activeRuntimeIsBusy}
-        onStartRuntime={startRuntime}
+        busyByRuntime={busyByRuntime}
+        messagesByRuntime={messagesByRuntime}
+        onAddProject={() => void openPathPicker("addProject")}
         onStartRuntimeForProject={startRuntimeForSidebarProject}
-        onResumeRuntime={resumeRuntime}
+        onOpenSessionHistory={openSessionHistory}
         onSelectProject={(projectId) => dispatch({ type: "select.project", projectId })}
         onSelectRuntime={(projectId, runtimeId) => dispatch({ type: "select.runtime", projectId, runtimeId })}
         onArchiveRuntime={archiveRuntime}
+        onOpenSettings={() => setSettingsOpen(true)}
         conversationSummaries={conversationSummaries}
       />
 
@@ -291,12 +244,15 @@ export function App() {
           responseMode={responseMode}
           modelPickerOpen={modelPickerOpen}
           contextUsage={activeRuntimeContextUsage}
+          slashCommands={activeRuntimeCommands}
+          commandMenuOpenSignal={commandMenuOpenSignal}
           connection={connection}
           activeRuntime={activeRuntime}
           activeRuntimeIsBusy={activeRuntimeIsBusy}
           onSubmit={submitPrompt}
           onPromptChange={setPrompt}
-          onOpenPathPicker={openPathPicker}
+          onExecuteCommandInput={executeCommandInput}
+          onOpenPathPicker={() => void openPathPicker("composer")}
           onAbortRuntime={(runtimeId) => send({ type: "runtime.abort", runtimeId })}
           onToggleModelPicker={() => setModelPickerOpen((value) => !value)}
           onCloseModelPicker={() => setModelPickerOpen(false)}
@@ -305,6 +261,32 @@ export function App() {
           onChooseResponseMode={chooseResponseMode}
         />
       </section>
+
+
+      <ExtensionUiDialog
+        request={extensionUiDialog?.request}
+        onRespond={sendExtensionUiResponse}
+        onCancel={() => sendExtensionUiResponse({ cancelled: true })}
+      />
+
+      <SettingsModal
+        open={settingsOpen}
+        preferences={uiPreferences}
+        onClose={() => setSettingsOpen(false)}
+        onChangePreferences={setUiPreferences}
+      />
+
+      <SessionHistoryModal
+        open={Boolean(sessionHistoryProject)}
+        project={sessionHistoryProject}
+        sessions={sessions}
+        runtimes={runtimes}
+        connection={connection}
+        pendingRestoreId={pendingHistoryRestoreId}
+        onClose={closeSessionHistory}
+        onResumeSession={resumeSessionFromHistory}
+        onSelectRuntime={(projectId: string, runtimeId: string) => dispatch({ type: "select.runtime", projectId, runtimeId })}
+      />
 
       <PathPickerModal
         open={pathPicker.open}
@@ -316,6 +298,8 @@ export function App() {
         onClose={pathPicker.closePicker}
         onLoadDirectory={pathPicker.loadDirectory}
         onChooseCurrentCwd={choosePickerCwd}
+        title={pathPickerTitle}
+        confirmLabel={pathPickerConfirmLabel}
       />
     </main>
   );

@@ -14,17 +14,27 @@ export type ToolDisplayModel = {
   summary: string;
   detailLabel: string;
   detail: string;
+  updatedAt: number;
 };
 
 export type ThinkingDisplayModel = {
   id: string;
   text: string;
   isStreaming: boolean;
+  updatedAt: number;
 };
 
 export type ToolNameCount = {
   name: string;
   count: number;
+};
+
+export type ProcessCurrentDisplayModel = {
+  kind: "thinking" | "tool";
+  title: string;
+  status: ToolDisplayStatus;
+  statusLabel: string;
+  content: string;
 };
 
 export type ToolGroupDisplayModel = {
@@ -40,6 +50,7 @@ export type ToolGroupDisplayModel = {
   toolNameCounts: ToolNameCount[];
   thinking: ThinkingDisplayModel[];
   tools: ToolDisplayModel[];
+  current?: ProcessCurrentDisplayModel;
 };
 
 export type ConversationDisplayBlock =
@@ -59,31 +70,40 @@ export type ConversationDisplayBlock =
       isStreaming: boolean;
     };
 
+export type ConversationDisplayOptions = {
+  activeRuntimeIsBusy?: boolean;
+};
+
 const TOOL_STATUS_SUFFIX_RE = /\s+(运行中|完成|失败)$/;
 const TOOL_SUMMARY_MAX_CHARS = 150;
 const TOOL_SUMMARY_LINE_MAX_CHARS = 110;
 const TOOL_GROUP_SUMMARY_MAX_ITEMS = 4;
+const PROCESS_PREVIEW_MAX_CHARS = 1600;
+const PROCESS_PREVIEW_MAX_LINES = 18;
 
 export function buildConversationDisplayBlocks(
   messages: ConversationMessage[],
   mode: ConversationDisplayMode = "normal",
+  options: ConversationDisplayOptions = {},
 ): ConversationDisplayBlock[] {
   const blocks: ConversationDisplayBlock[] = [];
   let segmentBlocks: ConversationDisplayBlock[] = [];
   let segmentTools: ConversationMessage[] = [];
   let segmentThinkingMessages: ConversationMessage[] = [];
+  let segmentUserMessageId = "root";
   let processInsertIndex: number | undefined;
 
-  function flushSegment() {
+  function flushSegment(forceRunning = false) {
     if (segmentTools.length > 0 || segmentThinkingMessages.length > 0) {
       const insertAt = processInsertIndex ?? segmentBlocks.length;
-      segmentBlocks.splice(insertAt, 0, toolGroupBlock(segmentTools, segmentThinkingMessages));
+      segmentBlocks.splice(insertAt, 0, toolGroupBlock(segmentTools, segmentThinkingMessages, segmentUserMessageId, forceRunning));
     }
 
     blocks.push(...segmentBlocks);
     segmentBlocks = [];
     segmentTools = [];
     segmentThinkingMessages = [];
+    segmentUserMessageId = "root";
     processInsertIndex = undefined;
   }
 
@@ -101,6 +121,7 @@ export function buildConversationDisplayBlocks(
 
     if (displayMessage.role === "user") {
       flushSegment();
+      segmentUserMessageId = displayMessage.id;
       segmentBlocks.push(messageBlock(displayMessage, "markdown"));
       continue;
     }
@@ -114,7 +135,7 @@ export function buildConversationDisplayBlocks(
     segmentBlocks.push(messageBlock(displayMessage, displayKind));
   }
 
-  flushSegment();
+  flushSegment(options.activeRuntimeIsBusy === true);
   return blocks;
 }
 
@@ -157,10 +178,11 @@ export function toolDisplayModel(message: ConversationMessage): ToolDisplayModel
     summary,
     detailLabel: status === "failed" ? "错误详情" : status === "running" ? "工具详情" : "工具输出",
     detail: message.text.trim(),
+    updatedAt: message.updatedAt ?? message.timestamp ?? 0,
   };
 }
 
-export function toolGroupDisplayModel(tools: ConversationMessage[], thinkingMessages: ConversationMessage[] = []): ToolGroupDisplayModel {
+export function toolGroupDisplayModel(tools: ConversationMessage[], thinkingMessages: ConversationMessage[] = [], forceRunning = false): ToolGroupDisplayModel {
   const displayTools = tools.map(toolDisplayModel);
   const thinking = thinkingMessages.flatMap(thinkingDisplayModel);
   const thinkingRunningCount = thinking.filter((item) => item.isStreaming).length;
@@ -168,14 +190,15 @@ export function toolGroupDisplayModel(tools: ConversationMessage[], thinkingMess
   const failedCount = displayTools.filter((tool) => tool.status === "failed").length;
   const runningCount = toolRunningCount + thinkingRunningCount;
   const completedCount = displayTools.length - toolRunningCount - failedCount;
-  const status: ToolDisplayStatus = runningCount > 0 ? "running" : failedCount > 0 ? "failed" : "completed";
+  const isProcessing = forceRunning || runningCount > 0;
+  const status: ToolDisplayStatus = isProcessing ? "running" : failedCount > 0 ? "failed" : "completed";
   const toolNameCounts = countToolNames(displayTools);
 
   return {
-    title: "Pi 处理过程",
+    title: "",
     status,
     statusLabel: toolGroupStatusLabel(status, failedCount, displayTools.length),
-    summary: toolGroupSummary(toolNameCounts, { thinkingCount: thinking.length, runningCount, failedCount, completedCount }),
+    summary: toolGroupSummary(toolNameCounts, { thinkingCount: thinking.length, runningCount, failedCount, completedCount, isProcessing }),
     thinkingCount: thinking.length,
     toolCount: displayTools.length,
     runningCount,
@@ -184,6 +207,7 @@ export function toolGroupDisplayModel(tools: ConversationMessage[], thinkingMess
     toolNameCounts,
     thinking,
     tools: displayTools,
+    current: currentProcessDisplayModel(displayTools, thinking, isProcessing),
   };
 }
 
@@ -197,13 +221,11 @@ function messageBlock(message: ConversationMessage, displayKind: RenderableConve
   };
 }
 
-function toolGroupBlock(tools: ConversationMessage[], thinkingMessages: ConversationMessage[]): ConversationDisplayBlock {
-  const model = toolGroupDisplayModel(tools, thinkingMessages);
-  const firstId = thinkingMessages[0]?.id ?? tools[0]?.id ?? "empty";
-  const lastId = tools[tools.length - 1]?.id ?? thinkingMessages[thinkingMessages.length - 1]?.id ?? firstId;
+function toolGroupBlock(tools: ConversationMessage[], thinkingMessages: ConversationMessage[], groupId: string, forceRunning: boolean): ConversationDisplayBlock {
+  const model = toolGroupDisplayModel(tools, thinkingMessages, forceRunning);
   return {
     type: "tool_group",
-    id: `process-group-${firstId}-${lastId}-${tools.length}-${thinkingMessages.length}`,
+    id: `process-group-${groupId}`,
     tools,
     thinkingMessages,
     model,
@@ -214,7 +236,58 @@ function toolGroupBlock(tools: ConversationMessage[], thinkingMessages: Conversa
 function thinkingDisplayModel(message: ConversationMessage): ThinkingDisplayModel[] {
   const text = message.thinking?.trim();
   if (!text) return [];
-  return [{ id: `${message.id}-thinking`, text, isStreaming: message.isStreaming ?? false }];
+  return [{ id: `${message.id}-thinking`, text, isStreaming: message.isStreaming ?? false, updatedAt: message.updatedAt ?? message.timestamp ?? 0 }];
+}
+
+function currentProcessDisplayModel(tools: ToolDisplayModel[], thinking: ThinkingDisplayModel[], isProcessing: boolean): ProcessCurrentDisplayModel | undefined {
+  if (!isProcessing) return undefined;
+
+  const runningThinking = thinking.filter((item) => item.isStreaming).map((item) => ({ kind: "thinking" as const, updatedAt: item.updatedAt, item }));
+  const runningTools = tools.filter((tool) => tool.status === "running").map((tool) => ({ kind: "tool" as const, updatedAt: tool.updatedAt, item: tool }));
+  const runningCurrent = latestByUpdatedAt([...runningThinking, ...runningTools]);
+  if (runningCurrent) return processCurrentFromCandidate(runningCurrent);
+
+  const latestThinking = thinking.map((item) => ({ kind: "thinking" as const, updatedAt: item.updatedAt, item }));
+  const latestTools = tools.map((tool) => ({ kind: "tool" as const, updatedAt: tool.updatedAt, item: tool }));
+  const latest = latestByUpdatedAt([...latestThinking, ...latestTools]);
+  return latest ? processCurrentFromCandidate(latest) : undefined;
+}
+
+function latestByUpdatedAt<T extends { updatedAt: number }>(items: T[]): T | undefined {
+  return items.reduce<T | undefined>((latest, item) => (!latest || item.updatedAt >= latest.updatedAt ? item : latest), undefined);
+}
+
+function processCurrentFromCandidate(
+  candidate: { kind: "thinking"; item: ThinkingDisplayModel } | { kind: "tool"; item: ToolDisplayModel },
+): ProcessCurrentDisplayModel {
+  if (candidate.kind === "thinking") {
+    const preview = truncateProcessPreview(candidate.item.text);
+    return {
+      kind: "thinking",
+      title: "正在思考",
+      status: candidate.item.isStreaming ? "running" : "completed",
+      statusLabel: candidate.item.isStreaming ? "进行中" : "最近思考",
+      content: preview || "等待思考内容…",
+    };
+  }
+
+  const preview = truncateProcessPreview(candidate.item.detail || candidate.item.summary);
+  return {
+    kind: "tool",
+    title: `正在执行 ${candidate.item.name}`,
+    status: candidate.item.status,
+    statusLabel: candidate.item.statusLabel,
+    content: preview || "等待工具输出…",
+  };
+}
+
+function truncateProcessPreview(text: string): string {
+  const normalized = text.trim();
+  if (!normalized) return "";
+
+  const lines = normalized.split(/\r?\n/);
+  const lineLimited = lines.length > PROCESS_PREVIEW_MAX_LINES ? lines.slice(-PROCESS_PREVIEW_MAX_LINES).join("\n") : normalized;
+  return lineLimited.length > PROCESS_PREVIEW_MAX_CHARS ? lineLimited.slice(lineLimited.length - PROCESS_PREVIEW_MAX_CHARS) : lineLimited;
 }
 
 function toolName(message: ConversationMessage): string {
@@ -237,7 +310,7 @@ function toolStatusLabel(status: ToolDisplayStatus): string {
 }
 
 function toolGroupStatusLabel(status: ToolDisplayStatus, failedCount: number, toolCount: number): string {
-  if (status === "running") return "运行中";
+  if (status === "running") return "处理中";
   if (status === "failed") return failedCount === toolCount ? "失败" : "部分失败";
   return "已完成";
 }
@@ -250,7 +323,7 @@ function countToolNames(tools: ToolDisplayModel[]): ToolNameCount[] {
 
 function toolGroupSummary(
   toolNameCounts: ToolNameCount[],
-  counts: { thinkingCount: number; runningCount: number; failedCount: number; completedCount: number },
+  counts: { thinkingCount: number; runningCount: number; failedCount: number; completedCount: number; isProcessing: boolean },
 ): string {
   const parts: string[] = [];
   if (counts.thinkingCount > 0) parts.push(`思考 ${counts.thinkingCount} 段`);
@@ -262,7 +335,7 @@ function toolGroupSummary(
   if (counts.failedCount > 0) parts.push(`${counts.failedCount} 次失败`);
   if (counts.failedCount > 0 && counts.completedCount > 0) parts.push(`${counts.completedCount} 次完成`);
 
-  return parts.join(" · ") || "等待处理过程";
+  return parts.join(" · ");
 }
 
 function formatToolNameCounts(toolNameCounts: ToolNameCount[]): string {

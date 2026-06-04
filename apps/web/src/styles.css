@@ -4,7 +4,12 @@
 @import "./styles/sidebar.css";
 @import "./styles/chat.css";
 @import "./styles/composer.css";
+@import "./styles/command-palette.css";
 @import "./styles/model-picker.css";
+@import "./styles/model-debug.css";
+@import "./styles/settings.css";
+@import "./styles/session-history.css";
+@import "./styles/thinking-animation.css";
 @import "./styles/feedback.css";
 @import "./styles/path-picker.css";
 @import "./styles/responsive.css";

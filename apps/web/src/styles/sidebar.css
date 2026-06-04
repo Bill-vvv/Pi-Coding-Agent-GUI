@@ -18,7 +18,14 @@
   text-transform: uppercase;
 }
 
-.brand.no-logo { justify-content: flex-end; }
+.sidebar-brand {
+  min-height: 42px;
+  padding: 0.05rem 0.35rem 0.1rem 0.1rem;
+}
+
+.sidebar-brand.no-logo {
+  justify-content: flex-end;
+}
 
 .sidebar-section { padding: 0; }
 .project-list-section { gap: 0.45rem; }
@@ -57,9 +64,21 @@
 }
 
 .global-new-chat {
+  width: 30px;
+  height: 30px;
   border-color: transparent;
   background: transparent;
   color: var(--color-text-primary);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.sidebar-brand:hover .global-new-chat,
+.left-sidebar.empty-projects:hover .global-new-chat,
+.global-new-chat:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .global-new-chat:hover:not(:disabled) {
@@ -68,8 +87,10 @@
 }
 
 .project-session-group {
+  position: relative;
   border-radius: 12px;
   padding: 0.15rem 0;
+  transition: opacity 140ms ease, filter 140ms ease;
 }
 
 .project-session-group.selected,
@@ -80,7 +101,33 @@
   background: transparent;
 }
 
-.project-session-group.dragging { opacity: 0.58; }
+.project-session-group.dragging,
+.session-row.dragging {
+  opacity: 0.48;
+  filter: saturate(0.82);
+}
+
+.project-session-group.drop-before::before,
+.project-session-group.drop-after::after,
+.session-row.drop-before::before,
+.session-row.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0.25rem;
+  right: 0.4rem;
+  z-index: 2;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, rgb(217 169 77 / 0%), rgb(217 169 77 / 92%) 16%, rgb(217 169 77 / 92%) 84%, rgb(217 169 77 / 0%));
+  box-shadow: 0 0 14px rgb(217 169 77 / 34%);
+  pointer-events: none;
+}
+
+.project-session-group.drop-before::before,
+.session-row.drop-before::before { top: -0.18rem; }
+
+.project-session-group.drop-after::after,
+.session-row.drop-after::after { bottom: -0.18rem; }
 
 .project-session-group.collapsed { padding-bottom: 0.15rem; }
 
@@ -156,11 +203,13 @@
 }
 
 .session-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.2rem;
   border-radius: var(--radius-control);
   min-height: 34px;
+  transition: opacity 140ms ease, filter 140ms ease;
 }
 
 .session-item {
@@ -210,6 +259,10 @@
   flex: none;
 }
 
+.session-item[draggable="true"] { cursor: grab; }
+
+.session-item[draggable="true"]:active { cursor: grabbing; }
+
 .session-item:hover:not(:disabled) { background: transparent; }
 
 .session-row:hover .session-item,
@@ -217,8 +270,7 @@
 
 .session-row.selected .session-title { font-weight: var(--weight-semibold); }
 
-.session-archive,
-.session-resume {
+.session-archive {
   width: 28px;
   min-width: 28px;
   height: 28px;
@@ -229,18 +281,91 @@
   opacity: 0;
 }
 
-.session-resume { margin-right: 0; }
-
 .session-row:hover .session-archive,
-.session-row:hover .session-resume,
-.session-archive:focus-visible,
-.session-resume:focus-visible { opacity: 1; }
+.session-archive:focus-visible { opacity: 1; }
 
-.session-archive:hover:not(:disabled),
-.session-resume:hover:not(:disabled) {
+.session-archive:hover:not(:disabled) {
   border-color: var(--color-border-subtle);
   background: var(--color-hover-subtle);
   color: var(--color-text-primary);
+}
+
+.session-history-link {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  width: calc(100% - 0.35rem);
+  margin: 0.08rem 0.25rem 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--line-control);
+  opacity: 0;
+  padding: 0.36rem 0.58rem;
+  pointer-events: none;
+  text-align: left;
+  transition: opacity 120ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.project-session-group:hover .session-history-link,
+.project-session-group:focus-within .session-history-link,
+.session-history-link:focus-visible {
+  display: flex;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.left-sidebar.dragging-project .session-history-link,
+.left-sidebar.dragging-session .session-history-link {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.session-history-link::before {
+  content: "";
+  flex: 1;
+  height: 1px;
+  min-width: 0.9rem;
+  order: 1;
+  background: linear-gradient(to right, rgb(181 170 156 / 10%), rgb(181 170 156 / 0%));
+}
+
+.session-history-link span {
+  flex: none;
+  order: 0;
+}
+
+.session-history-link small {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  order: 2;
+  min-width: 1.35rem;
+  height: 1.15rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  line-height: 1;
+  padding: 0 0.32rem;
+}
+
+.session-history-link:hover:not(:disabled) {
+  border-color: var(--color-border-subtle);
+  background: rgb(181 170 156 / 4.5%);
+  color: var(--color-text-primary);
+}
+
+.session-history-link:hover:not(:disabled)::before {
+  background: linear-gradient(to right, rgb(181 170 156 / 18%), rgb(181 170 156 / 0%));
+}
+
+.session-history-link:hover:not(:disabled) small {
+  color: var(--color-text-soft);
 }
 
 .status-dot {
@@ -251,7 +376,38 @@
   background: #6d6861;
 }
 
+.status-dot.task-idle { background: #6d6861; }
+.status-dot.task-complete { background: #80c99a; }
+.status-dot.task-busy {
+  background: #d9a94d;
+  opacity: var(--session-dot-breathe-opacity, 1);
+  transform: scale(var(--session-dot-breathe-scale, 1));
+}
+
 .status-dot.running { background: #80c99a; }
 .status-dot.starting { background: #d9a94d; }
 .status-dot.crashed { background: #df7a65; }
 .status-dot.stopped { background: var(--color-text-muted); }
+
+.sidebar-drag-preview {
+  overflow: hidden;
+  border: 1px solid rgb(181 170 156 / 18%);
+  border-radius: 14px;
+  background: rgb(35 32 28 / 94%);
+  box-shadow: 0 18px 45px rgb(0 0 0 / 32%), 0 0 0 1px rgb(255 255 255 / 4%) inset;
+  color: var(--color-text-primary);
+}
+
+.sidebar-drag-preview .project-new-chat,
+.sidebar-drag-preview .session-archive,
+.sidebar-drag-preview .session-resume {
+  opacity: 0 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-session-group,
+  .session-row,
+  .session-row {
+    transition: none;
+  }
+}

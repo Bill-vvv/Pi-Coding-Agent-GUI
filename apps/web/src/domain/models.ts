@@ -28,6 +28,23 @@ export function selectedModelKeyFor(model: ModelSummary | undefined): string | u
   return model ? modelKey(model) : undefined;
 }
 
+export function modelSummaryFromKey(key: string): ModelSummary | undefined {
+  const separatorIndex = key.indexOf("/");
+  if (separatorIndex <= 0 || separatorIndex === key.length - 1) return undefined;
+  const provider = key.slice(0, separatorIndex);
+  const id = key.slice(separatorIndex + 1);
+  const supportsFast = provider === "openai" || provider === "openai-codex";
+  return {
+    provider,
+    id,
+    label: key,
+    supportsThinking: true,
+    supportedThinkingLevels: DEFAULT_REASONING_LEVELS,
+    supportsImages: false,
+    supportsFast,
+  };
+}
+
 export function compactModelLabel(model: ModelSummary): string {
   return model.id
     .replace(/^gpt-/, "GPT-")

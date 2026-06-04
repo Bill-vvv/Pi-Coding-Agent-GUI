@@ -5,10 +5,22 @@
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 52% 0%, rgb(90 75 62 / 14%), transparent 34rem),
-    var(--color-bg-app);
+  position: relative;
+  isolation: isolate;
+  background: var(--color-bg-app);
   padding: var(--app-shell-padding);
+}
+
+.app-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='144' height='144' viewBox='0 0 144 144'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='144' height='144' filter='url(%23noise)' opacity='0.72'/%3E%3C/svg%3E");
+  background-size: var(--background-noise-size) var(--background-noise-size);
+  opacity: var(--background-noise-opacity);
+  mix-blend-mode: soft-light;
 }
 
 .left-sidebar {
@@ -22,10 +34,11 @@
   min-height: 0;
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-panel);
-  box-shadow: var(--shadow-sidebar);
+  box-shadow: none;
 }
 
 .main-chat {
+  z-index: 1;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   height: calc(100dvh - var(--app-shell-padding) - var(--app-shell-padding));

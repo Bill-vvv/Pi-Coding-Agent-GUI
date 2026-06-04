@@ -14,7 +14,7 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-panel);
   background: #242424;
-  box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+  box-shadow: none;
   padding: 1rem;
 }
 
