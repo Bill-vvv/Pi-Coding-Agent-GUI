@@ -2,6 +2,7 @@ import type { PiRpcCommand, Runtime, RuntimeConversationSummary, RuntimeQueue, S
 import { AppDatabase } from "../db.js";
 import type { ManagedRuntime, RuntimeConfigOptions } from "./managedRuntime.js";
 import { applyManagedRuntimeConfiguration, requestRuntimeSlashCommands, runtimeWithConfiguredOptions, sendAbort, sendExtensionUiResponse, sendNativeRpcCommand, sendPrompt, type RuntimeConfigureOptions } from "./runtimeCommandSender.js";
+import { reusableNewRuntimeForProject, unhandledNewRuntimeIdsToArchive } from "./newConversationPolicy.js";
 import { buildRuntimeConversationSummaries, runtimeConversationPageBefore, runtimeConversationSnapshot } from "./runtimeConversationViews.js";
 import { RuntimeEventSink } from "./runtimeEventSink.js";
 import { RuntimeLauncher } from "./runtimeLauncher.js";
@@ -76,6 +77,13 @@ export class RuntimeSupervisor {
   }
 
   startRuntime(projectId: string, options: RuntimeConfigOptions = {}): Runtime {
+    const runtimes = this.listRuntimes();
+    const hasMessages = (runtimeId: string) => this.db.listConversationMessages(runtimeId, 1).length > 0;
+    const reusable = reusableNewRuntimeForProject(runtimes, projectId, hasMessages);
+    for (const runtimeId of unhandledNewRuntimeIdsToArchive(runtimes, reusable?.id, hasMessages)) {
+      this.archiveRuntime(runtimeId);
+    }
+    if (reusable) return this.runtimes.get(reusable.id)?.runtime ?? reusable;
     return this.launcher.createRuntime(projectId, options);
   }
 

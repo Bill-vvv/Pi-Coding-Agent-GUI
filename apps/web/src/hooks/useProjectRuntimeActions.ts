@@ -83,6 +83,7 @@ export function useProjectRuntimeActions({
       const runtimeId = runtime.id;
       const projectId = typeof runtime.projectId === "string" ? runtime.projectId : undefined;
       markRuntimeConversationStale(runtimeId);
+      if (projectId) dispatch({ type: "select.runtime", projectId, runtimeId });
       if (pendingPromptRef.current && event.requestId === pendingPromptRef.current.requestId && projectId === pendingPromptRef.current.projectId) {
         const pending = pendingPromptRef.current;
         pendingPromptRef.current = undefined;
