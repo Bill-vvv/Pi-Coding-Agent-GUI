@@ -431,10 +431,29 @@ function applyCommandResult(state: AppState, event: Extract<ServerEvent, { type:
   }
 
   if (event.command === "runtime.archive") {
-    return { ...state, selectedRuntimeId: undefined };
+    return applyRuntimeArchiveCommandResult(state, event);
   }
 
   return state;
+}
+
+function applyRuntimeArchiveCommandResult(state: AppState, event: Extract<ServerEvent, { type: "command.result" }>): AppState {
+  const runtime = isRecord(event.data) && isRecord(event.data.runtime) ? event.data.runtime : undefined;
+  const archivedRuntimeId = typeof runtime?.id === "string" ? runtime.id : undefined;
+  if (!archivedRuntimeId || state.selectedRuntimeId !== archivedRuntimeId) return state;
+
+  const archivedProjectId = typeof runtime?.projectId === "string" ? runtime.projectId : state.runtimes.find((item) => item.id === archivedRuntimeId)?.projectId;
+  const archivedAt = typeof runtime?.archivedAt === "number" ? runtime.archivedAt : Date.now();
+  const nextRuntimes = state.runtimes.map((item) => (item.id === archivedRuntimeId ? { ...item, archivedAt } : item));
+  const nextRuntimeMap = reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, nextRuntimes);
+  const selectedRuntimeId = nextRuntimes.find((item) => item.projectId === (archivedProjectId ?? state.selectedProjectId) && !item.archivedAt)?.id;
+
+  return {
+    ...state,
+    runtimes: nextRuntimes,
+    selectedRuntimeId,
+    selectedRuntimeIdByProject: selectedRuntimeId && archivedProjectId ? { ...nextRuntimeMap, [archivedProjectId]: selectedRuntimeId } : nextRuntimeMap,
+  };
 }
 
 function validRuntimeIdForProject(runtimes: Runtime[], projectId?: string, runtimeId?: string): string | undefined {
