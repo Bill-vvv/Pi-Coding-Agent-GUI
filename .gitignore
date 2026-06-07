@@ -10,10 +10,9 @@ __pycache__/
 .env
 .env.*
 .context-index-demo/
+/.pi/
+/.trellis/
 /AGENTS.md
 /plan.md
 
 # Local Trellis/Pi workflow records (do not publish)
-.trellis/tasks/
-.trellis/workspace/
-.trellis/worktrees/
