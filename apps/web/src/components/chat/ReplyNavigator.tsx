@@ -5,12 +5,10 @@ import {
   adjacentReplyAnchorIndex,
   assistantReplyAnchors,
   blockScrollOffset,
-  replyMarkerSlotLength,
   replyMarkerWindow,
   replyScrollOffset,
   type ConversationBlockLayoutMetrics,
   type ReplyAnchor,
-  type ReplyMarker,
   type ReplyNavigationDirection,
 } from "./replyNavigation";
 
@@ -36,17 +34,6 @@ type PointerDragState = {
 
 type RollAnimationMode = "navigate" | "sync";
 type DirectionalInputSource = "wheel" | "drag";
-
-type BoundaryMarker = {
-  kind: "boundary";
-  boundary: ReplyNavigationDirection;
-  key: string;
-  slotIndex: number;
-  length: ReplyMarker["length"];
-  title: string;
-};
-
-type RenderMarker = ({ kind: "reply" } & ReplyMarker) | BoundaryMarker;
 
 export const ReplyNavigator = memo(function ReplyNavigator({ blocks, layoutMetrics, surfaceRef, onNavigateToOffset }: ReplyNavigatorProps) {
   const anchors = useMemo(() => assistantReplyAnchors(blocks), [blocks]);
@@ -107,35 +94,8 @@ export const ReplyNavigator = memo(function ReplyNavigator({ blocks, layoutMetri
 
   const activeIndex = activeReplyAnchorIndex(anchors, metrics, viewport.scrollTop);
   const markers = replyMarkerWindow(anchors, activeIndex);
-  const surface = surfaceRef.current;
-  const hasContentAbove = viewport.scrollTop > CONTENT_BOUNDARY_TOLERANCE_PX;
-  const hasContentBelow = surface ? viewport.scrollTop + viewport.height < surface.scrollHeight - CONTENT_BOUNDARY_TOLERANCE_PX : false;
   const hasPrevious = activeIndex > 0;
   const hasNext = anchors.length > 0 && activeIndex < anchors.length - 1;
-  const renderMarkers = useMemo<RenderMarker[]>(() => {
-    const items: RenderMarker[] = markers.map((marker) => ({ ...marker, kind: "reply" }));
-    if (activeIndex >= 0 && activeIndex === 0 && hasContentAbove) {
-      items.push({
-        kind: "boundary",
-        boundary: "older",
-        key: "older-content-boundary",
-        slotIndex: REPLY_NAVIGATOR_CENTER_SLOT_INDEX - 1,
-        length: replyMarkerSlotLength(REPLY_NAVIGATOR_CENTER_SLOT_INDEX - 1),
-        title: "跳转到更早内容",
-      });
-    }
-    if (activeIndex >= 0 && activeIndex === anchors.length - 1 && hasContentBelow) {
-      items.push({
-        kind: "boundary",
-        boundary: "newer",
-        key: "newer-content-boundary",
-        slotIndex: REPLY_NAVIGATOR_CENTER_SLOT_INDEX + 1,
-        length: replyMarkerSlotLength(REPLY_NAVIGATOR_CENTER_SLOT_INDEX + 1),
-        title: "跳转到最新内容",
-      });
-    }
-    return items.sort((left, right) => left.slotIndex - right.slotIndex);
-  }, [activeIndex, anchors.length, hasContentAbove, hasContentBelow, markers]);
 
   const triggerRoll = useCallback((direction: ReplyNavigationDirection, magnitude = 1, mode: RollAnimationMode = "navigate") => {
     setRollDirection(direction);
@@ -381,36 +341,22 @@ export const ReplyNavigator = memo(function ReplyNavigator({ blocks, layoutMetri
         ▲
       </button>
       <div className="reply-navigator-markers" aria-label="附近 LLM 回复" onClick={handleMarkerRailClick}>
-        {renderMarkers.map((marker) =>
-          marker.kind === "boundary" ? (
-            <button
-              className={`reply-navigator-marker boundary ${marker.length}`}
-              type="button"
-              key={marker.key}
-              title={marker.title}
-              aria-label={marker.title}
-              style={{ gridRow: marker.slotIndex + 1 }}
-              onClick={() => jumpToBoundary(marker.boundary)}
-            >
-              <span />
-            </button>
-          ) : (
-            <button
-              className={`reply-navigator-marker ${marker.length}${marker.isActive ? " active" : ""}`}
-              type="button"
-              key={marker.anchor.messageId}
-              title={marker.anchor.summary ? `跳转到用户消息：${marker.anchor.summary}` : `跳转到第 ${marker.anchorIndex + 1} 个 LLM 回复的用户消息`}
-              aria-label={marker.anchor.summary ? `跳转到用户消息：${marker.anchor.summary}` : `跳转到第 ${marker.anchorIndex + 1} 个 LLM 回复的用户消息`}
-              aria-current={marker.isActive ? "location" : undefined}
-              data-anchor-index={marker.anchorIndex}
-              data-summary={marker.anchor.summary || undefined}
-              style={{ gridRow: marker.slotIndex + 1 }}
-              onClick={() => handleMarkerClick(marker.anchorIndex)}
-            >
-              <span />
-            </button>
-          ),
-        )}
+        {markers.map((marker) => (
+          <button
+            className={`reply-navigator-marker ${marker.length}${marker.isActive ? " active" : ""}`}
+            type="button"
+            key={marker.anchor.messageId}
+            title={marker.anchor.summary ? `跳转到用户消息：${marker.anchor.summary}` : `跳转到第 ${marker.anchorIndex + 1} 个 LLM 回复的用户消息`}
+            aria-label={marker.anchor.summary ? `跳转到用户消息：${marker.anchor.summary}` : `跳转到第 ${marker.anchorIndex + 1} 个 LLM 回复的用户消息`}
+            aria-current={marker.isActive ? "location" : undefined}
+            data-anchor-index={marker.anchorIndex}
+            data-summary={marker.anchor.summary || undefined}
+            style={{ gridRow: marker.slotIndex + 1 }}
+            onClick={() => handleMarkerClick(marker.anchorIndex)}
+          >
+            <span />
+          </button>
+        ))}
       </div>
       <button
         className="reply-navigator-triangle next"
@@ -503,8 +449,6 @@ const WHEEL_DAMPING_FACTOR = 0.9;
 const WHEEL_STEP_COOLDOWN_MS = 180;
 const DRAG_STEP_COOLDOWN_MS = 135;
 const DELTA_CARRY_MAX_RATIO = 0.65;
-const CONTENT_BOUNDARY_TOLERANCE_PX = 48;
-const REPLY_NAVIGATOR_CENTER_SLOT_INDEX = 4;
 const WHEEL_DELTA_LINE = 1;
 const WHEEL_DELTA_PAGE = 2;
 const MAX_ROLL_MAGNITUDE = 5;

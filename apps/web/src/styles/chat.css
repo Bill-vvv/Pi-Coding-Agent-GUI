@@ -294,19 +294,18 @@ body.reply-navigator-dragging * {
   border-radius: var(--radius-pill);
   background: currentColor;
   opacity: 0.82;
-  transition: width 150ms ease, opacity 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+  transition: opacity 150ms ease, background 150ms ease, box-shadow 150ms ease;
 }
 
-.reply-navigator-marker.tiny span { width: 0.86rem; }
-.reply-navigator-marker.short span { width: 1.32rem; }
-.reply-navigator-marker.medium span { width: 1.88rem; }
-.reply-navigator-marker.long span { width: 2.48rem; }
-.reply-navigator-marker.peak span { width: 3.08rem; }
+.reply-navigator-marker.tiny span { width: 0.76rem; }
+.reply-navigator-marker.short span { width: 1.18rem; }
+.reply-navigator-marker.medium span { width: 1.76rem; }
+.reply-navigator-marker.long span { width: 2.34rem; }
+.reply-navigator-marker.peak span { width: 3.48rem; }
 
 .reply-navigator-marker:hover span,
 .reply-navigator-marker:focus-visible span {
   opacity: 1;
-  transform: scaleX(1.08);
 }
 
 .reply-navigator-marker:focus-visible {
@@ -321,10 +320,6 @@ body.reply-navigator-dragging * {
 .reply-navigator-marker.active span {
   opacity: 1;
   box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent-primary) 42%, transparent);
-}
-
-.reply-navigator-marker.boundary {
-  color: color-mix(in srgb, var(--color-text-muted) 72%, transparent);
 }
 
 .reply-navigator.roll-steps-1 { --reply-navigator-roll-distance: 0.44rem; }
