@@ -10,15 +10,15 @@ function subagentRun(overrides: Partial<SubagentRun> = {}): SubagentRun {
     parentRuntimeId: "runtime-1",
     parentToolCallId: "subagent-1",
     parentToolMessageId: "tool-subagent-1",
-    agent: "trellis-check",
+    agent: "review-agent",
     mode: "single",
     status: "running",
     startedAt: 100,
     updatedAt: 200,
     runs: [
       {
-        id: "trellis-check-1",
-        agent: "trellis-check",
+        id: "review-agent-1",
+        agent: "review-agent",
         status: "running",
         startedAt: 110,
         thinkingTail: "checking the implementation",

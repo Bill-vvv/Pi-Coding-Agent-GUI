@@ -1,5 +1,4 @@
-.floating-feedback,
-.floating-error {
+.floating-feedback {
   position: absolute;
   left: 50%;
   top: calc(var(--chat-header-top-offset) + 2.65rem);

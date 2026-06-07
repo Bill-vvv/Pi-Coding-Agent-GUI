@@ -45,3 +45,13 @@ test("sidebar session fallback avoids generic saved-conversation label when only
   assert.equal(sidebarSessionTitle(runtime, undefined, undefined), "对话 abcdef12");
   assert.equal(sidebarSessionDetail(runtime, undefined, undefined), "Session abcdef12");
 });
+
+test("running blank runtime remains labeled as a new conversation after Pi assigns a session id", () => {
+  const runningBlankRuntime: Runtime = { ...runtime, status: "running" };
+  const emptyIndexedSession: GuiSession = { ...session, title: undefined };
+
+  assert.equal(sidebarSessionTitle(runningBlankRuntime, undefined, undefined), "新对话");
+  assert.equal(sidebarSessionDetail(runningBlankRuntime, undefined, undefined), undefined);
+  assert.equal(sidebarSessionTitle(runningBlankRuntime, undefined, emptyIndexedSession), "新对话");
+  assert.equal(sidebarSessionDetail(runningBlankRuntime, undefined, emptyIndexedSession), undefined);
+});

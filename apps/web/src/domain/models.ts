@@ -24,9 +24,6 @@ export function modelKey(model: ModelSummary): string {
   return `${model.provider}/${model.id}`;
 }
 
-export function selectedModelKeyFor(model: ModelSummary | undefined): string | undefined {
-  return model ? modelKey(model) : undefined;
-}
 
 export function modelSummaryFromKey(key: string): ModelSummary | undefined {
   const separatorIndex = key.indexOf("/");

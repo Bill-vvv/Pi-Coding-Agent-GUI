@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ServerEvent } from "@pi-gui/shared";
+import { createRequestId } from "../domain/requestId";
+import { authToken, piGuiRuntimeConfig } from "../domain/runtimeConfig";
 import type { ConnectionState, GuiSocketSend } from "../types";
 
 type UseGuiSocketOptions = {
@@ -44,7 +46,15 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
   useEffect(() => {
     let reconnectTimer: number | undefined;
     let connectionWarningTimer: number | undefined;
+    let reconnectAttempt = 0;
     let closedByEffect = false;
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimer !== undefined) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = undefined;
+      }
+    };
 
     const clearConnectionWarning = () => {
       if (connectionWarningTimer !== undefined) {
@@ -66,7 +76,16 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
       }, CONNECTION_WARNING_GRACE_MS);
     };
 
+    const scheduleReconnect = (immediate = false) => {
+      if (closedByEffect) return;
+      clearReconnectTimer();
+      const delay = immediate ? 0 : reconnectDelayMs(reconnectAttempt++);
+      reconnectTimer = window.setTimeout(connect, delay);
+    };
+
     const connect = () => {
+      clearReconnectTimer();
+      if (closedByEffect) return;
       setConnection("connecting");
       const ws = new WebSocket(wsUrl(lastGuiEventIdRef.current));
       wsRef.current = ws;
@@ -74,6 +93,7 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
 
       ws.addEventListener("open", () => {
         if (!isCurrentSocket()) return;
+        reconnectAttempt = 0;
         clearConnectionWarning();
         setConnection("open");
         onOpenRef.current?.();
@@ -99,7 +119,7 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
         onCloseRef.current?.();
         setConnection("closed");
         scheduleConnectionWarning();
-        reconnectTimer = window.setTimeout(connect, RECONNECT_DELAY_MS);
+        scheduleReconnect();
       });
 
       ws.addEventListener("error", () => {
@@ -108,11 +128,27 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
       });
     };
 
+    const fastReconnectIfNeeded = () => {
+      if (closedByEffect) return;
+      const readyState = wsRef.current?.readyState;
+      if (readyState === WebSocket.OPEN || readyState === WebSocket.CONNECTING) return;
+      reconnectAttempt = 0;
+      scheduleReconnect(true);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") fastReconnectIfNeeded();
+    };
+
+    window.addEventListener("online", fastReconnectIfNeeded);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     connect();
 
     return () => {
       closedByEffect = true;
-      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      window.removeEventListener("online", fastReconnectIfNeeded);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearReconnectTimer();
       clearConnectionWarning();
       wsRef.current?.close();
     };
@@ -123,19 +159,29 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
       if (options?.notifyOnDisconnected !== false) onErrorRef.current("WebSocket 未连接");
       return false;
     }
-    wsRef.current.send(JSON.stringify({ requestId: crypto.randomUUID(), ...command }));
+    wsRef.current.send(JSON.stringify({ ...command, requestId: command.requestId ?? createRequestId() }));
     return true;
   }, []);
 
   return { connection, send, connectionWarning };
 }
 
-const RECONNECT_DELAY_MS = 1500;
+const RECONNECT_BASE_DELAY_MS = 800;
+const RECONNECT_MAX_DELAY_MS = 10_000;
 const CONNECTION_WARNING_GRACE_MS = 3000;
 
-function wsUrl(sinceEventId = 0): string {
-  const baseUrl = import.meta.env.VITE_WS_URL || `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
-  if (sinceEventId <= 0) return baseUrl;
-  const separator = baseUrl.includes("?") ? "&" : "?";
-  return `${baseUrl}${separator}sinceEventId=${sinceEventId}`;
+function reconnectDelayMs(attempt: number): number {
+  const exponential = RECONNECT_BASE_DELAY_MS * 2 ** Math.min(attempt, 4);
+  const jitter = Math.floor(Math.random() * 350);
+  return Math.min(RECONNECT_MAX_DELAY_MS, exponential + jitter);
+}
+
+export function wsUrl(sinceEventId = 0): string {
+  const config = piGuiRuntimeConfig();
+  const baseUrl = config.wsUrl || `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
+  const url = new URL(baseUrl, window.location.href);
+  const token = authToken();
+  if (token) url.searchParams.set("token", token);
+  if (sinceEventId > 0) url.searchParams.set("sinceEventId", String(sinceEventId));
+  return url.toString();
 }

@@ -23,7 +23,7 @@
 }
 
 .pi-logo-stage {
-  --pi-logo-dot-x: 35.35px;
+  --pi-logo-dot-x: 33.35px;
   --pi-logo-dot-y: 6.9px;
   position: relative;
   display: block;
@@ -52,7 +52,7 @@
 .pi-logo-wordmark-body {
   fill: currentColor;
   transform-box: fill-box;
-  transform-origin: 82% 22%;
+  transform-origin: 79% 22%;
 }
 
 .pi-logo-core {
@@ -141,6 +141,7 @@
 }
 
 .pi-logo-full-overlay {
+  --pi-logo-full-duration: 3200ms;
   position: fixed;
   z-index: 20;
   display: block;
@@ -149,12 +150,14 @@
   color: var(--color-text-primary);
   pointer-events: none;
   contain: layout paint style;
+  isolation: isolate;
   overflow: visible;
 }
 
 .pi-logo-full-svg {
   position: absolute;
   inset: 0;
+  z-index: 1;
   display: block;
   width: 160px;
   height: 160px;
@@ -163,60 +166,35 @@
 }
 
 .pi-logo-full-body,
-.pi-logo-reveal-body,
-.pi-logo-gravity-slice {
+.pi-logo-reveal-body {
   transform-box: fill-box;
-  transform-origin: 82% 22%;
+  transform-origin: 79% 22%;
 }
 
 .pi-logo-full-body {
-  animation: pi-logo-full-body-swallow 2800ms linear both;
-}
-
-.pi-logo-gravity-slices {
-  transform-box: view-box;
-  transform-origin: 42.65px 8.3px;
-  animation: pi-logo-gravity-field 2800ms linear both;
-}
-
-.pi-logo-gravity-slice {
-  opacity: 0;
-  transform-box: view-box;
-  transform-origin: 42.65px 8.3px;
-}
-
-.pi-logo-slice-i {
-  animation: pi-logo-gravity-slice-i 2800ms linear both;
-}
-
-.pi-logo-slice-p-bowl {
-  animation: pi-logo-gravity-slice-p-bowl 2800ms linear both;
-}
-
-.pi-logo-slice-p-base {
-  animation: pi-logo-gravity-slice-p-base 2800ms linear both;
-}
-
-.pi-logo-slice-p-left {
-  animation: pi-logo-gravity-slice-p-left 2800ms linear both;
+  animation: pi-logo-full-body-swallow var(--pi-logo-full-duration) linear both;
 }
 
 .pi-logo-reveal-body {
   opacity: 0;
-  clip-path: circle(0 at 42.65px 8.3px);
-  animation: pi-logo-full-body-reveal 2800ms linear both;
+  clip-path: circle(0 at 40.25px 8.3px);
+  animation: pi-logo-full-body-reveal var(--pi-logo-full-duration) linear both;
+}
+
+.pi-logo-core-full {
+  z-index: 3;
 }
 
 .pi-logo-core-full .pi-logo-core-shape {
-  animation: pi-logo-full-core 2800ms linear both;
+  animation: pi-logo-full-core var(--pi-logo-full-duration) linear both;
 }
 
 .pi-logo-core-full .pi-logo-core-shape::before {
-  animation: pi-logo-full-lobe-a 2800ms linear both;
+  animation: pi-logo-full-lobe-a var(--pi-logo-full-duration) linear both;
 }
 
 .pi-logo-core-full .pi-logo-core-shape::after {
-  animation: pi-logo-full-lobe-b 2800ms linear both;
+  animation: pi-logo-full-lobe-b var(--pi-logo-full-duration) linear both;
 }
 
 @keyframes pi-logo-core-idle {
@@ -438,417 +416,285 @@
   }
 }
 
-@keyframes pi-logo-gravity-field {
-  0%, 18% {
-    transform: translate(0, 0) scale(1) rotate(0deg);
-  }
-
-  34% {
-    transform: translate(-0.35px, 0.22px) scaleX(1.012) scaleY(0.992) rotate(0.6deg);
-  }
-
-  50% {
-    transform: translate(1.05px, -0.72px) scaleX(0.965) scaleY(1.018) rotate(-2.4deg);
-  }
-
-  60% {
-    transform: translate(3.4px, -2.7px) scaleX(0.84) scaleY(0.96) rotate(-8deg);
-  }
-
-  66% {
-    transform: translate(6.8px, -5.8px) scaleX(0.32) scaleY(0.54) rotate(-17deg);
-  }
-
-  69%, 100% {
-    transform: translate(7.8px, -6.6px) scale(0.08) rotate(-24deg);
-  }
-}
-
-
 @keyframes pi-logo-full-body-swallow {
-  0%, 20% {
+  0%, 46% {
     opacity: 1;
-    transform: translate(0, 0) scale(1);
-  }
-
-  30% {
-    opacity: 0.96;
-    transform: translate(-1.1px, 0.55px) scale(1.018) skewX(-1.2deg);
-  }
-
-  44% {
-    opacity: 0.74;
-    transform: translate(0.85px, -0.55px) scaleX(0.985) scaleY(1.012) skewY(-3.5deg);
+    transform: translate(0, 0) scale(1) rotate(0deg);
+    animation-timing-function: cubic-bezier(0.04, 0.9, 0.14, 1);
   }
 
   56% {
-    opacity: 0.34;
-    transform: translate(3.4px, -2.25px) scaleX(0.9) scaleY(1.04) skewY(-10deg) rotate(-1.5deg);
-  }
-
-  62% {
-    opacity: 0.12;
-    transform: translate(6.2px, -5.1px) scaleX(0.52) scaleY(0.82) skewY(-22deg) rotate(-8deg);
-  }
-
-  66%, 100% {
-    opacity: 0;
-    transform: translate(8.8px, -7.3px) scale(0.1) rotate(-18deg);
-  }
-}
-
-
-@keyframes pi-logo-gravity-slice-i {
-  0%, 18% {
-    opacity: 0;
-    transform: translate(0, 0) scale(1);
-  }
-
-  22% {
-    opacity: 0.96;
-    transform: translate(0.18px, -0.16px) scale(1.012);
-  }
-
-  40% {
-    opacity: 0.92;
-    transform: translate(1.7px, -1.7px) scaleX(0.86) scaleY(1.08) skewY(-9deg) rotate(-1.5deg);
-  }
-
-  56% {
-    opacity: 0.45;
-    transform: translate(3.9px, -4.2px) scaleX(0.42) scaleY(0.8) skewY(-22deg) rotate(-6deg);
-  }
-
-  63% {
-    opacity: 0.22;
-    transform: translate(5.4px, -6.3px) scaleX(0.2) scaleY(0.48) skewY(-30deg) rotate(-14deg);
-  }
-
-  66%, 100% {
-    opacity: 0;
-    transform: translate(5.8px, -7.0px) scale(0.06) rotate(-20deg);
-  }
-}
-
-
-@keyframes pi-logo-gravity-slice-p-bowl {
-  0%, 24% {
-    opacity: 0;
-    transform: translate(0, 0) scale(1);
-  }
-
-  28% {
-    opacity: 0.95;
-    transform: translate(0.1px, -0.06px) scale(1.008);
-  }
-
-  46% {
-    opacity: 0.86;
-    transform: translate(2.8px, -1.7px) scaleX(0.88) scaleY(1.04) skewY(-7deg) rotate(-1deg);
-  }
-
-  58% {
-    opacity: 0.4;
-    transform: translate(7.2px, -4.8px) scaleX(0.34) scaleY(0.62) skewX(-16deg) rotate(-9deg);
-  }
-
-  64% {
-    opacity: 0.16;
-    transform: translate(9.2px, -6.4px) scaleX(0.16) scaleY(0.36) skewX(-26deg) rotate(-16deg);
-  }
-
-  67%, 100% {
-    opacity: 0;
-    transform: translate(10.2px, -7.1px) scale(0.06) rotate(-22deg);
-  }
-}
-
-
-@keyframes pi-logo-gravity-slice-p-base {
-  0%, 28% {
-    opacity: 0;
-    transform: translate(0, 0) scale(1);
-  }
-
-  32% {
-    opacity: 0.9;
-    transform: translate(-0.08px, 0.08px) scale(1.006);
-  }
-
-  50% {
-    opacity: 0.72;
-    transform: translate(2.9px, -2.25px) scaleX(0.9) scaleY(0.86) skewX(-8deg) rotate(-1.5deg);
-  }
-
-  60% {
-    opacity: 0.3;
-    transform: translate(8.2px, -6.2px) scaleX(0.28) scaleY(0.46) skewX(-22deg) rotate(-12deg);
-  }
-
-  65% {
-    opacity: 0.12;
-    transform: translate(10.2px, -7.8px) scaleX(0.12) scaleY(0.28) skewX(-30deg) rotate(-18deg);
-  }
-
-  68%, 100% {
-    opacity: 0;
-    transform: translate(11.2px, -8.5px) scale(0.05) rotate(-24deg);
-  }
-}
-
-
-@keyframes pi-logo-gravity-slice-p-left {
-  0%, 32% {
-    opacity: 0;
-    transform: translate(0, 0) scale(1);
-  }
-
-  36% {
-    opacity: 0.9;
-    transform: translate(-0.22px, 0.12px) scale(1.006);
-  }
-
-  53% {
-    opacity: 0.68;
-    transform: translate(2.6px, -2.0px) scaleX(0.9) scaleY(0.96) skewX(-6deg) rotate(-1deg);
-  }
-
-  62% {
-    opacity: 0.25;
-    transform: translate(9.6px, -7.0px) scaleX(0.2) scaleY(0.52) skewX(-24deg) rotate(-15deg);
+    opacity: 1;
+    transform: translate(-0.42px, 0.24px) scaleX(1.045) scaleY(0.98) skewX(-1.4deg) rotate(0.6deg);
   }
 
   66% {
-    opacity: 0.1;
-    transform: translate(11.4px, -8.2px) scaleX(0.1) scaleY(0.32) skewX(-32deg) rotate(-20deg);
+    opacity: 0.98;
+    transform: translate(0.45px, -0.35px) scaleX(1.14) scaleY(0.88) skewX(-4.5deg) rotate(-2deg);
   }
 
-  69%, 100% {
+  76% {
+    opacity: 0.82;
+    transform: translate(1.8px, -1.45px) scaleX(0.88) scaleY(1.14) skewY(-14deg) rotate(-4deg);
+    animation-timing-function: cubic-bezier(0.94, 0, 0.76, 0.16);
+  }
+
+  86% {
+    opacity: 0.32;
+    transform: translate(4.2px, -3.6px) scaleX(0.46) scaleY(0.72) skewY(-34deg) rotate(-13deg);
+  }
+
+  94%, 100% {
     opacity: 0;
-    transform: translate(12.4px, -8.9px) scale(0.045) rotate(-26deg);
+    transform: translate(5.4px, -4.6px) scale(0.07) rotate(-24deg);
   }
 }
-
 
 @keyframes pi-logo-full-body-reveal {
-  0%, 68% {
+  0%, 84% {
     opacity: 0;
-    clip-path: circle(0 at 42.65px 8.3px);
-    transform: translate(3.5px, -2.8px) scale(0.9);
-  }
-
-  72% {
-    opacity: 1;
-    clip-path: circle(4px at 42.65px 8.3px);
-    transform: translate(2.6px, -1.9px) scale(0.92);
+    clip-path: circle(0 at 40.25px 8.3px);
+    transform: translate(4.0px, -3.2px) scale(0.84);
   }
 
   88% {
-    opacity: 1;
-    clip-path: circle(48px at 36px 15px);
-    transform: translate(0, 0) scale(1.025);
+    opacity: 0.18;
+    clip-path: circle(2.5px at 40.25px 8.3px);
+    transform: translate(3.0px, -2.4px) scale(0.88);
+    animation-timing-function: cubic-bezier(0.12, 0.96, 0.18, 1);
   }
 
-  96%, 100% {
+  92% {
+    opacity: 0.48;
+    clip-path: circle(10px at 40px 9.5px);
+    transform: translate(2.0px, -1.5px) scale(0.92);
+  }
+
+  96% {
+    opacity: 0.82;
+    clip-path: circle(30px at 37.5px 12px);
+    transform: translate(0.8px, -0.5px) scale(0.965);
+  }
+
+  98.5% {
     opacity: 1;
-    clip-path: circle(78px at 36px 15px);
+    clip-path: circle(58px at 34px 16px);
+    transform: translate(-0.35px, 0.25px) scale(1.035);
+  }
+
+  100% {
+    opacity: 1;
+    clip-path: circle(78px at 33.5px 16px);
     transform: translate(0, 0) scale(1);
   }
 }
-
 
 @keyframes pi-logo-full-core {
   0% {
     opacity: 1;
-    width: var(--pi-logo-dot-size);
-    height: var(--pi-logo-dot-size);
+    width: calc(var(--pi-logo-core-size) * 0.095);
+    height: calc(var(--pi-logo-core-size) * 0.095);
     border-radius: 999px;
-    transform: translate(-50%, -50%) scale(0.5);
-    animation-timing-function: cubic-bezier(0.4, 0, 0.9, 0.35);
+    transform: translate(-50%, -50%) scale(0.52);
+    animation-timing-function: cubic-bezier(0.9, 0, 0.78, 0.18);
   }
 
   8% {
     opacity: 1;
-    width: var(--pi-logo-dot-size);
-    height: var(--pi-logo-dot-size);
+    width: calc(var(--pi-logo-core-size) * 0.095);
+    height: calc(var(--pi-logo-core-size) * 0.095);
     border-radius: 999px;
-    transform: translate(-50%, -50%) scale(0.95);
-    animation-timing-function: cubic-bezier(0.86, 0, 0.72, 0.2);
+    transform: translate(-50%, -50%) scaleX(1.8) scaleY(0.12) skewX(-8deg) rotate(-2deg);
   }
 
   13% {
     opacity: 0.72;
-    width: var(--pi-logo-dot-size);
-    height: var(--pi-logo-dot-size);
+    width: calc(var(--pi-logo-core-size) * 0.095);
+    height: calc(var(--pi-logo-core-size) * 0.095);
     border-radius: 999px;
-    transform: translate(-50%, -50%) scaleX(0.35) scaleY(1.8);
+    transform: translate(-50%, -50%) scaleX(1.18) scaleY(0.36) skewX(7deg);
+    animation-timing-function: cubic-bezier(0.12, 0.96, 0.18, 1);
   }
 
-  17% {
-    opacity: 0.46;
-    width: var(--pi-logo-dot-size);
-    height: var(--pi-logo-dot-size);
+  18% {
+    opacity: 0.48;
+    width: calc(var(--pi-logo-core-size) * 0.095);
+    height: calc(var(--pi-logo-core-size) * 0.095);
     border-radius: 999px;
-    transform: translate(-50%, -50%) scale(0.42);
+    transform: translate(-50%, -50%) scaleX(0.5) scaleY(1.45);
   }
 
-  21% {
-    opacity: 1;
-    width: var(--pi-logo-dot-size);
-    height: var(--pi-logo-dot-size);
+  23%, 43% {
+    opacity: 0;
+    width: calc(var(--pi-logo-core-size) * 0.095);
+    height: calc(var(--pi-logo-core-size) * 0.095);
     border-radius: 999px;
-    transform: translate(-50%, -50%) scale(0.48);
-    animation-timing-function: cubic-bezier(0.18, 0.02, 0.26, 1);
+    transform: translate(-50%, -50%) scale(0.26);
   }
 
-  38% {
+  48% {
     opacity: 1;
-    width: calc(var(--pi-logo-core-size) * 0.42);
-    height: calc(var(--pi-logo-core-size) * 0.42);
-    border-radius: 46% 54% 50% 50% / 52% 48% 52% 48%;
-    transform: translate(-50%, -50%) scale(1.02) rotate(-2deg);
-  }
-
-  50% {
-    opacity: 1;
-    width: calc(var(--pi-logo-core-size) * 0.61);
-    height: calc(var(--pi-logo-core-size) * 0.58);
-    border-radius: 42% 58% 47% 53% / 56% 42% 58% 44%;
-    transform: translate(-50%, -50%) scaleX(1.08) scaleY(0.92) rotate(3deg);
+    width: calc(var(--pi-logo-core-size) * 0.095);
+    height: calc(var(--pi-logo-core-size) * 0.095);
+    border-radius: 999px;
+    transform: translate(-50%, -50%) scale(0.34);
+    animation-timing-function: cubic-bezier(0.04, 0.9, 0.14, 1);
   }
 
   58% {
     opacity: 1;
-    width: calc(var(--pi-logo-core-size) * 0.66);
-    height: calc(var(--pi-logo-core-size) * 0.55);
-    border-radius: 36% 64% 42% 58% / 62% 34% 66% 38%;
-    transform: translate(-50%, -50%) scaleX(1.28) scaleY(0.82) skewX(-5deg) rotate(-2deg);
-    animation-timing-function: cubic-bezier(0.86, 0, 0.98, 0.18);
+    width: calc(var(--pi-logo-core-size) * 0.13);
+    height: calc(var(--pi-logo-core-size) * 0.12);
+    border-radius: 49% 51% 50% 50% / 52% 48% 52% 48%;
+    transform: translate(-50%, -50%) translate(-0.4px, 0.2px) scaleX(0.82) scaleY(1.04) rotate(-1deg);
+    animation-timing-function: cubic-bezier(0.22, 0.86, 0.24, 1);
   }
 
-  63% {
+  64% {
     opacity: 1;
-    width: calc(var(--pi-logo-core-size) * 0.54);
-    height: calc(var(--pi-logo-core-size) * 0.54);
-    border-radius: 34% 66% 40% 60% / 64% 32% 68% 36%;
-    transform: translate(-50%, -50%) scaleX(1.82) scaleY(0.11) skewX(-10deg) rotate(-2deg);
-  }
-
-  66% {
-    opacity: 1;
-    width: calc(var(--pi-logo-core-size) * 0.14);
-    height: calc(var(--pi-logo-core-size) * 0.085);
-    border-radius: 999px;
-    transform: translate(-50%, -50%) scaleX(1.2) scaleY(0.4) skewX(7deg);
-    animation-timing-function: cubic-bezier(0.12, 0.96, 0.18, 1);
-  }
-
-  68% {
-    opacity: 1;
-    width: var(--pi-logo-dot-size);
-    height: var(--pi-logo-dot-size);
-    border-radius: 999px;
-    transform: translate(-50%, -50%) scaleX(0.58) scaleY(1.28);
+    width: calc(var(--pi-logo-core-size) * 0.18);
+    height: calc(var(--pi-logo-core-size) * 0.14);
+    border-radius: 40% 60% 52% 48% / 60% 34% 66% 40%;
+    transform: translate(-50%, -50%) translate(-1.0px, 0.25px) scaleX(1.28) scaleY(0.72) skewX(-5deg) rotate(-3deg);
+    animation-timing-function: cubic-bezier(0.34, 0, 0.24, 1);
   }
 
   71% {
     opacity: 1;
-    width: var(--pi-logo-dot-size);
-    height: var(--pi-logo-dot-size);
+    width: calc(var(--pi-logo-core-size) * 0.25);
+    height: calc(var(--pi-logo-core-size) * 0.25);
+    border-radius: 52% 48% 46% 54% / 45% 57% 43% 55%;
+    transform: translate(-50%, -50%) translate(0.3px, -0.2px) scaleX(0.98) scaleY(1.04) skewY(1deg) rotate(1deg);
+    animation-timing-function: cubic-bezier(0.28, 0, 0.2, 1);
+  }
+
+  77% {
+    opacity: 1;
+    width: calc(var(--pi-logo-core-size) * 0.34);
+    height: calc(var(--pi-logo-core-size) * 0.29);
+    border-radius: 62% 38% 42% 58% / 38% 64% 36% 62%;
+    transform: translate(-50%, -50%) translate(1.0px, -0.15px) scaleX(0.88) scaleY(1.2) skewY(4deg) rotate(3deg);
+    animation-timing-function: cubic-bezier(0.3, 0, 0.22, 1);
+  }
+
+  83% {
+    opacity: 1;
+    width: calc(var(--pi-logo-core-size) * 0.42);
+    height: calc(var(--pi-logo-core-size) * 0.38);
+    border-radius: 44% 56% 58% 42% / 60% 40% 54% 46%;
+    transform: translate(-50%, -50%) translate(-0.35px, 0.25px) scaleX(1.08) scaleY(0.92) skewX(-3deg) rotate(-1deg);
+    animation-timing-function: cubic-bezier(0.16, 0.68, 0.18, 1);
+  }
+
+  87% {
+    opacity: 1;
+    width: calc(var(--pi-logo-core-size) * 0.47);
+    height: calc(var(--pi-logo-core-size) * 0.44);
+    border-radius: 47% 53% 45% 55% / 55% 43% 57% 45%;
+    transform: translate(-50%, -50%) scaleX(1.02) scaleY(0.98) rotate(1deg);
+    animation-timing-function: cubic-bezier(0.08, 0.72, 0.12, 1);
+  }
+
+  91% {
+    opacity: 1;
+    width: calc(var(--pi-logo-core-size) * 0.52);
+    height: calc(var(--pi-logo-core-size) * 0.52);
+    border-radius: 41% 59% 47% 53% / 57% 41% 59% 43%;
+    transform: translate(-50%, -50%) scaleX(1.04) scaleY(0.96) rotate(3deg);
+    animation-timing-function: cubic-bezier(0.96, 0, 0.82, 0.12);
+  }
+
+  95% {
+    opacity: 1;
+    width: calc(var(--pi-logo-core-size) * 0.45);
+    height: calc(var(--pi-logo-core-size) * 0.45);
+    border-radius: 34% 66% 40% 60% / 64% 32% 68% 36%;
+    transform: translate(-50%, -50%) scaleX(1.55) scaleY(0.085) skewX(-9deg) rotate(-2deg);
+  }
+
+  98% {
+    opacity: 1;
+    width: calc(var(--pi-logo-core-size) * 0.14);
+    height: calc(var(--pi-logo-core-size) * 0.085);
     border-radius: 999px;
-    transform: translate(-50%, -50%) scale(0.5);
+    transform: translate(-50%, -50%) scaleX(1.22) scaleY(0.38) skewX(7deg);
+    animation-timing-function: cubic-bezier(0.1, 0.98, 0.16, 1);
   }
 
-  80% {
+  99.2% {
     opacity: 1;
-    width: var(--pi-logo-dot-size);
-    height: var(--pi-logo-dot-size);
-    border-radius: 50%;
-    transform: translate(-50%, -50%) scale(0.8);
+    width: calc(var(--pi-logo-core-size) * 0.095);
+    height: calc(var(--pi-logo-core-size) * 0.095);
+    border-radius: 999px;
+    transform: translate(-50%, -50%) scaleX(0.5) scaleY(1.45);
   }
 
-  88%, 100% {
+  100% {
     opacity: 1;
-    width: var(--pi-logo-dot-size);
-    height: var(--pi-logo-dot-size);
-    border-radius: 47% 53% 52% 48% / 50% 52% 48% 50%;
-    transform: translate(-50%, -50%) scaleX(1.03) scaleY(0.97) rotate(-1deg);
+    width: calc(var(--pi-logo-core-size) * 0.095);
+    height: calc(var(--pi-logo-core-size) * 0.095);
+    border-radius: 999px;
+    transform: translate(-50%, -50%) scale(0.38);
   }
 }
-
-
 
 @keyframes pi-logo-full-lobe-a {
-  0%, 21% {
+  0%, 46% {
     opacity: 0;
-    transform: translate(0, 0) scale(0.3);
+    transform: translate(0, 0) scale(0.2);
   }
 
-  34% {
+  74% {
+    opacity: 0.24;
+    border-radius: 54% 46% 48% 52% / 45% 57% 43% 55%;
+    transform: translate(calc(var(--pi-logo-core-size) * -0.016), calc(var(--pi-logo-core-size) * 0.01)) scale(0.98) rotate(-2deg);
+  }
+
+  86% {
     opacity: 0.36;
-    border-radius: 55% 45% 48% 52% / 46% 56% 44% 54%;
-    transform: translate(calc(var(--pi-logo-core-size) * -0.018), calc(var(--pi-logo-core-size) * 0.012)) scale(1.04);
+    border-radius: 36% 64% 42% 58% / 64% 36% 60% 40%;
+    transform: translate(calc(var(--pi-logo-core-size) * -0.036), calc(var(--pi-logo-core-size) * 0.014)) scaleX(1.14) scaleY(0.88) rotate(-5deg);
   }
 
-  50% {
-    opacity: 0.32;
-    border-radius: 38% 62% 44% 56% / 62% 38% 58% 42%;
-    transform: translate(calc(var(--pi-logo-core-size) * -0.035), calc(var(--pi-logo-core-size) * 0.018)) scaleX(1.16) scaleY(0.9) rotate(-5deg);
+  95% {
+    opacity: 0.2;
+    transform: translate(calc(var(--pi-logo-core-size) * -0.05), calc(var(--pi-logo-core-size) * 0.01)) scaleX(1.28) scaleY(0.16) rotate(-8deg);
   }
 
-  60% {
-    opacity: 0.22;
-    transform: translate(calc(var(--pi-logo-core-size) * -0.055), calc(var(--pi-logo-core-size) * 0.012)) scaleX(1.42) scaleY(0.18) rotate(-8deg);
-  }
-
-  66%, 72% {
+  98%, 100% {
     opacity: 0;
-    transform: translate(calc(var(--pi-logo-core-size) * -0.02), 0) scaleX(0.12) scaleY(0.04);
-  }
-
-  88%, 100% {
-    opacity: 0.34;
-    transform: translate(-0.52px, 0.2px) scaleX(1.08) scaleY(0.88) rotate(-5deg);
+    transform: translate(calc(var(--pi-logo-core-size) * -0.022), 0) scaleX(0.08) scaleY(0.03);
   }
 }
-
-
 
 @keyframes pi-logo-full-lobe-b {
-  0%, 23% {
+  0%, 48% {
     opacity: 0;
-    transform: translate(0, 0) scale(0.25);
+    transform: translate(0, 0) scale(0.2);
   }
 
-  37% {
-    opacity: 0.28;
-    border-radius: 48% 52% 58% 42% / 52% 46% 54% 48%;
-    transform: translate(calc(var(--pi-logo-core-size) * 0.02), calc(var(--pi-logo-core-size) * -0.014)) scale(0.96);
+  76% {
+    opacity: 0.22;
+    border-radius: 48% 52% 60% 40% / 52% 46% 54% 48%;
+    transform: translate(calc(var(--pi-logo-core-size) * 0.018), calc(var(--pi-logo-core-size) * -0.012)) scale(0.96) rotate(4deg);
   }
 
-  52% {
-    opacity: 0.34;
-    border-radius: 60% 40% 64% 36% / 38% 62% 40% 60%;
-    transform: translate(calc(var(--pi-logo-core-size) * 0.04), calc(var(--pi-logo-core-size) * -0.018)) scaleX(0.92) scaleY(1.04) rotate(7deg);
+  88% {
+    opacity: 0.38;
+    border-radius: 62% 38% 66% 34% / 36% 64% 38% 62%;
+    transform: translate(calc(var(--pi-logo-core-size) * 0.042), calc(var(--pi-logo-core-size) * -0.014)) scaleX(0.94) scaleY(1.04) rotate(7deg);
   }
 
-  62% {
+  96% {
     opacity: 0.18;
-    transform: translate(calc(var(--pi-logo-core-size) * 0.06), calc(var(--pi-logo-core-size) * -0.004)) scaleX(1.1) scaleY(0.12) rotate(8deg);
+    transform: translate(calc(var(--pi-logo-core-size) * 0.052), calc(var(--pi-logo-core-size) * -0.004)) scaleX(1.02) scaleY(0.12) rotate(7deg);
   }
 
-  68%, 72% {
+  99%, 100% {
     opacity: 0;
-    transform: translate(calc(var(--pi-logo-core-size) * 0.018), 0) scaleX(0.08) scaleY(0.04);
-  }
-
-  88%, 100% {
-    opacity: 0.36;
-    transform: translate(0.62px, -0.2px) scaleX(0.94) scaleY(1.02) rotate(6deg);
+    transform: translate(calc(var(--pi-logo-core-size) * 0.018), 0) scaleX(0.06) scaleY(0.03);
   }
 }
-
-
 
 @media (max-width: 700px) {
   .left-sidebar:not(.is-compact-expanded) .pi-logo-button {
@@ -868,8 +714,7 @@
   .pi-logo-core-shape::before,
   .pi-logo-core-shape::after,
   .pi-logo-full-body,
-  .pi-logo-reveal-body,
-  .pi-logo-gravity-slice {
+  .pi-logo-reveal-body {
     animation: none !important;
     transition: none !important;
   }

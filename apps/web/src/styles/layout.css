@@ -5,6 +5,7 @@
   grid-template-columns: minmax(0, var(--sidebar-width)) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: var(--app-panel-gap);
+  height: 100vh;
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
@@ -28,6 +29,8 @@
 
 .left-sidebar {
   position: relative;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   overflow: hidden;
   background: var(--color-surface-sidebar);
@@ -40,7 +43,13 @@
   box-shadow: none;
 }
 
+.sidebar-compact-backdrop {
+  display: none;
+}
+
 .main-chat {
+  --composer-measured-clearance: 0px;
+  --composer-clearance: max(var(--composer-reserved-space), var(--composer-measured-clearance));
   --chat-frame-edge-gap: 1.25rem;
   --chat-frame-max-width: 860px;
   --chat-frame-side-space: max(var(--chat-frame-edge-gap), calc((100% - var(--chat-frame-max-width)) / 2));

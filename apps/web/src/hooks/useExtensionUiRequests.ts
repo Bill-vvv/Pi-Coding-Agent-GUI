@@ -1,21 +1,22 @@
-import { useState, type Dispatch } from "react";
+import { useState } from "react";
 import type { ExtensionUiRequest, ExtensionUiResponse, Project, Runtime, RuntimeConversationSummary, ServerEvent } from "@pi-gui/shared";
 import { showBrowserNotification } from "../domain/browserNotifications";
-import type { AppAction } from "../state/appReducer";
+import { desktopNotificationPresentation, shouldInterruptWithDesktopNotification } from "../domain/extensionNotifications";
 import type { GuiSocketSend, UiPreferences } from "../types";
 
 type UseExtensionUiRequestsOptions = {
-  dispatch: Dispatch<AppAction>;
   send: GuiSocketSend;
   setPrompt: (prompt: string) => void;
   uiPreferences: UiPreferences;
   projects: Project[];
   runtimes: Runtime[];
-  activeRuntime?: Runtime;
   conversationSummaries: Record<string, RuntimeConversationSummary>;
+  activeProjectId?: string;
+  activeRuntimeId?: string;
+  onOpenNotificationTarget: (projectId: string, runtimeId: string) => void;
 };
 
-export function useExtensionUiRequests({ dispatch, send, setPrompt, uiPreferences, projects, runtimes, activeRuntime, conversationSummaries }: UseExtensionUiRequestsOptions) {
+export function useExtensionUiRequests({ send, setPrompt, uiPreferences, projects, runtimes, conversationSummaries, activeProjectId, activeRuntimeId, onOpenNotificationTarget }: UseExtensionUiRequestsOptions) {
   const [extensionUiDialog, setExtensionUiDialog] = useState<{ runtimeId: string; request: ExtensionUiRequest } | undefined>();
 
   function handleExtensionUiServerEvent(event: ServerEvent) {
@@ -25,13 +26,9 @@ export function useExtensionUiRequests({ dispatch, send, setPrompt, uiPreference
 
   function handleExtensionUiRequest(runtimeId: string, projectId: string, request: ExtensionUiRequest) {
     switch (request.method) {
-      case "notify": {
-        const noticeMessage = formatNotificationMessage(request.message, runtimeId, projectId, activeRuntime?.id, projects, runtimes, conversationSummaries);
-        if (request.notifyType === "error") dispatch({ type: "set.operationError", error: noticeMessage });
-        else dispatch({ type: "set.notice", notice: noticeMessage });
-        maybeShowDesktopNotification({ runtimeId, projectId, request, uiPreferences, activeRuntime, projects, runtimes, conversationSummaries });
+      case "notify":
+        maybeShowDesktopNotification({ runtimeId, projectId, request, uiPreferences, projects, runtimes, conversationSummaries, activeProjectId, activeRuntimeId, onOpenNotificationTarget });
         return;
-      }
       case "set_editor_text":
         setPrompt(request.text);
         return;
@@ -65,46 +62,35 @@ type DesktopNotificationOptions = {
   projectId: string;
   request: Extract<ExtensionUiRequest, { method: "notify" }>;
   uiPreferences: UiPreferences;
-  activeRuntime?: Runtime;
   projects: Project[];
   runtimes: Runtime[];
   conversationSummaries: Record<string, RuntimeConversationSummary>;
+  activeProjectId?: string;
+  activeRuntimeId?: string;
+  onOpenNotificationTarget: (projectId: string, runtimeId: string) => void;
 };
 
-function maybeShowDesktopNotification({ runtimeId, projectId, request, uiPreferences, activeRuntime, projects, runtimes, conversationSummaries }: DesktopNotificationOptions) {
+function maybeShowDesktopNotification({ runtimeId, projectId, request, uiPreferences, projects, runtimes, conversationSummaries, activeProjectId, activeRuntimeId, onOpenNotificationTarget }: DesktopNotificationOptions) {
   if (!uiPreferences.desktopNotificationsEnabled) return;
-  if (!shouldInterruptWithDesktopNotification(runtimeId, activeRuntime?.id)) return;
 
-  const project = projects.find((item) => item.id === projectId);
-  const runtime = runtimes.find((item) => item.id === runtimeId);
-  const summary = conversationSummaries[runtimeId];
-  const title = project ? `Pi 已完成 · ${project.name}` : "Pi 已完成";
-  const body = [summary?.title ?? (runtime ? `对话 ${runtime.id.slice(0, 8)}` : undefined), request.message].filter(Boolean).join("\n");
+  const presentation = desktopNotificationPresentation({ runtimeId, projectId, request, projects, runtimes, conversationSummaries });
+  if (!presentation) return;
 
-  showBrowserNotification(title, {
-    body,
-    tag: `pi-gui-ready-${runtimeId}`,
+  if (!shouldInterruptWithDesktopNotification({
+    visibilityState: document.visibilityState,
+    hidden: document.hidden,
+    hasFocus: typeof document.hasFocus === "function" ? document.hasFocus() : undefined,
+    activeProjectId,
+    activeRuntimeId,
+    targetProjectId: projectId,
+    targetRuntimeId: runtimeId,
+  })) return;
+
+  showBrowserNotification(presentation.title, {
+    body: presentation.body,
+    tag: presentation.tag,
+    onClick: () => onOpenNotificationTarget(presentation.target.projectId, presentation.target.runtimeId),
   });
 }
 
-function shouldInterruptWithDesktopNotification(runtimeId: string, activeRuntimeId?: string): boolean {
-  return document.hidden || !document.hasFocus() || runtimeId !== activeRuntimeId;
-}
 
-function formatNotificationMessage(
-  message: string,
-  runtimeId: string,
-  projectId: string,
-  activeRuntimeId: string | undefined,
-  projects: Project[],
-  runtimes: Runtime[],
-  conversationSummaries: Record<string, RuntimeConversationSummary>,
-): string {
-  if (runtimeId === activeRuntimeId) return message;
-
-  const project = projects.find((item) => item.id === projectId);
-  const runtime = runtimes.find((item) => item.id === runtimeId);
-  const summary = conversationSummaries[runtimeId];
-  const label = summary?.title ?? project?.name ?? (runtime ? `对话 ${runtime.id.slice(0, 8)}` : undefined);
-  return label ? `${label}: ${message}` : message;
-}

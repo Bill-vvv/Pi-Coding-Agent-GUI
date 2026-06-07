@@ -1,8 +1,19 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { AppSettings, ConversationMessage, GuiSession, Project, Runtime, RuntimeConversationSummary, VoiceInputCaptureMode, VoiceInputMode, VoiceInputSettings, VoiceInputStatus } from "@pi-gui/shared";
+import { useEffect, useRef, useState } from "react";
+import type { AppSettings, ConversationMessage, GuiSession, Project, Runtime, RuntimeConversationSummary, VoiceInputMode, VoiceInputSettings } from "@pi-gui/shared";
 import { useBrowserNotificationPermission } from "../hooks/useBrowserNotificationPermission";
-import type { AccentColor, ChatFontSize, ThemeMode, UiFontSize, UiPreferences } from "../types";
+import { useEnvironmentDiagnostics } from "../hooks/useEnvironmentDiagnostics";
+import { useRemoteAccess } from "../hooks/useRemoteAccess";
+import { GUI_KEYBINDING_DEFINITIONS, effectiveGuiKeybindings, normalizeKeyCombo } from "../domain/keybindings";
+import { runtimeHasVisibleConversationContent } from "../domain/conversationVisibility";
+import { voiceInputSettingsEqual } from "../domain/voiceInputSettings";
+import type { AccentColor, ChatFontSize, ThemeMode, ThinkingToolDisplayMode, UiFontSize, UiPreferences } from "../types";
 import { Icon } from "./Icon";
+import { IconButton } from "./ui";
+import { RemoteAccessPanel } from "./RemoteAccessPanel";
+import { EnvironmentDiagnosticsPanel } from "./settings/EnvironmentDiagnosticsPanel";
+import { SettingsOptionGroup } from "./settings/SettingsOptionGroup";
+import { VoiceInputSettingsPanel } from "./settings/VoiceInputSettingsPanel";
+import { useSettingsScrollbar } from "./settings/useSettingsScrollbar";
 
 type SettingsPanelProps = {
   open: boolean;
@@ -32,6 +43,11 @@ const CHAT_FONT_OPTIONS: Array<{ value: ChatFontSize; label: string; disabled?: 
   { value: "large", label: "大" },
 ];
 
+const THINKING_TOOL_DISPLAY_OPTIONS: Array<{ value: ThinkingToolDisplayMode; label: string; disabled?: boolean }> = [
+  { value: "compact", label: "紧凑" },
+  { value: "chronological", label: "正文流" },
+];
+
 const THEME_OPTIONS: Array<{ value: ThemeMode; label: string; disabled?: boolean }> = [
   { value: "dark", label: "深色" },
   { value: "light", label: "浅色" },
@@ -45,24 +61,6 @@ const ACCENT_OPTIONS: Array<{ value: AccentColor; label: string }> = [
   { value: "rose", label: "玫瑰" },
 ];
 
-
-const VOICE_INPUT_MODE_OPTIONS: Array<{ value: VoiceInputMode; label: string }> = [
-  { value: "disabled", label: "关闭" },
-  { value: "managedProcess", label: "自动管理（推荐）" },
-  { value: "externalService", label: "连接已有服务" },
-];
-
-const VOICE_INPUT_CAPTURE_MODE_OPTIONS: Array<{ value: VoiceInputCaptureMode; label: string }> = [
-  { value: "browser", label: "浏览器麦克风" },
-  { value: "native", label: "原生桥接" },
-];
-
-const DEFAULT_VOICE_SERVICE_URL = "http://127.0.0.1:8765";
-const DEFAULT_MANAGED_VOICE_COMMAND = "python";
-const DEFAULT_MANAGED_VOICE_ARGS = ["server.py", "--port", "8765"];
-
-const SETTINGS_SCROLLBAR_VISIBLE_MS = 900;
-const SCROLL_INTERACTION_KEYS = new Set(["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "End", "Home", "PageDown", "PageUp", " "]);
 
 export function SettingsPanel({
   open,
@@ -91,6 +89,8 @@ export function SettingsPanel({
   } = useBrowserNotificationPermission();
   const contentScrollbar = useSettingsScrollbar();
   const archiveScrollbar = useSettingsScrollbar();
+  const environmentDiagnostics = useEnvironmentDiagnostics(open);
+  const remoteAccess = useRemoteAccess(open);
 
   useEffect(() => {
     if (!open) setSelectedArchivedRuntimeId(undefined);
@@ -119,9 +119,19 @@ export function SettingsPanel({
 
   if (!open) return null;
 
-  const archivedRuntimes = runtimes.filter((runtime) => runtime.archivedAt).sort((left, right) => (right.archivedAt ?? 0) - (left.archivedAt ?? 0));
   const projectsById = new Map(projects.map((project) => [project.id, project]));
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+  const archivedRuntimes = runtimes
+    .filter((runtime) =>
+      Boolean(runtime.archivedAt) &&
+      runtimeHasVisibleConversationContent({
+        runtime,
+        session: runtime.sessionId ? sessionsById.get(runtime.sessionId) : undefined,
+        summary: conversationSummaries[runtime.id],
+        messages: messagesByRuntime[runtime.id],
+      }),
+    )
+    .sort((left, right) => (right.archivedAt ?? 0) - (left.archivedAt ?? 0));
   const selectedArchivedRuntime = selectedArchivedRuntimeId ? archivedRuntimes.find((runtime) => runtime.id === selectedArchivedRuntimeId) : undefined;
   const selectedArchivedSnippet = selectedArchivedRuntime ? latestArchiveSnippet(messagesByRuntime[selectedArchivedRuntime.id] ?? []) : undefined;
   const desktopNotificationToggleDisabled =
@@ -159,9 +169,7 @@ export function SettingsPanel({
   return (
     <section className="settings-panel" aria-label="设置">
       <header className="settings-header">
-        <button className="settings-back-button icon-button" type="button" title="返回聊天" aria-label="返回聊天" onClick={onClose}>
-          <Icon name="arrow-left" />
-        </button>
+        <IconButton className="settings-back-button" icon="arrow-left" label="返回聊天" onClick={onClose} />
         <h2>设置</h2>
       </header>
 
@@ -188,6 +196,14 @@ export function SettingsPanel({
               options={CHAT_FONT_OPTIONS}
               value={preferences.chatFontSize}
               onChange={(value) => update({ chatFontSize: value })}
+            />
+
+            <SettingsOptionGroup
+              name="thinking-tool-display"
+              label="思考/工具流"
+              options={THINKING_TOOL_DISPLAY_OPTIONS}
+              value={preferences.thinkingToolDisplayMode}
+              onChange={(value) => update({ thinkingToolDisplayMode: value })}
             />
 
             <SettingsOptionGroup
@@ -218,17 +234,23 @@ export function SettingsPanel({
 
             <button className="settings-setting-row settings-navigation-row" type="button" onClick={onOpenUsageOverview}>
               <span className="settings-setting-copy">
-                <span>Overview</span>
-                <small>查看 token usage 统计</small>
+                <span>用量概览</span>
+                <small>查看 token 用量统计</small>
               </span>
               <Icon name="arrow-right" />
             </button>
 
+            <EnvironmentDiagnosticsPanel state={environmentDiagnostics} />
+
+            <RemoteAccessPanel state={remoteAccess} />
+
             <VoiceInputSettingsPanel settings={localVoiceInput} saveError={voiceInputSaveError} onChange={updateVoiceInput} />
+
+            <ShortcutSettingsPanel preferences={preferences} onChange={(keybindings) => update({ keybindings })} />
 
             <div className={`settings-setting-row ${desktopNotificationToggleDisabled ? "disabled" : ""}`}>
               <span className="settings-setting-copy">
-                <span>通知</span>
+                <span>系统通知</span>
                 <small>{notificationSummary(notificationPermission, preferences.desktopNotificationsEnabled)}</small>
               </span>
               <label className={`settings-toggle-control ${desktopNotificationToggleDisabled ? "disabled" : ""}`}>
@@ -272,18 +294,16 @@ export function SettingsPanel({
                           <strong>{title}</strong>
                           <small>{meta}</small>
                         </div>
-                        <button
-                          className="settings-action-button icon-button"
-                          type="button"
+                        <IconButton
+                          className="settings-action-button"
+                          icon="arrow-right"
+                          label={`查看 ${title}`}
                           title="查看"
-                          aria-label={`查看 ${title}`}
                           onClick={() => {
                             setSelectedArchivedRuntimeId(runtime.id);
                             onOpenArchivedRuntime(runtime.id);
                           }}
-                        >
-                          <Icon name="arrow-right" />
-                        </button>
+                        />
                       </div>
                     );
                   })}
@@ -298,131 +318,56 @@ export function SettingsPanel({
   );
 }
 
+function ShortcutSettingsPanel({ preferences, onChange }: { preferences: UiPreferences; onChange: (keybindings: UiPreferences["keybindings"]) => void }) {
+  const effective = effectiveGuiKeybindings(preferences.keybindings);
 
-function VoiceInputSettingsPanel({ settings, saveError, onChange }: { settings?: VoiceInputSettings; saveError?: string; onChange: (settings: Partial<VoiceInputSettings>) => void }) {
-  const mode = settings?.mode ?? "disabled";
-  const managedArgs = (settings?.managedArgs ?? []).join(" ");
-  const [status, setStatus] = useState<VoiceInputStatus | undefined>();
-  const [statusLoading, setStatusLoading] = useState(false);
-  const [statusError, setStatusError] = useState<string | undefined>();
-  const headerStatus = voiceInputHeaderStatus(mode, status, statusError, statusLoading);
-  const setupSummary = voiceInputSetupSummary(mode, settings);
-
-  async function refreshVoiceStatus() {
-    setStatusLoading(true);
-    setStatusError(undefined);
-    try {
-      const response = await fetch("/api/voice/status");
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      setStatus((await response.json()) as VoiceInputStatus);
-    } catch (error) {
-      setStatusError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setStatusLoading(false);
-    }
-  }
-
-  function changeMode(nextMode: VoiceInputMode) {
-    onChange(voiceInputModeDefaults(nextMode, settings));
+  function updateBinding(actionId: keyof typeof effective, value: string) {
+    const normalized = normalizeKeyCombo(value);
+    if (!normalized) return;
+    onChange({ ...preferences.keybindings, [actionId]: [normalized] });
   }
 
   return (
-    <details className="settings-archive-dropdown">
+    <details className="settings-hotkeys-dropdown">
       <summary>
-        <span className="settings-archive-summary-main">
-          <span>语音输入</span>
-          <small>{headerStatus.summary}</small>
+        <span className="settings-diagnostics-summary-main">
+          <span>快捷键设置</span>
+          <small>可自定义核心 GUI 快捷键</small>
         </span>
+        <span className="settings-diagnostics-pill ready">Keys</span>
       </summary>
 
-      <div className="settings-voice-body">
-        {saveError ? <p className="settings-archive-snippet">{saveError}</p> : null}
-        <SettingsOptionGroup name="voice-input-mode" label="模式" options={VOICE_INPUT_MODE_OPTIONS} value={mode} onChange={changeMode} />
-        {mode !== "disabled" ? (
-          <>
-            <p className="settings-archive-snippet">{setupSummary.title} · {setupSummary.detail}</p>
-            <SettingsOptionGroup name="voice-input-capture-mode" label="录音来源" options={VOICE_INPUT_CAPTURE_MODE_OPTIONS} value={settings?.captureMode ?? "browser"} onChange={(captureMode) => onChange({ captureMode })} />
-          </>
-        ) : null}
-        {mode === "managedProcess" ? (
-          <>
-            <SettingsTextInput id="settings-voice-cwd" label="Wrapper 目录" value={settings?.managedCwd ?? ""} placeholder="示例：/home/me/pi-gui/tools/capswriter-wrapper" onChange={(managedCwd) => onChange({ managedCwd })} />
-            <SettingsTextInput id="settings-voice-model-path" label="模型路径（可选）" value={settings?.modelPath ?? ""} placeholder="可留空；也可用命令参数指定" onChange={(modelPath) => onChange({ modelPath })} />
-            <SettingsTextInput id="settings-voice-url" label="服务地址" value={settings?.externalUrl ?? ""} placeholder={DEFAULT_VOICE_SERVICE_URL} onChange={(externalUrl) => onChange({ externalUrl })} />
-            <SettingsTextInput id="settings-voice-command" label="启动命令" value={settings?.managedCommand ?? ""} placeholder={DEFAULT_MANAGED_VOICE_COMMAND} onChange={(managedCommand) => onChange({ managedCommand })} />
-            <SettingsTextInput id="settings-voice-args" label="命令参数" value={managedArgs} placeholder={DEFAULT_MANAGED_VOICE_ARGS.join(" ")} onChange={(value) => onChange({ managedArgs: splitManagedArgs(value) })} />
-          </>
-        ) : null}
-        {mode === "externalService" ? <SettingsTextInput id="settings-voice-url" label="服务地址" value={settings?.externalUrl ?? ""} placeholder={`示例：${DEFAULT_VOICE_SERVICE_URL}`} onChange={(externalUrl) => onChange({ externalUrl })} /> : null}
-        {mode !== "disabled" ? (
-          <>
-            <button className="settings-action-button" type="button" disabled={statusLoading} onClick={() => void refreshVoiceStatus()}>{statusLoading ? "检测中…" : "检测服务状态"}</button>
-            <p className="settings-archive-snippet">{statusError ? `检测失败：${statusError}` : status ? voiceInputStatusSummary(status) : "尚未检测"}</p>
-            <p className="settings-archive-snippet">{settings?.captureMode === "native" ? "原生桥接不会调用浏览器麦克风；wrapper 需要支持 /record/start 和 /record/stop，并能访问本机麦克风。" : "浏览器麦克风适合手机/远程；本机桌面追求准确率时建议使用原生桥接。"}</p>
-          </>
-        ) : null}
+      <div className="settings-hotkeys-body">
+        <section className="settings-hotkey-group" aria-label="快捷键">
+          <h3>核心动作</h3>
+          <div className="settings-hotkey-list">
+            {GUI_KEYBINDING_DEFINITIONS.map((definition) => (
+              <div className="settings-hotkey-row editable" key={definition.id}>
+                <span>{definition.label}</span>
+                <span className="settings-hotkey-keys">
+                  {effective[definition.id].map((key) => <kbd key={key}>{key}</kbd>)}
+                </span>
+                {definition.editable ? (
+                  <span className="settings-hotkey-editors">
+                    <input
+                      value={effective[definition.id][0] ?? ""}
+                      aria-label={`${definition.label} 快捷键`}
+                      onChange={(event) => updateBinding(definition.id, event.target.value)}
+                    />
+                    <button type="button" onClick={() => onChange({ ...preferences.keybindings, [definition.id]: definition.defaultKeys })}>重置</button>
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </section>
+        <p className="settings-hotkeys-hint">浏览器保留快捷键可能无法拦截；发送/换行等输入框语义保持默认。</p>
       </div>
     </details>
   );
 }
 
-function SettingsTextInput({ id, label, value, placeholder, onChange }: { id: string; label: string; value: string; placeholder?: string; onChange: (value: string) => void }) {
-  return (
-    <div className="settings-field">
-      <label htmlFor={id}>{label}</label>
-      <input id={id} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
-    </div>
-  );
-}
 
-function voiceInputModeDefaults(mode: VoiceInputMode, current: VoiceInputSettings | undefined): Partial<VoiceInputSettings> {
-  if (mode === "disabled") return { mode };
-  if (mode === "managedProcess") {
-    return {
-      ...current,
-      mode,
-      captureMode: current?.captureMode ?? "browser",
-      externalUrl: current?.externalUrl ?? DEFAULT_VOICE_SERVICE_URL,
-      managedCommand: current?.managedCommand ?? DEFAULT_MANAGED_VOICE_COMMAND,
-      managedArgs: current?.managedArgs?.length ? current.managedArgs : DEFAULT_MANAGED_VOICE_ARGS,
-      autoStart: current?.autoStart ?? true,
-    };
-  }
-  return {
-    ...current,
-    mode,
-    captureMode: current?.captureMode ?? "browser",
-    externalUrl: current?.externalUrl ?? DEFAULT_VOICE_SERVICE_URL,
-  };
-}
-
-function voiceInputHeaderStatus(mode: VoiceInputMode, status: VoiceInputStatus | undefined, statusError: string | undefined, loading: boolean): { summary: string } {
-  if (loading) return { summary: "正在检测…" };
-  if (statusError) return { summary: `检测失败：${statusError}` };
-  if (status) return { summary: voiceInputStatusSummary(status) };
-  if (mode === "externalService") return { summary: "连接已运行的本地 ASR 服务" };
-  if (mode === "managedProcess") return { summary: "自动启动本地 ASR wrapper" };
-  return { summary: "未启用" };
-}
-
-function voiceInputSetupSummary(mode: VoiceInputMode, settings: VoiceInputSettings | undefined): { title: string; detail: string } {
-  if (mode === "externalService") return { title: "连接已有服务", detail: settings?.externalUrl || DEFAULT_VOICE_SERVICE_URL };
-  if (settings?.captureMode === "native") return { title: "本机原生录音", detail: "本地 wrapper 直接采集麦克风" };
-  return { title: "浏览器麦克风", detail: "浏览器录音并交给本地 ASR" };
-}
-
-function voiceInputStatusSummary(status: VoiceInputStatus): string {
-  const prefix = status.available ? "可用" : status.state === "disabled" ? "已关闭" : "不可用";
-  return status.message ? `${prefix} · ${status.message}` : prefix;
-}
-
-function voiceInputSettingsEqual(left: VoiceInputSettings | undefined, right: VoiceInputSettings | undefined): boolean {
-  return JSON.stringify(left ?? { mode: "disabled" }) === JSON.stringify(right ?? { mode: "disabled" });
-}
-
-function splitManagedArgs(value: string): string[] {
-  return value.split(/\s+/).map((item) => item.trim()).filter(Boolean);
-}
 
 function latestArchiveSnippet(messages: ConversationMessage[]): string | undefined {
   const message = [...messages].reverse().find((item) => isArchivePreviewMessage(item) && item.text.trim());
@@ -433,38 +378,12 @@ function isArchivePreviewMessage(message: ConversationMessage): boolean {
   return message.role === "user" || message.role === "assistant" || message.role === "error";
 }
 
-function useSettingsScrollbar() {
-  const [isVisible, setIsVisible] = useState(false);
-  const hideTimerRef = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    return () => {
-      if (hideTimerRef.current !== undefined) window.clearTimeout(hideTimerRef.current);
-    };
-  }, []);
-
-  const reveal = useCallback(() => {
-    setIsVisible(true);
-    if (hideTimerRef.current !== undefined) window.clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = window.setTimeout(() => {
-      hideTimerRef.current = undefined;
-      setIsVisible(false);
-    }, SETTINGS_SCROLLBAR_VISIBLE_MS);
-  }, []);
-
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLElement>) => {
-      if (SCROLL_INTERACTION_KEYS.has(event.key)) reveal();
-    },
-    [reveal],
-  );
-
-  return { isVisible, reveal, handleKeyDown };
-}
 
 function notificationSummary(permission: "default" | "denied" | "granted" | "unsupported", enabled: boolean): string {
-  const desktop = permission === "unsupported" ? "桌面不支持" : permission === "denied" ? "桌面被拒绝" : permission === "granted" ? (enabled ? "桌面已启用" : "桌面未启用") : "桌面未授权";
-  return `应用内开启 · ${desktop}`;
+  if (permission === "unsupported") return "当前浏览器不支持系统通知";
+  if (permission === "denied") return "系统通知权限已被浏览器拒绝";
+  if (permission === "granted") return enabled ? "Pi 后台完成时发送系统通知，点击可回到对应对话" : "系统通知未启用";
+  return "需要浏览器授权后才能发送系统通知";
 }
 
 function formatSettingsDate(timestamp: number): string {
@@ -475,37 +394,3 @@ function formatSettingsDate(timestamp: number): string {
   }
 }
 
-function SettingsOptionGroup<T extends string>({
-  name,
-  label,
-  options,
-  value,
-  onChange,
-}: {
-  name: string;
-  label: string;
-  options: Array<{ value: T; label: string; disabled?: boolean }>;
-  value: T;
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className="settings-field">
-      <label>{label}</label>
-      <div className="settings-radio-options" role="radiogroup" aria-label={label}>
-        {options.map((option) => (
-          <label className={`settings-radio-option ${value === option.value ? "selected" : ""} ${option.disabled ? "disabled" : ""}`} key={option.value}>
-            <input
-              type="radio"
-              name={`settings-${name}`}
-              value={option.value}
-              checked={value === option.value}
-              disabled={option.disabled}
-              onChange={() => onChange(option.value)}
-            />
-            <span>{option.label}</span>
-          </label>
-        ))}
-      </div>
-    </div>
-  );
-}

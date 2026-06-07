@@ -1,0 +1,318 @@
+.settings-remote-access-dropdown {
+  border-top: 1px solid var(--color-border-divider);
+}
+
+.settings-remote-access-dropdown > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: center;
+  min-height: 46px;
+  padding: 0.5rem 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-remote-access-dropdown > summary::-webkit-details-marker { display: none; }
+
+.settings-remote-access-summary-main,
+.settings-remote-access-row > span,
+.settings-remote-access-pairing-copy,
+.settings-remote-access-primary-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.14rem;
+}
+
+.settings-remote-access-summary-main > span,
+.settings-remote-access-row strong,
+.settings-remote-access-pairing-copy strong,
+.settings-remote-access-primary-copy strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--text-control);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-control);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-remote-access-summary-main small,
+.settings-remote-access-row small,
+.settings-remote-access-pairing-copy small,
+.settings-remote-access-url-row small,
+.settings-remote-access-primary-copy small {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--line-control);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-remote-access-pill {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--line-control);
+  padding: 0.12rem 0.45rem;
+}
+
+.settings-remote-access-pill.on {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 58%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent-primary) 12%, transparent);
+  color: var(--color-text-primary);
+}
+
+.settings-remote-access-pill.warn {
+  border-color: color-mix(in srgb, #f0b95a 58%, var(--color-border-subtle));
+  background: rgb(240 185 90 / 10%);
+  color: #f0c87a;
+}
+
+.settings-remote-access-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0 0 0.78rem;
+}
+
+.settings-remote-access-row,
+.settings-remote-access-url-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.settings-remote-access-url-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: rgb(255 255 255 / 3%);
+  padding: 0.42rem 0.48rem;
+}
+
+.settings-remote-access-url-row.selected {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 54%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent-primary) 9%, transparent);
+}
+
+.settings-remote-access-url-row > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.settings-remote-access-url-row strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-remote-access-url-list,
+.settings-remote-access-actions,
+.settings-remote-access-hints,
+.settings-remote-access-primary-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+.settings-remote-access-actions,
+.settings-remote-access-primary-actions {
+  flex-flow: row wrap;
+}
+
+.settings-remote-access-actions.compact { gap: 0.35rem; }
+
+.settings-secondary-button.compact {
+  min-height: 30px;
+  padding-inline: 0.5rem;
+}
+
+.settings-secondary-button.danger {
+  border-color: color-mix(in srgb, #ff7b7b 42%, var(--color-border-subtle));
+  color: #ffb0b0;
+}
+
+.settings-remote-access-primary-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 38%, var(--color-border-subtle));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-accent-primary) 7%, transparent);
+  padding: 0.65rem;
+}
+
+.settings-remote-access-primary-copy > span {
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+}
+
+.settings-remote-access-primary-copy strong {
+  font-family: var(--font-mono);
+}
+
+.settings-remote-access-pairing {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.72rem;
+  align-items: start;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: rgb(255 255 255 / 3%);
+  padding: 0.65rem;
+}
+
+.settings-remote-access-qr {
+  display: grid;
+  width: 176px;
+  height: 176px;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: #1b1b1b;
+  font-size: var(--text-caption);
+  overflow: hidden;
+}
+
+.settings-remote-access-qr img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.settings-remote-access-hint,
+.settings-remote-access-warning,
+.settings-remote-access-error,
+.settings-remote-access-notice,
+.settings-remote-access-empty {
+  margin: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--line-body);
+  padding: 0.5rem 0.58rem;
+}
+
+.settings-remote-access-warning,
+.settings-remote-access-hint.warning {
+  border-color: rgb(240 185 90 / 32%);
+  background: rgb(240 185 90 / 8%);
+  color: #f0c87a;
+}
+
+.settings-remote-access-warning.compact {
+  padding-block: 0.38rem;
+}
+
+.settings-remote-access-advanced {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: rgb(255 255 255 / 2%);
+  padding: 0.45rem 0.52rem;
+}
+
+.settings-remote-access-advanced > summary {
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  list-style: none;
+}
+
+.settings-remote-access-advanced > summary::-webkit-details-marker { display: none; }
+
+.settings-remote-access-advanced[open] > summary {
+  margin-bottom: 0.45rem;
+}
+
+.settings-remote-access-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.settings-remote-access-restart-callout {
+  display: flex;
+  flex-flow: row wrap;
+  gap: 0.45rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-remote-access-restart-callout > span {
+  min-width: min(100%, 18rem);
+}
+
+.settings-remote-access-hint.info {
+  background: rgb(255 255 255 / 3%);
+}
+
+.settings-remote-access-hint.error {
+  border-color: rgb(255 123 123 / 34%);
+  background: rgb(255 123 123 / 8%);
+  color: #ffb0b0;
+}
+
+.settings-remote-access-hint strong {
+  color: var(--color-text-primary);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+}
+
+.settings-remote-access-hint small {
+  color: inherit;
+  font-size: var(--text-caption);
+  line-height: var(--line-body);
+  opacity: 0.9;
+}
+
+.settings-remote-access-hint-commands {
+  display: flex;
+  flex-flow: row wrap;
+  gap: 0.35rem;
+  padding-top: 0.15rem;
+}
+
+.settings-remote-access-error {
+  border-color: rgb(255 123 123 / 34%);
+  background: rgb(255 123 123 / 8%);
+  color: #ffb0b0;
+}
+
+.settings-remote-access-notice {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 42%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent-primary) 8%, transparent);
+  color: var(--color-text-primary);
+}
+
+.settings-remote-access-warning-line {
+  white-space: normal !important;
+}
+
+@media (max-width: 700px) {
+  .settings-remote-access-pairing {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-remote-access-primary-actions {
+    flex-direction: column;
+  }
+
+  .settings-remote-access-qr {
+    width: min(176px, 100%);
+    justify-self: center;
+  }
+}

@@ -2,8 +2,8 @@ import { isSerializedToolCallText, stripSerializedToolCallsFromText, type Conver
 import { subagentRunIsActive } from "./subagents";
 
 // Conversation display modes are intentionally centralized so future modes
-// (for example detailed/raw) can switch rendering policy without changing ChatView.
-export type ConversationDisplayMode = "normal";
+// can switch rendering policy without changing ChatView.
+export type ConversationDisplayMode = "compact" | "chronological";
 export type ConversationMessageDisplayKind = "hidden" | "markdown" | "plain" | "tool";
 export type RenderableConversationMessageDisplayKind = "markdown" | "plain";
 export type ToolDisplayStatus = "running" | "completed" | "failed";
@@ -92,14 +92,20 @@ const TOOL_STATUS_SUFFIX_RE = /\s+(运行中|完成|失败)$/;
 const TOOL_SUMMARY_MAX_CHARS = 150;
 const TOOL_SUMMARY_LINE_MAX_CHARS = 110;
 const TOOL_GROUP_SUMMARY_MAX_ITEMS = 4;
+const SYNTHETIC_USER_INPUT_DEDUPE_MS = 5000;
 
 export function buildConversationDisplayBlocks(
   messages: ConversationMessage[],
-  mode: ConversationDisplayMode = "normal",
+  mode: ConversationDisplayMode = "compact",
   options: ConversationDisplayOptions = {},
 ): ConversationDisplayBlock[] {
-  const blocks: ConversationDisplayBlock[] = [];
   const displayMessages = dedupeSyntheticSnapshotMessages(messages);
+  if (mode === "chronological") return buildChronologicalConversationDisplayBlocks(displayMessages);
+  return buildCompactConversationDisplayBlocks(displayMessages, options);
+}
+
+function buildCompactConversationDisplayBlocks(displayMessages: ConversationMessage[], options: ConversationDisplayOptions): ConversationDisplayBlock[] {
+  const blocks: ConversationDisplayBlock[] = [];
   const subagentRunByToolMessageId = new Map((options.subagentRuns ?? []).map((run) => [run.parentToolMessageId, run]));
   let segmentBlocks: ConversationDisplayBlock[] = [];
   let segmentTools: ConversationMessage[] = [];
@@ -124,16 +130,16 @@ export function buildConversationDisplayBlocks(
   }
 
   for (const message of displayMessages) {
-    const hasAssistantThinking = mode === "normal" && message.role === "assistant" && Boolean(message.thinking?.trim());
+    const hasAssistantThinking = message.role === "assistant" && Boolean(message.thinking?.trim());
     if (hasAssistantThinking) {
       if (processInsertIndex === undefined) processInsertIndex = segmentBlocks.length;
       segmentThinkingMessages.push(message);
     }
 
-    const displayMessage = conversationMessageForDisplay(message, mode);
+    const displayMessage = conversationMessageForDisplay(message, "compact");
     if (!displayMessage) continue;
 
-    const displayKind = conversationMessageDisplayKind(displayMessage, mode);
+    const displayKind = conversationMessageDisplayKind(displayMessage, "compact");
     if (displayKind === "hidden") continue;
 
     if (displayMessage.role === "user") {
@@ -162,12 +168,27 @@ export function buildConversationDisplayBlocks(
   return blocks;
 }
 
+function buildChronologicalConversationDisplayBlocks(displayMessages: ConversationMessage[]): ConversationDisplayBlock[] {
+  const blocks: ConversationDisplayBlock[] = [];
+
+  for (const message of displayMessages) {
+    const displayMessage = conversationMessageForDisplay(message, "chronological");
+    if (!displayMessage) continue;
+
+    const displayKind = conversationMessageDisplayKind(displayMessage, "chronological");
+    if (displayKind === "hidden" || displayKind === "tool") continue;
+    blocks.push(messageBlock(displayMessage, displayKind));
+  }
+
+  return blocks;
+}
+
 export function conversationMessageDisplayKind(
   message: ConversationMessage,
-  mode: ConversationDisplayMode = "normal",
+  mode: ConversationDisplayMode = "compact",
 ): ConversationMessageDisplayKind {
-  if (mode === "normal" && isLeakedToolCallMessage(message)) return "hidden";
-  if (mode === "normal" && isToolDisplayMessage(message)) return "tool";
+  if (isLeakedToolCallMessage(message)) return "hidden";
+  if (mode === "compact" && isToolDisplayMessage(message)) return "tool";
   if (message.role === "assistant" || message.role === "user") return "markdown";
   return "plain";
 }
@@ -184,8 +205,20 @@ function dedupeSyntheticSnapshotMessages(messages: ConversationMessage[]): Conve
   const result: ConversationMessage[] = [];
   const indexById = new Map<string, number>();
   const indexBySignature = new Map<string, number>();
+  const indexBySyntheticUserInput = new Map<string, number>();
 
   for (const message of messages) {
+    const syntheticUserInput = syntheticUserInputSignature(message);
+    const syntheticUserInputIndex = syntheticUserInput ? indexBySyntheticUserInput.get(syntheticUserInput) : undefined;
+    const syntheticUserInputMatch = syntheticUserInputIndex !== undefined ? result[syntheticUserInputIndex] : undefined;
+    if (syntheticUserInputIndex !== undefined && syntheticUserInputMatch && shouldDedupeSyntheticUserInput(syntheticUserInputMatch, message)) {
+      const next = isSyntheticUserInputMessageId(syntheticUserInputMatch.id) ? message : syntheticUserInputMatch;
+      result[syntheticUserInputIndex] = next;
+      indexById.delete(syntheticUserInputMatch.id);
+      indexById.set(next.id, syntheticUserInputIndex);
+      continue;
+    }
+
     const signature = snapshotDuplicateSignature(message);
     const signatureIndex = signature ? indexBySignature.get(signature) : undefined;
     const signatureMatch = signatureIndex !== undefined ? result[signatureIndex] : undefined;
@@ -210,10 +243,23 @@ function dedupeSyntheticSnapshotMessages(messages: ConversationMessage[]): Conve
 
     indexById.set(message.id, result.length);
     if (signature) indexBySignature.set(signature, result.length);
+    if (syntheticUserInput) indexBySyntheticUserInput.set(syntheticUserInput, result.length);
     result.push(message);
   }
 
   return result;
+}
+
+function syntheticUserInputSignature(message: ConversationMessage): string | undefined {
+  if (message.role !== "user") return undefined;
+  const text = message.text.trim();
+  return text || undefined;
+}
+
+function shouldDedupeSyntheticUserInput(left: ConversationMessage, right: ConversationMessage): boolean {
+  if (!isSyntheticUserInputMessageId(left.id) || isSyntheticUserInputMessageId(right.id)) return false;
+  if (left.timestamp === undefined || right.timestamp === undefined) return true;
+  return Math.abs(left.timestamp - right.timestamp) <= SYNTHETIC_USER_INPUT_DEDUPE_MS;
 }
 
 function snapshotDuplicateSignature(message: ConversationMessage): string | undefined {
@@ -226,12 +272,17 @@ function isSyntheticSnapshotMessageId(id: string): boolean {
   return /^snapshot-\d+-\d+$/.test(id) || /^tool-snapshot-\d+-\d+$/.test(id) || /^bash-\d+-\d+$/.test(id);
 }
 
+function isSyntheticUserInputMessageId(id: string): boolean {
+  return id.startsWith("user-gui-command-");
+}
+
 function conversationMessageForDisplay(message: ConversationMessage, mode: ConversationDisplayMode): ConversationMessage | undefined {
-  if (mode !== "normal" || message.role !== "assistant") return message;
+  if (message.role !== "assistant") return message;
 
   const text = stripSerializedToolCallsFromText(message.text);
-  if (!text) return undefined;
-  return text === message.text && !message.thinking ? message : { ...message, text, thinking: undefined };
+  const thinking = mode === "compact" ? undefined : message.thinking;
+  if (!text && !thinking?.trim()) return undefined;
+  return text === message.text && thinking === message.thinking ? message : { ...message, text, thinking };
 }
 
 export function toolDisplayModel(message: ConversationMessage): ToolDisplayModel {

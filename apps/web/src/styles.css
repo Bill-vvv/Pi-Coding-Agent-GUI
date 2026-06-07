@@ -9,10 +9,13 @@
 @import "./styles/extension-ui.css";
 @import "./styles/model-picker.css";
 @import "./styles/settings.css";
+@import "./styles/remote-access.css";
+@import "./styles/provider-auth.css";
 @import "./styles/token-usage.css";
 @import "./styles/session-history.css";
-@import "./styles/checkpoints.css";
+@import "./styles/session-tree.css";
 @import "./styles/thinking-animation.css";
 @import "./styles/feedback.css";
 @import "./styles/path-picker.css";
+@import "./styles/runtime-logs.css";
 @import "./styles/responsive.css";

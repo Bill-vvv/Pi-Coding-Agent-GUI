@@ -23,12 +23,12 @@ function subagentRun(overrides: Partial<SubagentRun> = {}): SubagentRun {
     parentRuntimeId: "runtime-1",
     parentToolCallId: "subagent-1",
     parentToolMessageId: "tool-subagent-1",
-    agent: "trellis-check",
+    agent: "review-agent",
     mode: "single",
     status: "succeeded",
     startedAt: 1,
     updatedAt: 3,
-    runs: [{ id: "trellis-check-1", agent: "trellis-check", status: "succeeded", finalText: "child final" }],
+    runs: [{ id: "review-agent-1", agent: "review-agent", status: "succeeded", finalText: "child final" }],
     finalText: "child final",
     ...overrides,
   };
@@ -38,10 +38,10 @@ test("buildConversationDisplayBlocks folds matching subagent tool into the proce
   const blocks = buildConversationDisplayBlocks(
     [
       message({ id: "user-1", role: "user", text: "检查一下", timestamp: 1, updatedAt: 1 }),
-      message({ id: "tool-subagent-1", role: "tool", title: "trellis_subagent 完成", text: "raw subagent output", timestamp: 2, updatedAt: 2 }),
+      message({ id: "tool-subagent-1", role: "tool", title: "agent_run 完成", text: "raw subagent output", timestamp: 2, updatedAt: 2 }),
       message({ id: "tool-read-1", role: "tool", title: "read 完成", text: "README.md", timestamp: 3, updatedAt: 3 }),
     ],
-    "normal",
+    "compact",
     { subagentRuns: [subagentRun()] },
   );
 
@@ -60,7 +60,7 @@ test("buildConversationDisplayBlocks keeps ordinary tools grouped when no subage
       message({ id: "user-1", role: "user", text: "读文件", timestamp: 1, updatedAt: 1 }),
       message({ id: "tool-read-1", role: "tool", title: "read 完成", text: "README.md", timestamp: 2, updatedAt: 2 }),
     ],
-    "normal",
+    "compact",
     { subagentRuns: [subagentRun({ parentToolMessageId: "tool-other" })] },
   );
 
@@ -80,6 +80,39 @@ test("buildConversationDisplayBlocks hides synthetic snapshot duplicates of live
 
   const messageBlocks = blocks.filter((block) => block.type === "message");
   assert.deepEqual(messageBlocks.map((block) => block.message.id), ["user-live", "assistant-live"]);
+});
+
+test("buildConversationDisplayBlocks hides synthetic slash command duplicates of Pi user messages", () => {
+  const blocks = buildConversationDisplayBlocks([
+    message({ id: "user-gui-command-1", role: "user", text: "/goal ship it", timestamp: 100, updatedAt: 100 }),
+    message({ id: "pi-user-1", role: "user", text: "/goal ship it", timestamp: 102, updatedAt: 102 }),
+    message({ id: "assistant-1", role: "assistant", text: "Goal updated", timestamp: 103, updatedAt: 103 }),
+  ]);
+
+  const messageBlocks = blocks.filter((block) => block.type === "message");
+  assert.deepEqual(messageBlocks.map((block) => block.message.id), ["pi-user-1", "assistant-1"]);
+});
+
+test("buildConversationDisplayBlocks hides synthetic GUI prompt duplicates of Pi user messages", () => {
+  const blocks = buildConversationDisplayBlocks([
+    message({ id: "user-gui-command-1", role: "user", text: "继续修复这个问题", timestamp: 100, updatedAt: 100 }),
+    message({ id: "pi-user-1", role: "user", text: "继续修复这个问题", timestamp: 102, updatedAt: 102 }),
+    message({ id: "assistant-1", role: "assistant", thinking: "分析中", timestamp: 103, updatedAt: 103, isStreaming: true }),
+  ]);
+
+  const messageBlocks = blocks.filter((block) => block.type === "message");
+  assert.deepEqual(messageBlocks.map((block) => block.message.id), ["pi-user-1"]);
+});
+
+test("buildConversationDisplayBlocks keeps a repeated synthetic slash command after an earlier Pi message", () => {
+  const blocks = buildConversationDisplayBlocks([
+    message({ id: "pi-user-1", role: "user", text: "/session", timestamp: 100, updatedAt: 100 }),
+    message({ id: "assistant-1", role: "assistant", text: "Stats 1", timestamp: 101, updatedAt: 101 }),
+    message({ id: "user-gui-command-2", role: "user", text: "/session", timestamp: 102, updatedAt: 102 }),
+  ]);
+
+  const messageBlocks = blocks.filter((block) => block.type === "message");
+  assert.deepEqual(messageBlocks.map((block) => block.message.id), ["pi-user-1", "assistant-1", "user-gui-command-2"]);
 });
 
 test("buildConversationDisplayBlocks keeps repeated messages with different timestamps", () => {
@@ -117,14 +150,60 @@ test("buildConversationDisplayBlocks still groups thinking-only assistant update
   assert.deepEqual(toolGroups[0]?.thinkingMessages.map((item) => item.id), ["assistant-thinking"]);
 });
 
+test("buildConversationDisplayBlocks keeps assistant thinking inline in chronological mode", () => {
+  const blocks = buildConversationDisplayBlocks(
+    [message({ id: "assistant-1", role: "assistant", text: "最终回答", thinking: "推理过程", timestamp: 100, updatedAt: 100 })],
+    "chronological",
+  );
+
+  assert.equal(blocks.some((block) => block.type === "tool_group"), false);
+  const messageBlocks = blocks.filter((block) => block.type === "message");
+  assert.equal(messageBlocks.length, 1);
+  assert.equal(messageBlocks[0]?.message.text, "最终回答");
+  assert.equal(messageBlocks[0]?.message.thinking, "推理过程");
+});
+
+test("buildConversationDisplayBlocks keeps tools inline in chronological mode", () => {
+  const blocks = buildConversationDisplayBlocks(
+    [
+      message({ id: "user-1", role: "user", text: "读文件", timestamp: 1, updatedAt: 1 }),
+      message({ id: "tool-subagent-1", role: "tool", title: "agent_run 完成", text: "raw subagent output", timestamp: 2, updatedAt: 2 }),
+      message({ id: "tool-read-1", role: "tool", title: "read 完成", text: "README.md", timestamp: 3, updatedAt: 3 }),
+      message({ id: "assistant-1", role: "assistant", text: "读完了", timestamp: 4, updatedAt: 4 }),
+    ],
+    "chronological",
+    { subagentRuns: [subagentRun()] },
+  );
+
+  assert.equal(blocks.some((block) => block.type === "tool_group"), false);
+  const messageBlocks = blocks.filter((block) => block.type === "message");
+  assert.deepEqual(messageBlocks.map((block) => block.message.id), ["user-1", "tool-subagent-1", "tool-read-1", "assistant-1"]);
+  assert.deepEqual(messageBlocks.map((block) => block.displayKind), ["markdown", "plain", "plain", "markdown"]);
+});
+
+test("buildConversationDisplayBlocks strips serialized tool-call payloads in chronological mode", () => {
+  const blocks = buildConversationDisplayBlocks(
+    [
+      message({ id: "assistant-tool-call", role: "assistant", text: '{"type":"toolCall","name":"read"}', timestamp: 1, updatedAt: 1 }),
+      message({ id: "assistant-answer", role: "assistant", text: '完成 {"type":"toolCall","name":"read"} done', thinking: "先读文件", timestamp: 2, updatedAt: 2 }),
+    ],
+    "chronological",
+  );
+
+  const messageBlocks = blocks.filter((block) => block.type === "message");
+  assert.deepEqual(messageBlocks.map((block) => block.message.id), ["assistant-answer"]);
+  assert.equal(messageBlocks[0]?.message.text, "完成 done");
+  assert.equal(messageBlocks[0]?.message.thinking, "先读文件");
+});
+
 test("buildConversationDisplayBlocks merges thinking and subagent runs into one process group", () => {
   const blocks = buildConversationDisplayBlocks(
     [
       message({ id: "user-1", role: "user", text: "检查", timestamp: 1, updatedAt: 1 }),
       message({ id: "assistant-thinking", role: "assistant", text: "我会先分析", thinking: "先分析", timestamp: 2, updatedAt: 2 }),
-      message({ id: "tool-subagent-1", role: "tool", title: "trellis_subagent 完成", text: "raw subagent output", timestamp: 3, updatedAt: 3 }),
+      message({ id: "tool-subagent-1", role: "tool", title: "agent_run 完成", text: "raw subagent output", timestamp: 3, updatedAt: 3 }),
     ],
-    "normal",
+    "compact",
     { subagentRuns: [subagentRun()] },
   );
 

@@ -8,11 +8,3 @@ export function messageRoleLabel(role: ConversationMessage["role"]): string {
   return "错误";
 }
 
-export function formatPayload(payload: unknown): string {
-  if (typeof payload === "string") return payload;
-  try {
-    return JSON.stringify(payload, null, 2);
-  } catch {
-    return String(payload);
-  }
-}

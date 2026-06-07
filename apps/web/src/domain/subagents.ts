@@ -51,11 +51,6 @@ export function subagentRunIsActive(run: SubagentRun): boolean {
   return run.runs.some((child) => child.status === "pending" || child.status === "running");
 }
 
-export function runningSubagentRunsForRuntime(runs: Record<string, SubagentRun>, runtimeId: string): SubagentRun[] {
-  return Object.values(runs)
-    .filter((run) => run.parentRuntimeId === runtimeId && subagentRunIsActive(run))
-    .sort((left, right) => right.updatedAt - left.updatedAt);
-}
 
 export function subagentDetailKey(runId: string, childRunId: string): string {
   return `${runId}:${childRunId}`;

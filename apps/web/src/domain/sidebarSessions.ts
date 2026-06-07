@@ -3,15 +3,17 @@ import type { GuiSession, Runtime, RuntimeConversationSummary } from "@pi-gui/sh
 export function sidebarSessionTitle(runtime: Runtime, summary: RuntimeConversationSummary | undefined, session: GuiSession | undefined): string {
   if (summary?.title) return summary.title;
   if (session?.title) return session.title;
+  if (runtime.status === "running" || runtime.status === "starting") return "新对话";
   if (session) return `历史对话 ${session.id.slice(0, 8)}`;
   if (runtime.sessionId) return `对话 ${runtime.sessionId.slice(0, 8)}`;
-  if (runtime.status === "running" || runtime.status === "starting") return "新对话";
   return `对话 ${runtime.id.slice(0, 8)}`;
 }
 
 export function sidebarSessionDetail(runtime: Runtime, summary: RuntimeConversationSummary | undefined, session: GuiSession | undefined): string | undefined {
   if (summary?.detail) return summary.detail;
   if (summary?.messageCount) return `${summary.messageCount} 条消息`;
+  if (session?.title) return formatSidebarSessionDate(session.updatedAt);
+  if (runtime.status === "running" || runtime.status === "starting") return undefined;
   if (session) return formatSidebarSessionDate(session.updatedAt);
   if (runtime.sessionId) return `Session ${runtime.sessionId.slice(0, 8)}`;
   return undefined;

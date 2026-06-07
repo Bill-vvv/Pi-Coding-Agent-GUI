@@ -25,14 +25,14 @@ export function performanceFixtureEvents(now = Date.now()): ServerEvent[] {
     parentRuntimeId: "fixture-runtime-1",
     parentToolCallId: "subagent-fixture",
     parentToolMessageId: "tool-subagent-fixture",
-    agent: "trellis-check",
+    agent: "review-agent",
     mode: "parallel",
     status: "running",
     startedAt: now - 5_000,
     updatedAt: now,
     runs: [
-      { id: "child-1", agent: "trellis-check", status: "running", textTail: "正在分析性能路径…", sessionFile: "/tmp/pi-gui-fixture/child-1.jsonl" },
-      { id: "child-2", agent: "trellis-check", status: "succeeded", finalText: "完成局部检查。", sessionFile: "/tmp/pi-gui-fixture/child-2.jsonl" },
+      { id: "child-1", agent: "review-agent", status: "running", textTail: "正在分析性能路径…", sessionFile: "/tmp/pi-gui-fixture/child-1.jsonl" },
+      { id: "child-2", agent: "review-agent", status: "succeeded", finalText: "完成局部检查。", sessionFile: "/tmp/pi-gui-fixture/child-2.jsonl" },
     ],
   };
 
@@ -54,6 +54,7 @@ export function performanceFixtureEvents(now = Date.now()): ServerEvent[] {
       projectId: project.id,
       messages: performanceFixtureMessages(runtimes[0]!, 2000, now),
       busy: true,
+      hasMoreBefore: false,
     },
     { type: "subagent.snapshot", runs: [subagentRun] },
   ];
@@ -72,7 +73,7 @@ export function performanceFixtureMessages(runtime: Runtime, count: number, now 
       continue;
     }
     if (index % 37 === 0) {
-      messages.push(message(runtime, "tool-subagent-fixture", "tool", "subagent running", timestamp, "trellis_subagent 运行中", true));
+      messages.push(message(runtime, "tool-subagent-fixture", "tool", "subagent running", timestamp, "agent_run 运行中", true));
       continue;
     }
     const code = index % 23 === 0 ? `\n\n\`\`\`ts\n${"const value = 1;\n".repeat(120)}\`\`\`` : "";

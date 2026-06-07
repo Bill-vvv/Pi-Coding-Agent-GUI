@@ -1,7 +1,8 @@
 import type { ConversationMessage, SubagentChildRun, SubagentRun } from "@pi-gui/shared";
+import { formatCompactCount } from "../domain/numberFormat";
 import { buildSubagentLiveConversationMessages, subagentModeLabel, subagentStatusLabel } from "../domain/subagents";
 import { ConversationBlockList } from "./ChatView";
-import { Icon } from "./Icon";
+import { IconButton } from "./ui";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 export type SubagentDetailState = {
@@ -53,9 +54,7 @@ export function SubagentDetailDrawer({ run, selectedChildRunId, detail, onClose,
           </div>
           <p>{subagentModeLabel(run.mode)} · {childCount} child</p>
         </div>
-        <button className="icon-button" type="button" title="关闭" aria-label="关闭子代理详情" onClick={onClose}>
-          <Icon name="x" />
-        </button>
+        <IconButton icon="x" label="关闭子代理详情" title="关闭" onClick={onClose} />
       </header>
 
       {run.runs.length > 1 ? (
@@ -146,7 +145,7 @@ function childMeta(child: SubagentChildRun): string[] {
 function usageText(child: SubagentChildRun): string | undefined {
   const usage = child.usage;
   if (!usage) return undefined;
-  const parts = [usage.turns !== undefined ? `${usage.turns} turns` : undefined, usage.ctxTokens !== undefined ? `${formatCount(usage.ctxTokens)} ctx` : undefined].filter((part): part is string => Boolean(part));
+  const parts = [usage.turns !== undefined ? `${formatCompactCount(usage.turns)} turns` : undefined, usage.ctxTokens !== undefined ? `${formatCompactCount(usage.ctxTokens)} ctx` : undefined].filter((part): part is string => Boolean(part));
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
@@ -154,6 +153,3 @@ function subagentChildIsActive(child: SubagentChildRun): boolean {
   return child.status === "pending" || child.status === "running";
 }
 
-function formatCount(value: number): string {
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1, notation: "compact" }).format(value);
-}

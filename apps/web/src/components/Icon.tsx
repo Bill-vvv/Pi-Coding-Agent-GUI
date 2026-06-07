@@ -1,4 +1,4 @@
-export type IconName = "archive" | "arrow-left" | "arrow-right" | "checkpoint" | "copy" | "folder" | "mic" | "play" | "plus" | "send" | "settings" | "stop" | "x";
+export type IconName = "archive" | "arrow-left" | "arrow-right" | "attach" | "copy" | "enter" | "folder" | "logs" | "mic" | "play" | "plus" | "refresh" | "settings" | "stop" | "x";
 
 export function Icon({ name }: { name: IconName }) {
   const common = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", xmlns: "http://www.w3.org/2000/svg", "aria-hidden": true };
@@ -26,11 +26,11 @@ export function Icon({ name }: { name: IconName }) {
           <path d="m13 6 6 6-6 6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
-    case "checkpoint":
+    case "attach":
       return (
         <svg {...common}>
-          <path d="M7.25 4.75h9.5A1.75 1.75 0 0 1 18.5 6.5v13l-6.5-3.75-6.5 3.75v-13a1.75 1.75 0 0 1 1.75-1.75Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-          <path d="m9 10.75 2.25 2.25L15.5 8.75" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M8.25 12.4 13.8 6.85a3.4 3.4 0 0 1 4.8 4.8l-6.9 6.9a5.1 5.1 0 0 1-7.2-7.2l7.05-7.05" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="m9.55 15.15 6.1-6.1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </svg>
       );
     case "copy":
@@ -46,11 +46,22 @@ export function Icon({ name }: { name: IconName }) {
           <path d="M3.75 7.75A2.75 2.75 0 0 1 6.5 5h3.2c.72 0 1.39.34 1.82.92l.78 1.05c.24.32.61.51 1.01.51h5.19A2.75 2.75 0 0 1 21.25 10.23v5.52A3.25 3.25 0 0 1 18 19H6a3.25 3.25 0 0 1-3.25-3.25v-8Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
         </svg>
       );
+    case "logs":
+      return (
+        <svg {...common}>
+          <path d="M6.5 3.75h7.75L18.5 8v10.25A2.25 2.25 0 0 1 16.25 20.5h-9.5A2.25 2.25 0 0 1 4.5 18.25V5.75A2 2 0 0 1 6.5 3.75Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+          <path d="M14 4.25V8.5h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M8 11h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M8 14.5h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M8 18h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      );
     case "mic":
       return (
         <svg {...common}>
-          <path d="M12 4.5a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0v-4a3 3 0 0 0-3-3Z" stroke="currentColor" strokeWidth="1.8" />
-          <path d="M6.5 10.5v1a5.5 5.5 0 0 0 11 0v-1M12 17v3M9 20h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <rect x="8" y="3.75" width="8" height="11" rx="4" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M5.75 11.5a6.25 6.25 0 0 0 12.5 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M12 17.75v2.5M8.75 20.25h6.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </svg>
       );
     case "play":
@@ -65,11 +76,20 @@ export function Icon({ name }: { name: IconName }) {
           <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
       );
-    case "send":
+    case "refresh":
       return (
         <svg {...common}>
-          <path d="m4.5 11.5 15-7-4.9 15-3.2-6.4-6.9-1.6Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-          <path d="m11.4 13.1 8.1-8.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M18.5 8.25A7 7 0 0 0 6.05 6.2L4.5 8.25" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M4.5 8.25h4.25" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M5.5 15.75a7 7 0 0 0 12.45 2.05l1.55-2.05" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M19.5 15.75h-4.25" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      );
+    case "enter":
+      return (
+        <svg {...common}>
+          <path d="M6.75 5.25v5.5a3 3 0 0 0 3 3h7.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="m13.25 9.75 4 4-4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
     case "settings":

@@ -57,7 +57,9 @@
 
 .settings-field,
 .settings-setting-row,
-.settings-archive-dropdown {
+.settings-archive-dropdown,
+.settings-diagnostics-dropdown,
+.settings-hotkeys-dropdown {
   border-top: 1px solid var(--color-border-divider);
 }
 
@@ -65,7 +67,9 @@
 
 .settings-field,
 .settings-setting-row,
-.settings-archive-dropdown > summary {
+.settings-archive-dropdown > summary,
+.settings-diagnostics-dropdown > summary,
+.settings-hotkeys-dropdown > summary {
   display: grid;
   grid-template-columns: minmax(6rem, 0.34fr) minmax(0, 1fr);
   gap: 0.8rem;
@@ -76,6 +80,7 @@
 
 .settings-field > label,
 .settings-archive-summary-main > span,
+.settings-diagnostics-summary-main > span,
 .settings-setting-copy > span {
   color: var(--color-text-primary);
   font-size: var(--text-control);
@@ -154,6 +159,24 @@
 .settings-color-swatch.green { background: #76c893; }
 .settings-color-swatch.rose { background: #e58aa8; }
 
+.settings-text-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-input);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--text-control);
+  line-height: var(--line-control);
+  padding: 0.42rem 0.58rem;
+}
+
+.settings-text-input:focus {
+  border-color: var(--color-border-focus);
+  outline: none;
+}
+
 .settings-setting-row.disabled { opacity: 0.62; }
 
 .settings-navigation-row {
@@ -186,6 +209,7 @@
 
 .settings-setting-copy small,
 .settings-archive-summary-main small,
+.settings-diagnostics-summary-main small,
 .settings-archive-item-main small {
   overflow: hidden;
   color: var(--color-text-muted);
@@ -259,14 +283,20 @@
   outline-offset: 2px;
 }
 
-.settings-archive-dropdown > summary {
+.settings-archive-dropdown > summary,
+.settings-diagnostics-dropdown > summary,
+.settings-hotkeys-dropdown > summary {
   cursor: pointer;
   list-style: none;
 }
 
-.settings-archive-dropdown > summary::-webkit-details-marker { display: none; }
+.settings-archive-dropdown > summary::-webkit-details-marker,
+.settings-diagnostics-dropdown > summary::-webkit-details-marker,
+.settings-hotkeys-dropdown > summary::-webkit-details-marker { display: none; }
 
-.settings-archive-dropdown > summary::after {
+.settings-archive-dropdown > summary::after,
+.settings-diagnostics-dropdown > summary::after,
+.settings-hotkeys-dropdown > summary::after {
   content: "⌄";
   justify-self: end;
   color: var(--color-text-muted);
@@ -274,13 +304,268 @@
   transition: transform 140ms ease;
 }
 
-.settings-archive-dropdown[open] > summary::after { transform: rotate(180deg); }
+.settings-archive-dropdown[open] > summary::after,
+.settings-diagnostics-dropdown[open] > summary::after,
+.settings-hotkeys-dropdown[open] > summary::after { transform: rotate(180deg); }
 
-.settings-archive-summary-main {
+.settings-diagnostics-dropdown > summary,
+.settings-hotkeys-dropdown > summary {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.settings-archive-summary-main,
+.settings-diagnostics-summary-main {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 0.1rem;
+}
+
+.settings-diagnostics-pill {
+  justify-self: end;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--line-control);
+  padding: 0.12rem 0.45rem;
+}
+
+.settings-diagnostics-pill.ready {
+  border-color: color-mix(in srgb, var(--color-status-success) 48%, var(--color-border-subtle));
+  color: var(--color-status-success);
+}
+
+.settings-diagnostics-pill.warning {
+  border-color: var(--color-warning-border);
+  color: var(--color-warning-text);
+}
+
+.settings-diagnostics-pill.error {
+  border-color: var(--color-error-border-subtle);
+  color: var(--color-error-text);
+}
+
+.settings-diagnostics-body {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0 0 0.75rem;
+}
+
+.settings-voice-summary {
+  display: grid;
+  gap: 0.08rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+  padding: 0.48rem 0.62rem;
+}
+
+.settings-voice-summary > span {
+  color: var(--color-text-primary);
+  font-size: var(--text-control);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-control);
+}
+
+.settings-voice-summary > small,
+.settings-voice-hint {
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--line-copy-tight);
+}
+
+.settings-voice-hint {
+  margin: 0;
+}
+
+.settings-voice-hint code {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
+
+.settings-voice-preset-fields {
+  display: grid;
+}
+
+.settings-voice-advanced {
+  border-top: 1px solid var(--color-border-divider);
+  padding-top: 0.25rem;
+}
+
+.settings-voice-advanced > summary {
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--text-caption);
+  line-height: var(--line-control);
+  padding: 0.25rem 0;
+}
+
+.settings-voice-advanced > summary:hover {
+  color: var(--color-text-primary);
+}
+
+.settings-voice-advanced-body {
+  display: grid;
+  gap: 0.45rem;
+  padding-top: 0.2rem;
+}
+
+.settings-hotkeys-body {
+  display: grid;
+  gap: 0.62rem;
+  padding: 0 0 0.75rem;
+}
+
+.settings-hotkey-group {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.settings-hotkey-group h3 {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-control);
+}
+
+.settings-hotkey-list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+}
+
+.settings-hotkey-row {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 0.42fr) minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: center;
+  border-top: 1px solid var(--color-border-divider);
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--line-control);
+  padding: 0.42rem 0.58rem;
+}
+
+.settings-hotkey-row.editable {
+  grid-template-columns: minmax(7.5rem, 0.34fr) minmax(7rem, 0.28fr) minmax(0, 1fr);
+}
+
+.settings-hotkey-row:first-child { border-top: 0; }
+
+.settings-hotkey-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.settings-hotkey-editors {
+  display: flex;
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.settings-hotkey-editors input {
+  min-width: 0;
+  flex: 1;
+  font-size: var(--text-caption);
+}
+
+.settings-hotkey-editors button {
+  flex: none;
+  border-color: var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+}
+
+.settings-hotkey-keys kbd {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: rgb(255 255 255 / 5%);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  line-height: 1.2;
+  padding: 0.14rem 0.32rem;
+}
+
+.settings-hotkeys-hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--line-copy-tight);
+}
+
+.settings-diagnostics-grid {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.settings-diagnostics-row {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 0.7rem;
+  align-items: baseline;
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+}
+
+.settings-diagnostics-row strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-weight: var(--weight-regular);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-diagnostics-issues {
+  display: grid;
+  gap: 0.38rem;
+}
+
+.settings-diagnostics-issue {
+  display: grid;
+  gap: 0.1rem;
+  border-left: 2px solid var(--color-border-subtle);
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  padding-left: 0.55rem;
+}
+
+.settings-diagnostics-issue.error { border-left-color: var(--color-error-text); }
+.settings-diagnostics-issue.warning { border-left-color: var(--color-warning-text); }
+
+.settings-diagnostics-issue strong,
+.settings-diagnostics-ok,
+.settings-diagnostics-error {
+  color: var(--color-text-primary);
+  font-size: var(--text-caption);
+  line-height: var(--line-control);
+}
+
+.settings-diagnostics-error { color: var(--color-error-text); }
+
+.settings-secondary-button {
+  justify-self: start;
+  min-height: 28px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--text-caption);
+  padding: 0.22rem 0.62rem;
+}
+
+.settings-secondary-button:hover:not(:disabled) {
+  border-color: var(--color-border-focus);
+  background: var(--color-hover-muted);
+  color: var(--color-text-primary);
 }
 
 .settings-scroll-area {
@@ -291,7 +576,7 @@
   scrollbar-width: thin;
 }
 
-.settings-scroll-area.is-scrolling { scrollbar-color: var(--color-scrollbar-thumb) transparent; }
+.settings-scroll-area.is-scrolling { scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track); }
 
 .settings-scroll-area::-webkit-scrollbar {
   width: 10px;
@@ -299,6 +584,8 @@
 }
 
 .settings-scroll-area::-webkit-scrollbar-track { background: transparent; }
+
+.settings-scroll-area.is-scrolling::-webkit-scrollbar-track { background: var(--color-scrollbar-track); }
 
 .settings-scroll-area::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
@@ -388,14 +675,19 @@
   .settings-field,
   .settings-setting-row,
   .settings-archive-dropdown > summary,
-  .settings-archive-item {
+  .settings-diagnostics-dropdown > summary,
+  .settings-hotkeys-dropdown > summary,
+  .settings-archive-item,
+  .settings-hotkey-row {
     grid-template-columns: 1fr;
   }
 
   .settings-radio-options,
   .settings-color-options,
   .settings-toggle-control,
-  .settings-archive-dropdown > summary::after {
+  .settings-archive-dropdown > summary::after,
+  .settings-diagnostics-dropdown > summary::after,
+  .settings-hotkeys-dropdown > summary::after {
     justify-self: start;
   }
 

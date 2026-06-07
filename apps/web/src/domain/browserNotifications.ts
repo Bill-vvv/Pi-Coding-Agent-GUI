@@ -1,4 +1,5 @@
 export type BrowserNotificationPermission = NotificationPermission | "unsupported";
+export type BrowserNotificationOptions = NotificationOptions & { onClick?: () => void };
 
 export function browserNotificationsSupported(): boolean {
   return typeof window !== "undefined" && "Notification" in window;
@@ -11,13 +12,25 @@ export function currentBrowserNotificationPermission(): BrowserNotificationPermi
 
 export async function requestBrowserNotificationPermission(): Promise<BrowserNotificationPermission> {
   if (!browserNotificationsSupported()) return "unsupported";
-  return window.Notification.requestPermission();
+  try {
+    return await window.Notification.requestPermission();
+  } catch {
+    return currentBrowserNotificationPermission();
+  }
 }
 
-export function showBrowserNotification(title: string, options?: NotificationOptions): boolean {
+export function showBrowserNotification(title: string, options?: BrowserNotificationOptions): boolean {
   if (currentBrowserNotificationPermission() !== "granted") return false;
+  const { onClick, ...notificationOptions } = options ?? {};
   try {
-    new window.Notification(title, options);
+    const notification = new window.Notification(title, notificationOptions);
+    if (onClick) {
+      notification.onclick = () => {
+        notification.close();
+        window.focus();
+        onClick();
+      };
+    }
     return true;
   } catch {
     return false;

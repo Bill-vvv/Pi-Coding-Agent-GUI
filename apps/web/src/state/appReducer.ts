@@ -5,7 +5,6 @@ import type {
   ConversationMessage,
   GuiEvent,
   GuiSession,
-  RewindCheckpoint,
   ResponseMode,
   Runtime,
   RuntimeConversationSummary,
@@ -38,7 +37,6 @@ export type AppState = {
   extensionUiByRuntime: ExtensionUiChromeByRuntime;
   guiEvents: GuiEvent[];
   sessions: GuiSession[];
-  checkpointsByProject: Record<string, RewindCheckpoint[]>;
   subagentRuns: Record<string, SubagentRun>;
   subagentDetails: Record<string, { childRunId: string; messages: ConversationMessage[]; readAt: number; error?: string }>;
   selectedProjectId?: string;
@@ -67,7 +65,6 @@ export const initialAppState: AppState = {
   extensionUiByRuntime: {},
   guiEvents: [],
   sessions: [],
-  checkpointsByProject: {},
   subagentRuns: {},
   subagentDetails: {},
   selectedRuntimeIdByProject: {},
@@ -112,12 +109,23 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return isTransportConnectionError(state.operationError) ? { ...state, operationError: undefined } : state;
     case "set.projectCwd":
       return { ...state, projectCwd: action.cwd };
-    case "select.project":
-      return { ...state, selectedProjectId: action.projectId, selectedRuntimeId: undefined };
+    case "select.project": {
+      const selectedRuntimeId = preferredRuntimeIdForProject(state.runtimes, action.projectId, [
+        action.projectId ? state.selectedRuntimeIdByProject[action.projectId] : undefined,
+      ]);
+      return {
+        ...state,
+        projectCwd: "",
+        selectedProjectId: action.projectId,
+        selectedRuntimeId,
+        selectedRuntimeIdByProject: seedSelectedRuntimeMap(state.selectedRuntimeIdByProject, action.projectId, selectedRuntimeId),
+      };
+    }
     case "select.runtime": {
       const hydratedRuntimeIds = rememberHydratedRuntime(state.hydratedRuntimeIds, action.runtimeId);
       return {
         ...state,
+        projectCwd: "",
         selectedProjectId: action.projectId,
         selectedRuntimeId: action.runtimeId,
         selectedRuntimeIdByProject: { ...state.selectedRuntimeIdByProject, [action.projectId]: action.runtimeId },
@@ -181,8 +189,11 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
     case "hello": {
       const nextProjectId = event.projects.some((project) => project.id === state.selectedProjectId) ? state.selectedProjectId : event.projects[0]?.id;
       const nextRuntimeMap = reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, event.runtimes);
-      const nextRuntimeId = validRuntimeIdForProject(event.runtimes, nextProjectId, state.selectedRuntimeId);
-      const seededRuntimeMap = nextRuntimeMap;
+      const nextRuntimeId = preferredRuntimeIdForProject(event.runtimes, nextProjectId, [
+        state.selectedRuntimeId,
+        nextProjectId ? nextRuntimeMap[nextProjectId] : undefined,
+      ]);
+      const seededRuntimeMap = seedSelectedRuntimeMap(nextRuntimeMap, nextProjectId, nextRuntimeId);
       const nextSubagentRuns = event.subagentRuns ? indexSubagentRuns(event.subagentRuns) : state.subagentRuns;
       return applySettingsState(
         {
@@ -190,7 +201,10 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
           projects: event.projects,
           runtimes: event.runtimes,
           persistedConversationSummaries: indexConversationSummaries(event.conversationSummaries ?? []),
-          sessions: filterChildSubagentSessions(event.sessions ?? state.sessions, nextSubagentRuns),
+          // Session visibility is owned by the backend session projection. The
+          // frontend must not re-derive hidden provider child sessions from
+          // optional subagent run internals.
+          sessions: event.sessions ?? state.sessions,
           subagentRuns: nextSubagentRuns,
           selectedProjectId: nextProjectId,
           selectedRuntimeId: nextRuntimeId,
@@ -202,38 +216,31 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
     }
     case "project.list": {
       const nextProjectId = event.projects.some((project) => project.id === state.selectedProjectId) ? state.selectedProjectId : event.projects[0]?.id;
-      const nextRuntimeId = validRuntimeIdForProject(state.runtimes, nextProjectId, state.selectedRuntimeId);
+      const nextRuntimeMap = reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, state.runtimes);
+      const nextRuntimeId = preferredRuntimeIdForProject(state.runtimes, nextProjectId, [
+        state.selectedRuntimeId,
+        nextProjectId ? nextRuntimeMap[nextProjectId] : undefined,
+      ]);
       return {
         ...state,
         projects: event.projects,
         selectedProjectId: nextProjectId,
         selectedRuntimeId: nextRuntimeId,
+        selectedRuntimeIdByProject: seedSelectedRuntimeMap(nextRuntimeMap, nextProjectId, nextRuntimeId),
       };
     }
     case "project.created":
       return {
         ...state,
+        projectCwd: state.projectCwd.trim() === event.project.cwd ? "" : state.projectCwd,
         projects: upsertById(state.projects, event.project),
         selectedProjectId: event.project.id,
         selectedRuntimeId: undefined,
       };
     case "session.list":
-      return { ...state, sessions: filterChildSubagentSessions(mergeSessionList(state.sessions, event.sessions, event.projectId), state.subagentRuns) };
+      return { ...state, sessions: mergeSessionList(state.sessions, event.sessions, event.projectId) };
     case "session.updated":
-      return { ...state, sessions: filterChildSubagentSessions(upsertById(state.sessions, event.session), state.subagentRuns) };
-    case "checkpoint.list":
-      return {
-        ...state,
-        checkpointsByProject: { ...state.checkpointsByProject, [event.projectId]: event.checkpoints },
-      };
-    case "checkpoint.updated":
-      return {
-        ...state,
-        checkpointsByProject: {
-          ...state.checkpointsByProject,
-          [event.projectId]: upsertById(state.checkpointsByProject[event.projectId] ?? [], event.checkpoint).sort((left, right) => right.createdAt - left.createdAt),
-        },
-      };
+      return { ...state, sessions: upsertById(state.sessions, event.session) };
     case "settings.updated":
       return applySettingsState(state, event.settings, fallbackModelKey);
     case "runtime.status":
@@ -248,7 +255,7 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
           hydratedRuntimeIds,
           state.selectedRuntimeId,
         ),
-        hasMoreBeforeByRuntime: { ...state.hasMoreBeforeByRuntime, [event.runtimeId]: event.messages.length > 0 },
+        hasMoreBeforeByRuntime: { ...state.hasMoreBeforeByRuntime, [event.runtimeId]: event.hasMoreBefore },
         busyByRuntime: { ...state.busyByRuntime, [event.runtimeId]: event.busy },
         contextUsageByRuntime: event.contextUsage
           ? { ...state.contextUsageByRuntime, [event.runtimeId]: event.contextUsage }
@@ -301,6 +308,8 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
         ...state,
         commandsByRuntime: { ...state.commandsByRuntime, [event.runtimeId]: event.commands },
       };
+    case "runtime.logs":
+      return state;
     case "runtime.rpc.response":
       return state;
     case "extension.ui.request":
@@ -308,14 +317,10 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
         ...state,
         extensionUiByRuntime: applyExtensionUiChromeRequest(state.extensionUiByRuntime, event.runtimeId, event.request),
       };
-    case "subagent.snapshot": {
-      const nextSubagentRuns = mergeSubagentRuns(state.subagentRuns, event.runs);
-      return { ...state, subagentRuns: nextSubagentRuns, sessions: filterChildSubagentSessions(state.sessions, nextSubagentRuns) };
-    }
-    case "subagent.run": {
-      const nextSubagentRuns = { ...state.subagentRuns, [event.run.id]: event.run };
-      return { ...state, subagentRuns: nextSubagentRuns, sessions: filterChildSubagentSessions(state.sessions, nextSubagentRuns) };
-    }
+    case "subagent.snapshot":
+      return { ...state, subagentRuns: mergeSubagentRuns(state.subagentRuns, event.runs) };
+    case "subagent.run":
+      return { ...state, subagentRuns: { ...state.subagentRuns, [event.run.id]: event.run } };
     case "subagent.detail":
       return {
         ...state,
@@ -350,22 +355,6 @@ function mergeSubagentRuns(current: Record<string, SubagentRun>, runs: SubagentR
   return { ...current, ...indexSubagentRuns(runs) };
 }
 
-function filterChildSubagentSessions(sessions: GuiSession[], runs: Record<string, SubagentRun>): GuiSession[] {
-  const childSessionFiles = subagentChildSessionFiles(runs);
-  if (childSessionFiles.size === 0) return sessions;
-  return sessions.filter((session) => !childSessionFiles.has(session.piSessionFile));
-}
-
-function subagentChildSessionFiles(runs: Record<string, SubagentRun>): Set<string> {
-  const files = new Set<string>();
-  for (const run of Object.values(runs)) {
-    for (const child of run.runs) {
-      if (child.sessionFile) files.add(child.sessionFile);
-    }
-  }
-  return files;
-}
-
 function applyGuiEvent(state: AppState, event: GuiEvent): AppState {
   const nextState = {
     ...state,
@@ -390,14 +379,15 @@ function upsertGuiEvent(events: GuiEvent[], event: GuiEvent): GuiEvent[] {
 
 function applyRuntimeStatus(state: AppState, runtime: Runtime): AppState {
   const nextRuntimes = upsertById(state.runtimes, runtime);
-  const selectedRuntimeId = validRuntimeIdForProject(nextRuntimes, state.selectedProjectId, state.selectedRuntimeId);
-  const selectedRuntimeIdByProject = selectedRuntimeId === state.selectedRuntimeId
-    ? state.selectedRuntimeIdByProject
-    : reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, nextRuntimes);
+  const nextRuntimeMap = reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, nextRuntimes);
+  const selectedRuntimeId = preferredRuntimeIdForProject(nextRuntimes, state.selectedProjectId, [
+    state.selectedRuntimeId,
+    state.selectedProjectId ? nextRuntimeMap[state.selectedProjectId] : undefined,
+  ]);
   const nextState: AppState = {
     ...state,
     runtimes: nextRuntimes,
-    selectedRuntimeIdByProject,
+    selectedRuntimeIdByProject: seedSelectedRuntimeMap(nextRuntimeMap, state.selectedProjectId, selectedRuntimeId),
     selectedRuntimeId,
   };
 
@@ -424,6 +414,7 @@ function applyCommandResult(state: AppState, event: Extract<ServerEvent, { type:
     const projectId = typeof runtime.projectId === "string" ? runtime.projectId : undefined;
     return {
       ...state,
+      projectCwd: "",
       selectedRuntimeId: runtimeId,
       selectedProjectId: projectId ?? state.selectedProjectId,
       selectedRuntimeIdByProject: projectId ? { ...state.selectedRuntimeIdByProject, [projectId]: runtimeId } : state.selectedRuntimeIdByProject,
@@ -434,13 +425,20 @@ function applyCommandResult(state: AppState, event: Extract<ServerEvent, { type:
     return applyRuntimeArchiveCommandResult(state, event);
   }
 
+  if (event.command === "runtime.archiveBlank") {
+    // Guarded cleanup can succeed without archiving when the backend denies cleanup;
+    // hide/reconcile only when the returned runtime confirms archivedAt.
+    return applyRuntimeArchiveCommandResult(state, event, { requireArchivedAt: true });
+  }
+
   return state;
 }
 
-function applyRuntimeArchiveCommandResult(state: AppState, event: Extract<ServerEvent, { type: "command.result" }>): AppState {
+function applyRuntimeArchiveCommandResult(state: AppState, event: Extract<ServerEvent, { type: "command.result" }>, options: { requireArchivedAt?: boolean } = {}): AppState {
   const runtime = isRecord(event.data) && isRecord(event.data.runtime) ? event.data.runtime : undefined;
   const archivedRuntimeId = typeof runtime?.id === "string" ? runtime.id : undefined;
   if (!archivedRuntimeId || state.selectedRuntimeId !== archivedRuntimeId) return state;
+  if (options.requireArchivedAt && typeof runtime?.archivedAt !== "number") return state;
 
   const archivedProjectId = typeof runtime?.projectId === "string" ? runtime.projectId : state.runtimes.find((item) => item.id === archivedRuntimeId)?.projectId;
   const archivedAt = typeof runtime?.archivedAt === "number" ? runtime.archivedAt : Date.now();
@@ -460,6 +458,25 @@ function validRuntimeIdForProject(runtimes: Runtime[], projectId?: string, runti
   if (!projectId || !runtimeId) return undefined;
   const runtime = runtimes.find((item) => item.id === runtimeId && item.projectId === projectId && !item.archivedAt);
   return runtime?.id;
+}
+
+function preferredRuntimeIdForProject(runtimes: Runtime[], projectId: string | undefined, runtimeIds: Array<string | undefined>): string | undefined {
+  if (!projectId) return undefined;
+
+  const visibleRuntimes = runtimes.filter((runtime) => runtime.projectId === projectId && !runtime.archivedAt);
+
+  for (const runtimeId of runtimeIds) {
+    const validRuntimeId = validRuntimeIdForProject(runtimes, projectId, runtimeId);
+    if (validRuntimeId) return validRuntimeId;
+  }
+
+  const activeRuntimeId = visibleRuntimes.find((runtime) => runtime.status === "running")?.id ?? visibleRuntimes.find((runtime) => runtime.status === "starting")?.id;
+  return activeRuntimeId ?? visibleRuntimes[0]?.id;
+}
+
+function seedSelectedRuntimeMap(current: Record<string, string>, projectId: string | undefined, runtimeId: string | undefined): Record<string, string> {
+  if (!projectId || !runtimeId || current[projectId] === runtimeId) return current;
+  return { ...current, [projectId]: runtimeId };
 }
 
 function reconcileSelectedRuntimeMap(current: Record<string, string>, runtimes: Runtime[]): Record<string, string> {

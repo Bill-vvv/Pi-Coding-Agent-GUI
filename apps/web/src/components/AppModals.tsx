@@ -1,9 +1,6 @@
-import type { ExtensionUiRequest, ExtensionUiResponse, GuiSession, Project, RewindCheckpoint, Runtime } from "@pi-gui/shared";
-import type { ConnectionState, DirectoryEntry } from "../types";
-import { CheckpointPanel } from "./CheckpointPanel";
+import type { DirectoryEntry, ExtensionUiRequest, ExtensionUiResponse, ResolvedPath } from "@pi-gui/shared";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { PathPickerModal } from "./PathPickerModal";
-import { SessionHistoryModal } from "./SessionHistoryModal";
 
 type PathPickerState = {
   open: boolean;
@@ -11,59 +8,36 @@ type PathPickerState = {
   parent?: string;
   entries: DirectoryEntry[];
   loading: boolean;
+  resolving: boolean;
+  creatingDirectory: boolean;
   error?: string;
+  manualPath: string;
+  resolvedPath?: ResolvedPath;
+  setManualPath: (path: string) => void;
   closePicker: () => void;
   loadDirectory: (path?: string) => void | Promise<void>;
+  resolveManualPath: (path?: string) => Promise<ResolvedPath | undefined>;
+  createDirectory: (name: string, parent?: string) => Promise<boolean>;
 };
 
 type AppModalsProps = {
   extensionUiRequest?: ExtensionUiRequest;
   onRespondExtensionUi: (response: ExtensionUiResponse) => void;
-  sessionHistoryProject?: Project;
-  sessions: GuiSession[];
-  checkpointPanelProject?: Project;
-  checkpointPanelRuntime?: Runtime;
-  checkpoints: RewindCheckpoint[];
-  pendingCheckpointActionId?: string;
-  runtimes: Runtime[];
-  connection: ConnectionState;
-  pendingHistoryRestoreId?: string;
-  onCloseSessionHistory: () => void;
-  onResumeSession: (sessionId: string) => void;
-  onSelectRuntime: (projectId: string, runtimeId: string) => void;
-  onCloseCheckpointPanel: () => void;
-  onRefreshCheckpoints: () => void;
-  onRestoreCheckpoint: (checkpointId: string, restoreFiles: boolean) => void;
-  onFastForwardCheckpoint: (restoreFiles: boolean) => void;
   pathPicker: PathPickerState;
-  onChoosePickerCwd: () => void;
+  onChoosePickerCwd: () => void | Promise<void>;
   pathPickerTitle: string;
   pathPickerConfirmLabel: string;
+  pathPickerAllowCreateFolder: boolean;
 };
 
 export function AppModals({
   extensionUiRequest,
   onRespondExtensionUi,
-  sessionHistoryProject,
-  sessions,
-  checkpointPanelProject,
-  checkpointPanelRuntime,
-  checkpoints,
-  pendingCheckpointActionId,
-  runtimes,
-  connection,
-  pendingHistoryRestoreId,
-  onCloseSessionHistory,
-  onResumeSession,
-  onSelectRuntime,
-  onCloseCheckpointPanel,
-  onRefreshCheckpoints,
-  onRestoreCheckpoint,
-  onFastForwardCheckpoint,
   pathPicker,
   onChoosePickerCwd,
   pathPickerTitle,
   pathPickerConfirmLabel,
+  pathPickerAllowCreateFolder,
 }: AppModalsProps) {
   return (
     <>
@@ -73,43 +47,26 @@ export function AppModals({
         onCancel={() => onRespondExtensionUi({ cancelled: true })}
       />
 
-      <SessionHistoryModal
-        open={Boolean(sessionHistoryProject)}
-        project={sessionHistoryProject}
-        sessions={sessions}
-        runtimes={runtimes}
-        connection={connection}
-        pendingRestoreId={pendingHistoryRestoreId}
-        onClose={onCloseSessionHistory}
-        onResumeSession={onResumeSession}
-        onSelectRuntime={onSelectRuntime}
-      />
-
-      <CheckpointPanel
-        open={Boolean(checkpointPanelProject)}
-        project={checkpointPanelProject}
-        runtime={checkpointPanelRuntime}
-        checkpoints={checkpoints}
-        connection={connection}
-        pendingActionId={pendingCheckpointActionId}
-        onClose={onCloseCheckpointPanel}
-        onRefresh={onRefreshCheckpoints}
-        onRestore={onRestoreCheckpoint}
-        onFastForward={onFastForwardCheckpoint}
-      />
-
       <PathPickerModal
         open={pathPicker.open}
         cwd={pathPicker.cwd}
         parent={pathPicker.parent}
         entries={pathPicker.entries}
         loading={pathPicker.loading}
+        resolving={pathPicker.resolving}
+        creatingDirectory={pathPicker.creatingDirectory}
         error={pathPicker.error}
+        manualPath={pathPicker.manualPath}
+        resolvedPath={pathPicker.resolvedPath}
+        onManualPathChange={pathPicker.setManualPath}
+        onResolveManualPath={pathPicker.resolveManualPath}
         onClose={pathPicker.closePicker}
         onLoadDirectory={pathPicker.loadDirectory}
         onChooseCurrentCwd={onChoosePickerCwd}
+        onCreateDirectory={pathPicker.createDirectory}
         title={pathPickerTitle}
         confirmLabel={pathPickerConfirmLabel}
+        allowCreateFolder={pathPickerAllowCreateFolder}
       />
     </>
   );

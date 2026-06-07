@@ -1,6 +1,8 @@
 import { useRef, useState, type Dispatch } from "react";
-import type { Project, ResponseMode, Runtime, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
+import type { Project, ResponseMode, Runtime, RuntimeQueue, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
+import { buildChatRuntimePromptCommand } from "../domain/composerCommands";
+import { createRequestId } from "../domain/requestId";
 import type { AppAction } from "../state/appReducer";
 import type { GuiSocketSend, PendingProjectStart, PendingPrompt } from "../types";
 
@@ -35,6 +37,7 @@ export function useProjectRuntimeActions({
 }: UseProjectRuntimeActionsOptions) {
   const pendingPromptRef = useRef<PendingPrompt | undefined>(undefined);
   const pendingRuntimePromptRef = useRef(new Map<string, string>());
+  const runtimeIdsWithLocalUserActivityRef = useRef(new Set<string>());
   const pendingProjectStartRef = useRef<PendingProjectStart | undefined>(undefined);
   const [prompt, setPrompt] = useState("");
 
@@ -53,6 +56,17 @@ export function useProjectRuntimeActions({
     }
 
     if (event.type !== "command.result") return;
+
+    if (event.success && event.command === "project.create" && pendingProjectStartRef.current && event.requestId === pendingProjectStartRef.current.requestId) {
+      const project = commandResultProject(event.data);
+      if (project) {
+        const pending = pendingProjectStartRef.current;
+        pendingProjectStartRef.current = undefined;
+        dispatch({ type: "set.projectCwd", cwd: "" });
+        if (!startRuntimeForProject(project.id, pending.message)) restorePendingMessage(pending.message);
+      }
+      return;
+    }
 
     if (!event.success) {
       if (event.command === "project.create" && pendingProjectStartRef.current && event.requestId === pendingProjectStartRef.current.requestId) {
@@ -78,6 +92,11 @@ export function useProjectRuntimeActions({
       return;
     }
 
+    if (event.command === "runtime.queue.dequeue") {
+      restoreQueuedMessages(commandResultQueue(event.data));
+      return;
+    }
+
     if (isRuntimeLaunchCommand(event.command) && isRecord(event.data) && isRecord(event.data.runtime) && typeof event.data.runtime.id === "string") {
       const runtime = event.data.runtime as { id: string; projectId?: unknown };
       const runtimeId = runtime.id;
@@ -87,9 +106,10 @@ export function useProjectRuntimeActions({
       if (pendingPromptRef.current && event.requestId === pendingPromptRef.current.requestId && projectId === pendingPromptRef.current.projectId) {
         const pending = pendingPromptRef.current;
         pendingPromptRef.current = undefined;
-        const requestId = crypto.randomUUID();
-        if (send({ type: "runtime.prompt", requestId, runtimeId, message: pending.message })) {
+        const requestId = createRequestId();
+        if (send(buildChatRuntimePromptCommand({ requestId, runtimeId, message: pending.message }))) {
           pendingRuntimePromptRef.current.set(requestId, pending.message);
+          markRuntimeLocalUserActivity(runtimeId);
         } else {
           restorePendingMessage(pending.message);
         }
@@ -115,9 +135,21 @@ export function useProjectRuntimeActions({
     if (!startRuntimeForProject(project.id, pendingProjectStart.message)) restorePendingMessage(pendingProjectStart.message);
   }
 
+  function commandResultProject(data: unknown): Project | undefined {
+    const project = isRecord(data) && isRecord(data.project) ? data.project : undefined;
+    if (!project || typeof project.id !== "string" || typeof project.cwd !== "string" || typeof project.name !== "string" || typeof project.lastOpenedAt !== "number") return undefined;
+    return project as Project;
+  }
+
   function restorePendingMessage(message?: string) {
     if (!message?.trim()) return;
     setPrompt((current) => (current.trim() ? current : message));
+  }
+
+  function restoreQueuedMessages(queue: { steering: string[]; followUp: string[] } | undefined) {
+    const queuedText = [...(queue?.steering ?? []), ...(queue?.followUp ?? [])].filter((message) => message.trim()).join("\n\n");
+    if (!queuedText) return;
+    setPrompt((current) => [queuedText, current].filter((text) => text.trim()).join("\n\n"));
   }
 
   function createProjectFromCwd(cwd: string, message?: string): boolean {
@@ -126,7 +158,7 @@ export function useProjectRuntimeActions({
       dispatch({ type: "select.project", projectId: existingProject.id });
       return startRuntimeForProject(existingProject.id, message);
     }
-    const requestId = crypto.randomUUID();
+    const requestId = createRequestId();
     if (!send({ type: "project.create", requestId, cwd })) return false;
     pendingProjectStartRef.current = { cwd, message, requestId };
     return true;
@@ -147,7 +179,7 @@ export function useProjectRuntimeActions({
   }
 
   function startRuntimeForProject(projectId: string, message?: string): boolean {
-    const requestId = crypto.randomUUID();
+    const requestId = createRequestId();
     const sent = send({
       type: "runtime.start",
       requestId,
@@ -168,7 +200,7 @@ export function useProjectRuntimeActions({
   function resumeRuntime(runtimeId: string, message?: string): boolean {
     const runtime = runtimes.find((item) => item.id === runtimeId);
     if (!runtime) return false;
-    const requestId = crypto.randomUUID();
+    const requestId = createRequestId();
     const sent = send({
       type: "runtime.resume",
       requestId,
@@ -183,7 +215,7 @@ export function useProjectRuntimeActions({
   function restartRuntime(runtimeId: string, message?: string): boolean {
     const runtime = runtimes.find((item) => item.id === runtimeId);
     if (!runtime) return false;
-    const requestId = crypto.randomUUID();
+    const requestId = createRequestId();
     const sent = send({
       type: "runtime.restart",
       requestId,
@@ -207,22 +239,37 @@ export function useProjectRuntimeActions({
     send({ type: "runtime.archive", runtimeId });
   }
 
+  function dequeueRuntimeQueue(runtimeId: string) {
+    send({ type: "runtime.queue.dequeue", requestId: createRequestId(), runtimeId });
+  }
+
+  function reorderRuntimeQueue(runtimeId: string, queue: RuntimeQueue) {
+    send({ type: "runtime.queue.reorder", requestId: createRequestId(), runtimeId, queue });
+  }
+
   function submitPrompt(streamingBehavior?: "steer" | "followUp") {
     const message = prompt.trim();
     if (!message) return;
 
+    if (projectCwd.trim()) {
+      if (createProjectFromCwd(projectCwd.trim(), message)) setPrompt("");
+      return;
+    }
+
     if (activeRuntime?.status === "running") {
       const queuedBehavior = activeRuntimeIsBusy ? streamingBehavior ?? "steer" : undefined;
-      const requestId = crypto.randomUUID();
-      if (send({ type: "runtime.prompt", requestId, runtimeId: activeRuntime.id, message, streamingBehavior: queuedBehavior })) {
+      const requestId = createRequestId();
+      if (send(buildChatRuntimePromptCommand({ requestId, runtimeId: activeRuntime.id, message, streamingBehavior: queuedBehavior }))) {
         pendingRuntimePromptRef.current.set(requestId, message);
+        markRuntimeLocalUserActivity(activeRuntime.id);
         setPrompt("");
       }
       return;
     }
 
-    if (projectCwd.trim()) {
-      if (createProjectFromCwd(projectCwd.trim(), message)) setPrompt("");
+    if (activeRuntime?.status === "starting") {
+      markRuntimeLocalUserActivity(activeRuntime.id);
+      if (startRuntimeForProject(activeRuntime.projectId, message)) setPrompt("");
       return;
     }
 
@@ -240,6 +287,14 @@ export function useProjectRuntimeActions({
     dispatch({ type: "set.operationError", error: "请先在输入框下方选择项目文件夹" });
   }
 
+  function markRuntimeLocalUserActivity(runtimeId: string) {
+    runtimeIdsWithLocalUserActivityRef.current.add(runtimeId);
+  }
+
+  function runtimeHasLocalUserActivity(runtimeId: string): boolean {
+    return runtimeIdsWithLocalUserActivityRef.current.has(runtimeId);
+  }
+
   return {
     prompt,
     setPrompt,
@@ -249,9 +304,26 @@ export function useProjectRuntimeActions({
     restartRuntime,
     stopRuntime,
     archiveRuntime,
+    dequeueRuntimeQueue,
+    reorderRuntimeQueue,
     submitPrompt,
+    markRuntimeLocalUserActivity,
+    runtimeHasLocalUserActivity,
     handleProjectRuntimeServerEvent,
   };
+}
+
+function commandResultQueue(data: unknown): { steering: string[]; followUp: string[] } | undefined {
+  const queue = isRecord(data) && isRecord(data.queue) ? data.queue : undefined;
+  if (!queue) return undefined;
+  return {
+    steering: stringArray(queue.steering),
+    followUp: stringArray(queue.followUp),
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 function isRuntimeLaunchCommand(command: Extract<ServerEvent, { type: "command.result" }>["command"]): boolean {

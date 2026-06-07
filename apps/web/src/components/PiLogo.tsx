@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
+import { mediaQueryMatches, subscribeMediaQuery } from "../domain/mediaQuery";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 const SVG_WIDTH = 70;
 const SVG_HEIGHT = 42;
-const DOT_CENTER_X = 42.65;
+const DOT_CENTER_X = 40.25;
 const DOT_CENTER_Y = 8.3;
 const FULL_OVERLAY_SIZE = 160;
 const FULL_OVERLAY_CENTER = FULL_OVERLAY_SIZE / 2;
+const FULL_OVERLAY_WORDMARK_SCALE = 0.83;
 const MINI_DWELL_MS = 420;
 const MINI_DURATION_MS = 820;
-const FULL_DURATION_MS = 2800;
+const FULL_DURATION_MS = 3200;
 
 type PiLogoState = "idle" | "mini" | "full";
 type OverlayBounds = { left: number; top: number };
@@ -199,20 +201,9 @@ export function PiLogo({ compactMode = false, compactExpanded = false, onToggleC
 }
 
 function usePrefersReducedMotion(): boolean {
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return false;
-    return window.matchMedia(REDUCED_MOTION_QUERY).matches;
-  });
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => mediaQueryMatches(REDUCED_MOTION_QUERY));
 
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    const mediaQuery = window.matchMedia(REDUCED_MOTION_QUERY);
-    const handleChange = () => setPrefersReducedMotion(mediaQuery.matches);
-
-    handleChange();
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
-  }, []);
+  useEffect(() => subscribeMediaQuery(REDUCED_MOTION_QUERY, setPrefersReducedMotion), []);
 
   return prefersReducedMotion;
 }
@@ -224,43 +215,14 @@ function PiLogoFullOverlay({ bounds }: { bounds: OverlayBounds }) {
     left: `${bounds.left}px`,
     top: `${bounds.top}px`,
   } satisfies CSSProperties;
-  const wordmarkOffsetX = FULL_OVERLAY_CENTER - DOT_CENTER_X;
-  const wordmarkOffsetY = FULL_OVERLAY_CENTER - DOT_CENTER_Y;
+  const wordmarkTransform = `translate(${FULL_OVERLAY_CENTER} ${FULL_OVERLAY_CENTER}) scale(${FULL_OVERLAY_WORDMARK_SCALE}) translate(${-DOT_CENTER_X} ${-DOT_CENTER_Y})`;
 
   return createPortal(
     <span className="pi-logo-full-overlay" style={style} aria-hidden="true">
       <svg className="pi-logo-full-svg" viewBox={`0 0 ${FULL_OVERLAY_SIZE} ${FULL_OVERLAY_SIZE}`} focusable="false">
-        <defs>
-          <clipPath id="pi-logo-slice-p-left">
-            <rect x="0" y="0" width="22" height="42" />
-          </clipPath>
-          <clipPath id="pi-logo-slice-p-bowl">
-            <rect x="14" y="0" width="29" height="29" />
-          </clipPath>
-          <clipPath id="pi-logo-slice-p-base">
-            <rect x="0" y="24" width="36" height="18" />
-          </clipPath>
-          <clipPath id="pi-logo-slice-i">
-            <rect x="36" y="0" width="22" height="42" />
-          </clipPath>
-        </defs>
-        <g className="pi-logo-overlay-position" transform={`translate(${wordmarkOffsetX} ${wordmarkOffsetY})`}>
+        <g className="pi-logo-overlay-position" transform={wordmarkTransform}>
           <g className="pi-logo-full-body">
             <PiWordmarkBody />
-          </g>
-          <g className="pi-logo-gravity-slices">
-            <g className="pi-logo-gravity-slice pi-logo-slice-p-left" clipPath="url(#pi-logo-slice-p-left)">
-              <PiWordmarkBody />
-            </g>
-            <g className="pi-logo-gravity-slice pi-logo-slice-p-bowl" clipPath="url(#pi-logo-slice-p-bowl)">
-              <PiWordmarkBody />
-            </g>
-            <g className="pi-logo-gravity-slice pi-logo-slice-p-base" clipPath="url(#pi-logo-slice-p-base)">
-              <PiWordmarkBody />
-            </g>
-            <g className="pi-logo-gravity-slice pi-logo-slice-i" clipPath="url(#pi-logo-slice-i)">
-              <PiWordmarkBody />
-            </g>
           </g>
           <g className="pi-logo-reveal-body">
             <PiWordmarkBody />
@@ -288,7 +250,7 @@ function PiWordmarkBody() {
       </text>
       <path
         className="pi-logo-letter-i"
-        d="M37.9 36V32.35H40.15V18.45H38.25V14.85H47.05V18.45H45.15V32.35H47.4V36H37.9Z"
+        d="M35.5 36V32.35H37.75V18.45H35.85V14.85H44.65V18.45H42.75V32.35H45V36H35.5Z"
       />
     </g>
   );

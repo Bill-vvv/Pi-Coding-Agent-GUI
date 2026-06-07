@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VoiceInputSettings, VoiceInputStatus, VoiceTranscriptionResponse } from "@pi-gui/shared";
 import { DEFAULT_VOICE_INPUT_MAX_RECORDING_MS, DEFAULT_VOICE_INPUT_MAX_UPLOAD_BYTES, isRecord } from "@pi-gui/shared";
+import { apiUrl } from "../domain/apiUrl";
+import { authHeaders } from "../domain/runtimeConfig";
 import type { ConnectionState } from "../types";
 
 export type VoiceInputUiState = "unavailable" | "idle" | "recording" | "processing" | "error";
@@ -45,7 +47,7 @@ export function useVoiceInput({ connection, settings, onTranscript }: UseVoiceIn
   const refreshStatus = useCallback(async () => {
     if (connection !== "open") return;
     try {
-      const response = await fetch("/api/voice/status");
+      const response = await fetch(apiUrl("/api/voice/status"), { headers: authHeaders() });
       if (!response.ok) throw new Error(await voiceResponseErrorMessage(response, `语音输入状态读取失败：HTTP ${response.status}`));
       const status = (await response.json()) as VoiceInputStatus;
       setVoiceState((current) => ({
@@ -160,9 +162,10 @@ export function useVoiceInput({ connection, settings, onTranscript }: UseVoiceIn
     nativeStartGenerationRef.current = startGeneration;
     setVoiceState((current) => ({ ...current, state: "processing", error: undefined }));
     try {
-      const response = await fetch("/api/voice/recording/start", {
+      const response = await fetch(apiUrl("/api/voice/recording/start"), {
         method: "POST",
-              });
+        headers: authHeaders(),
+      });
       if (!response.ok) throw new Error(await voiceResponseErrorMessage(response, `原生语音录音启动失败：HTTP ${response.status}`));
       const result = (await response.json().catch(() => undefined)) as { startedAt?: number } | undefined;
       nativeRecordingActiveRef.current = true;
@@ -181,9 +184,10 @@ export function useVoiceInput({ connection, settings, onTranscript }: UseVoiceIn
   async function stopNativeRecording() {
     setVoiceState((current) => ({ ...current, state: "processing", error: undefined }));
     try {
-      const response = await fetch("/api/voice/recording/stop", {
+      const response = await fetch(apiUrl("/api/voice/recording/stop"), {
         method: "POST",
-              });
+        headers: authHeaders(),
+      });
       nativeRecordingActiveRef.current = false;
       if (!response.ok) throw new Error(await voiceResponseErrorMessage(response, `原生语音录音停止失败：HTTP ${response.status}`));
       const result = (await response.json()) as VoiceTranscriptionResponse;
@@ -198,7 +202,7 @@ export function useVoiceInput({ connection, settings, onTranscript }: UseVoiceIn
   function stopNativeRecordingIfActive() {
     if (!nativeRecordingActiveRef.current) return;
     nativeRecordingActiveRef.current = false;
-    void fetch("/api/voice/recording/stop", { method: "POST" }).catch(() => undefined);
+    void fetch(apiUrl("/api/voice/recording/stop"), { method: "POST", headers: authHeaders() }).catch(() => undefined);
   }
 
   async function transcribeBlob(blob: Blob) {
@@ -213,9 +217,9 @@ export function useVoiceInput({ connection, settings, onTranscript }: UseVoiceIn
     }
     setVoiceState((current) => ({ ...current, state: "processing", error: undefined }));
     try {
-      const response = await fetch("/api/voice/transcribe", {
+      const response = await fetch(apiUrl("/api/voice/transcribe"), {
         method: "POST",
-        headers: { "Content-Type": blob.type || "application/octet-stream", "X-Voice-Mime-Type": blob.type || "application/octet-stream" },
+        headers: authHeaders({ "Content-Type": blob.type || "application/octet-stream", "X-Voice-Mime-Type": blob.type || "application/octet-stream" }),
         body: blob,
       });
       if (!response.ok) throw new Error(await voiceResponseErrorMessage(response, `语音识别失败：HTTP ${response.status}`));

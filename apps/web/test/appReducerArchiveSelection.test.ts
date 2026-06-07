@@ -49,3 +49,33 @@ test("archiving a non-selected runtime does not clear the selected runtime", () 
 
   assert.equal(state.selectedRuntimeId, "runtime-2");
 });
+
+test("guard-denied blank archive does not locally hide the selected runtime", () => {
+  const withSelectedRuntime = appReducer(initialAppState, {
+    type: "server.event",
+    event: hello([project("project-1")], [runtime("runtime-1", "project-1"), runtime("runtime-2", "project-1")]),
+  });
+
+  const state = appReducer(withSelectedRuntime, {
+    type: "server.event",
+    event: { type: "command.result", command: "runtime.archiveBlank", success: true, data: { runtime: runtime("runtime-1", "project-1", "running") } },
+  });
+
+  assert.equal(state.selectedRuntimeId, "runtime-1");
+  assert.equal(state.runtimes.find((item) => item.id === "runtime-1")?.archivedAt, undefined);
+});
+
+test("successful blank archive reconciles the selected runtime", () => {
+  const withSelectedRuntime = appReducer(initialAppState, {
+    type: "server.event",
+    event: hello([project("project-1")], [runtime("runtime-1", "project-1"), runtime("runtime-2", "project-1")]),
+  });
+
+  const state = appReducer(withSelectedRuntime, {
+    type: "server.event",
+    event: { type: "command.result", command: "runtime.archiveBlank", success: true, data: { runtime: { ...runtime("runtime-1", "project-1", "running"), archivedAt: 10 } } },
+  });
+
+  assert.equal(state.selectedRuntimeId, "runtime-2");
+  assert.equal(state.runtimes.find((item) => item.id === "runtime-1")?.archivedAt, 10);
+});
