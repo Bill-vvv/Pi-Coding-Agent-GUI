@@ -335,6 +335,7 @@ export function App() {
         {settingsOpen ? (
           <SettingsPanel
             open={settingsOpen}
+            settings={settings}
             preferences={uiPreferences}
             projects={projects}
             sessions={sessions}
@@ -343,6 +344,7 @@ export function App() {
             messagesByRuntime={messagesByRuntime}
             onClose={closeSettings}
             onChangePreferences={setUiPreferences}
+            onChangeSettings={(nextSettings) => send({ type: "settings.update", settings: nextSettings })}
             onOpenArchivedRuntime={(runtimeId: string) => {
               send({ type: "conversation.open", runtimeId, limit: 200 }, { notifyOnDisconnected: false });
             }}
@@ -388,6 +390,7 @@ export function App() {
               connection={connection}
               activeRuntime={activeRuntime}
               activeRuntimeIsBusy={activeRuntimeIsBusy}
+              voiceInputSettings={settings.voiceInput}
               onSubmit={submitPrompt}
               onPromptChange={setPrompt}
               onExecuteCommandInput={executeCommandInput}

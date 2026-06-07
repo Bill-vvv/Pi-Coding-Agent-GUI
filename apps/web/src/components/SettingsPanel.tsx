@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { ConversationMessage, GuiSession, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
+import type { AppSettings, ConversationMessage, GuiSession, Project, Runtime, RuntimeConversationSummary, VoiceInputCaptureMode, VoiceInputMode, VoiceInputSettings, VoiceInputStatus } from "@pi-gui/shared";
 import { useBrowserNotificationPermission } from "../hooks/useBrowserNotificationPermission";
 import type { AccentColor, ChatFontSize, ThemeMode, UiFontSize, UiPreferences } from "../types";
 import { Icon } from "./Icon";
 
 type SettingsPanelProps = {
   open: boolean;
+  settings: AppSettings;
   preferences: UiPreferences;
   projects: Project[];
   sessions: GuiSession[];
@@ -14,6 +15,7 @@ type SettingsPanelProps = {
   messagesByRuntime: Record<string, ConversationMessage[]>;
   onClose: () => void;
   onChangePreferences: (preferences: UiPreferences) => void;
+  onChangeSettings: (settings: AppSettings) => boolean;
   onOpenArchivedRuntime: (runtimeId: string) => void;
   onOpenUsageOverview: () => void;
 };
@@ -43,11 +45,28 @@ const ACCENT_OPTIONS: Array<{ value: AccentColor; label: string }> = [
   { value: "rose", label: "玫瑰" },
 ];
 
+
+const VOICE_INPUT_MODE_OPTIONS: Array<{ value: VoiceInputMode; label: string }> = [
+  { value: "disabled", label: "关闭" },
+  { value: "managedProcess", label: "自动管理（推荐）" },
+  { value: "externalService", label: "连接已有服务" },
+];
+
+const VOICE_INPUT_CAPTURE_MODE_OPTIONS: Array<{ value: VoiceInputCaptureMode; label: string }> = [
+  { value: "browser", label: "浏览器麦克风" },
+  { value: "native", label: "原生桥接" },
+];
+
+const DEFAULT_VOICE_SERVICE_URL = "http://127.0.0.1:8765";
+const DEFAULT_MANAGED_VOICE_COMMAND = "python";
+const DEFAULT_MANAGED_VOICE_ARGS = ["server.py", "--port", "8765"];
+
 const SETTINGS_SCROLLBAR_VISIBLE_MS = 900;
 const SCROLL_INTERACTION_KEYS = new Set(["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "End", "Home", "PageDown", "PageUp", " "]);
 
 export function SettingsPanel({
   open,
+  settings,
   preferences,
   projects,
   sessions,
@@ -56,10 +75,15 @@ export function SettingsPanel({
   messagesByRuntime,
   onClose,
   onChangePreferences,
+  onChangeSettings,
   onOpenArchivedRuntime,
   onOpenUsageOverview,
 }: SettingsPanelProps) {
   const [selectedArchivedRuntimeId, setSelectedArchivedRuntimeId] = useState<string | undefined>();
+  const [localVoiceInput, setLocalVoiceInput] = useState<VoiceInputSettings | undefined>(settings.voiceInput);
+  const localVoiceInputRef = useRef<VoiceInputSettings | undefined>(settings.voiceInput);
+  const voiceInputDraftDirtyRef = useRef(false);
+  const [voiceInputSaveError, setVoiceInputSaveError] = useState<string | undefined>();
   const {
     permission: notificationPermission,
     supported: browserNotificationsSupported,
@@ -71,6 +95,27 @@ export function SettingsPanel({
   useEffect(() => {
     if (!open) setSelectedArchivedRuntimeId(undefined);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      localVoiceInputRef.current = settings.voiceInput;
+      voiceInputDraftDirtyRef.current = false;
+      setLocalVoiceInput(settings.voiceInput);
+      setVoiceInputSaveError(undefined);
+      return;
+    }
+
+    if (voiceInputDraftDirtyRef.current) {
+      if (voiceInputSettingsEqual(localVoiceInputRef.current, settings.voiceInput)) {
+        voiceInputDraftDirtyRef.current = false;
+        setVoiceInputSaveError(undefined);
+      }
+      return;
+    }
+
+    localVoiceInputRef.current = settings.voiceInput;
+    setLocalVoiceInput(settings.voiceInput);
+  }, [open, settings.voiceInput]);
 
   if (!open) return null;
 
@@ -84,6 +129,20 @@ export function SettingsPanel({
 
   function update(next: Partial<UiPreferences>) {
     onChangePreferences({ ...preferences, ...next });
+  }
+
+  function updateVoiceInput(next: Partial<VoiceInputSettings>) {
+    const voiceInput = next.mode === "disabled"
+      ? { mode: "disabled" as VoiceInputMode }
+      : {
+        ...(localVoiceInput ?? { mode: "disabled" as VoiceInputMode }),
+        ...next,
+      };
+    localVoiceInputRef.current = voiceInput;
+    voiceInputDraftDirtyRef.current = true;
+    setLocalVoiceInput(voiceInput);
+    const sent = onChangeSettings({ ...settings, voiceInput });
+    setVoiceInputSaveError(sent ? undefined : "WebSocket 未连接，语音输入设置未保存。");
   }
 
   async function handleDesktopNotificationsToggle() {
@@ -165,6 +224,8 @@ export function SettingsPanel({
               <Icon name="arrow-right" />
             </button>
 
+            <VoiceInputSettingsPanel settings={localVoiceInput} saveError={voiceInputSaveError} onChange={updateVoiceInput} />
+
             <div className={`settings-setting-row ${desktopNotificationToggleDisabled ? "disabled" : ""}`}>
               <span className="settings-setting-copy">
                 <span>通知</span>
@@ -235,6 +296,132 @@ export function SettingsPanel({
       </div>
     </section>
   );
+}
+
+
+function VoiceInputSettingsPanel({ settings, saveError, onChange }: { settings?: VoiceInputSettings; saveError?: string; onChange: (settings: Partial<VoiceInputSettings>) => void }) {
+  const mode = settings?.mode ?? "disabled";
+  const managedArgs = (settings?.managedArgs ?? []).join(" ");
+  const [status, setStatus] = useState<VoiceInputStatus | undefined>();
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [statusError, setStatusError] = useState<string | undefined>();
+  const headerStatus = voiceInputHeaderStatus(mode, status, statusError, statusLoading);
+  const setupSummary = voiceInputSetupSummary(mode, settings);
+
+  async function refreshVoiceStatus() {
+    setStatusLoading(true);
+    setStatusError(undefined);
+    try {
+      const response = await fetch("/api/voice/status");
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      setStatus((await response.json()) as VoiceInputStatus);
+    } catch (error) {
+      setStatusError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setStatusLoading(false);
+    }
+  }
+
+  function changeMode(nextMode: VoiceInputMode) {
+    onChange(voiceInputModeDefaults(nextMode, settings));
+  }
+
+  return (
+    <details className="settings-archive-dropdown">
+      <summary>
+        <span className="settings-archive-summary-main">
+          <span>语音输入</span>
+          <small>{headerStatus.summary}</small>
+        </span>
+      </summary>
+
+      <div className="settings-voice-body">
+        {saveError ? <p className="settings-archive-snippet">{saveError}</p> : null}
+        <SettingsOptionGroup name="voice-input-mode" label="模式" options={VOICE_INPUT_MODE_OPTIONS} value={mode} onChange={changeMode} />
+        {mode !== "disabled" ? (
+          <>
+            <p className="settings-archive-snippet">{setupSummary.title} · {setupSummary.detail}</p>
+            <SettingsOptionGroup name="voice-input-capture-mode" label="录音来源" options={VOICE_INPUT_CAPTURE_MODE_OPTIONS} value={settings?.captureMode ?? "browser"} onChange={(captureMode) => onChange({ captureMode })} />
+          </>
+        ) : null}
+        {mode === "managedProcess" ? (
+          <>
+            <SettingsTextInput id="settings-voice-cwd" label="Wrapper 目录" value={settings?.managedCwd ?? ""} placeholder="示例：/home/me/pi-gui/tools/capswriter-wrapper" onChange={(managedCwd) => onChange({ managedCwd })} />
+            <SettingsTextInput id="settings-voice-model-path" label="模型路径（可选）" value={settings?.modelPath ?? ""} placeholder="可留空；也可用命令参数指定" onChange={(modelPath) => onChange({ modelPath })} />
+            <SettingsTextInput id="settings-voice-url" label="服务地址" value={settings?.externalUrl ?? ""} placeholder={DEFAULT_VOICE_SERVICE_URL} onChange={(externalUrl) => onChange({ externalUrl })} />
+            <SettingsTextInput id="settings-voice-command" label="启动命令" value={settings?.managedCommand ?? ""} placeholder={DEFAULT_MANAGED_VOICE_COMMAND} onChange={(managedCommand) => onChange({ managedCommand })} />
+            <SettingsTextInput id="settings-voice-args" label="命令参数" value={managedArgs} placeholder={DEFAULT_MANAGED_VOICE_ARGS.join(" ")} onChange={(value) => onChange({ managedArgs: splitManagedArgs(value) })} />
+          </>
+        ) : null}
+        {mode === "externalService" ? <SettingsTextInput id="settings-voice-url" label="服务地址" value={settings?.externalUrl ?? ""} placeholder={`示例：${DEFAULT_VOICE_SERVICE_URL}`} onChange={(externalUrl) => onChange({ externalUrl })} /> : null}
+        {mode !== "disabled" ? (
+          <>
+            <button className="settings-action-button" type="button" disabled={statusLoading} onClick={() => void refreshVoiceStatus()}>{statusLoading ? "检测中…" : "检测服务状态"}</button>
+            <p className="settings-archive-snippet">{statusError ? `检测失败：${statusError}` : status ? voiceInputStatusSummary(status) : "尚未检测"}</p>
+            <p className="settings-archive-snippet">{settings?.captureMode === "native" ? "原生桥接不会调用浏览器麦克风；wrapper 需要支持 /record/start 和 /record/stop，并能访问本机麦克风。" : "浏览器麦克风适合手机/远程；本机桌面追求准确率时建议使用原生桥接。"}</p>
+          </>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function SettingsTextInput({ id, label, value, placeholder, onChange }: { id: string; label: string; value: string; placeholder?: string; onChange: (value: string) => void }) {
+  return (
+    <div className="settings-field">
+      <label htmlFor={id}>{label}</label>
+      <input id={id} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+    </div>
+  );
+}
+
+function voiceInputModeDefaults(mode: VoiceInputMode, current: VoiceInputSettings | undefined): Partial<VoiceInputSettings> {
+  if (mode === "disabled") return { mode };
+  if (mode === "managedProcess") {
+    return {
+      ...current,
+      mode,
+      captureMode: current?.captureMode ?? "browser",
+      externalUrl: current?.externalUrl ?? DEFAULT_VOICE_SERVICE_URL,
+      managedCommand: current?.managedCommand ?? DEFAULT_MANAGED_VOICE_COMMAND,
+      managedArgs: current?.managedArgs?.length ? current.managedArgs : DEFAULT_MANAGED_VOICE_ARGS,
+      autoStart: current?.autoStart ?? true,
+    };
+  }
+  return {
+    ...current,
+    mode,
+    captureMode: current?.captureMode ?? "browser",
+    externalUrl: current?.externalUrl ?? DEFAULT_VOICE_SERVICE_URL,
+  };
+}
+
+function voiceInputHeaderStatus(mode: VoiceInputMode, status: VoiceInputStatus | undefined, statusError: string | undefined, loading: boolean): { summary: string } {
+  if (loading) return { summary: "正在检测…" };
+  if (statusError) return { summary: `检测失败：${statusError}` };
+  if (status) return { summary: voiceInputStatusSummary(status) };
+  if (mode === "externalService") return { summary: "连接已运行的本地 ASR 服务" };
+  if (mode === "managedProcess") return { summary: "自动启动本地 ASR wrapper" };
+  return { summary: "未启用" };
+}
+
+function voiceInputSetupSummary(mode: VoiceInputMode, settings: VoiceInputSettings | undefined): { title: string; detail: string } {
+  if (mode === "externalService") return { title: "连接已有服务", detail: settings?.externalUrl || DEFAULT_VOICE_SERVICE_URL };
+  if (settings?.captureMode === "native") return { title: "本机原生录音", detail: "本地 wrapper 直接采集麦克风" };
+  return { title: "浏览器麦克风", detail: "浏览器录音并交给本地 ASR" };
+}
+
+function voiceInputStatusSummary(status: VoiceInputStatus): string {
+  const prefix = status.available ? "可用" : status.state === "disabled" ? "已关闭" : "不可用";
+  return status.message ? `${prefix} · ${status.message}` : prefix;
+}
+
+function voiceInputSettingsEqual(left: VoiceInputSettings | undefined, right: VoiceInputSettings | undefined): boolean {
+  return JSON.stringify(left ?? { mode: "disabled" }) === JSON.stringify(right ?? { mode: "disabled" });
+}
+
+function splitManagedArgs(value: string): string[] {
+  return value.split(/\s+/).map((item) => item.trim()).filter(Boolean);
 }
 
 function latestArchiveSnippet(messages: ConversationMessage[]): string | undefined {

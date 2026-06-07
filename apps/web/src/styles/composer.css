@@ -185,6 +185,14 @@
 
 .send-action:active:not(:disabled) { transform: none; }
 
+.composer-voice-action.is-recording {
+  color: var(--color-accent-primary);
+}
+
+.composer-voice-status.is-recording {
+  color: var(--color-accent-primary);
+}
+
 .abort-action {
   border-color: var(--color-border-subtle);
   background: transparent;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import type { ModelSummary, Project, ResponseMode, Runtime, RuntimeQueue, SlashCommand, ThinkingLevel } from "@pi-gui/shared";
+import type { ModelSummary, Project, ResponseMode, Runtime, RuntimeQueue, SlashCommand, ThinkingLevel, VoiceInputSettings } from "@pi-gui/shared";
 import type { RuntimeExtensionUiChrome } from "../domain/extensionUiChrome";
+import { useVoiceInput } from "../hooks/useVoiceInput";
 import type { ConnectionState, ConversationContextUsage } from "../types";
 import { ContextIndicator } from "./ContextIndicator";
 import { ExtensionUiWidgetStack } from "./ExtensionUiChrome";
@@ -25,6 +26,7 @@ type ComposerProps = {
   connection: ConnectionState;
   activeRuntime?: Runtime;
   activeRuntimeIsBusy: boolean;
+  voiceInputSettings?: VoiceInputSettings;
   onSubmit: (streamingBehavior?: "steer" | "followUp") => void;
   onPromptChange: (prompt: string) => void;
   onExecuteCommandInput: (input: string, command?: ComposerCommandOption) => boolean;
@@ -88,6 +90,7 @@ export function Composer({
   connection,
   activeRuntime,
   activeRuntimeIsBusy,
+  voiceInputSettings,
   onSubmit,
   onPromptChange,
   onExecuteCommandInput,
@@ -114,6 +117,14 @@ export function Composer({
     () => commandCompletionForPrompt(prompt, commandOptions, selectedCommandIndex, commandMenuSuppressed),
     [commandMenuSuppressed, commandOptions, prompt, selectedCommandIndex],
   );
+  const { voiceInput, toggleRecording, dismissError: dismissVoiceInputError } = useVoiceInput({
+    connection,
+    settings: voiceInputSettings,
+    onTranscript: insertPromptFragment,
+  });
+  const voiceLabel =
+    voiceInput.state === "recording" ? "停止语音输入" : voiceInput.state === "processing" ? "正在识别语音" : voiceInput.state === "unavailable" ? voiceInput.status?.message ?? "语音输入不可用" : "语音输入";
+  const voiceTitle = `${voiceLabel}（Ctrl/Cmd+Shift+M）`;
 
   useEffect(() => {
     latestPromptRef.current = prompt;
@@ -132,6 +143,19 @@ export function Composer({
     const timer = window.setTimeout(() => setDropNotice(undefined), DROP_NOTICE_AUTO_DISMISS_MS);
     return () => window.clearTimeout(timer);
   }, [dropNotice]);
+
+  useEffect(() => {
+    function handleVoiceInputShortcut(event: KeyboardEvent) {
+      if (!isVoiceInputShortcut(event) || event.repeat || event.defaultPrevented) return;
+      event.preventDefault();
+      if (connection !== "open" || voiceInput.state === "processing" || voiceInput.state === "unavailable") return;
+      void toggleRecording();
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+
+    window.addEventListener("keydown", handleVoiceInputShortcut);
+    return () => window.removeEventListener("keydown", handleVoiceInputShortcut);
+  }, [connection, toggleRecording, voiceInput.state]);
 
   useEffect(() => {
     function handleWindowDragOver(event: globalThis.DragEvent) {
@@ -270,6 +294,17 @@ export function Composer({
         </div>
       ) : null}
 
+      {voiceInput.state === "recording" || voiceInput.state === "processing" || voiceInput.error ? (
+        <div className={`composer-drop-status composer-voice-status is-${voiceInput.state}`} aria-live="polite">
+          <span>{voiceInput.state === "recording" ? "正在录音…再次点击麦克风结束" : voiceInput.state === "processing" ? "正在离线识别语音…" : voiceInput.error}</span>
+          {voiceInput.error ? (
+            <button className="composer-drop-status-dismiss" type="button" aria-label="关闭语音输入错误" onClick={dismissVoiceInputError}>
+              ×
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {commandCompletion.visible ? (
         <div className="composer-command-menu" role="listbox" aria-label="Pi slash commands">
           {commandCompletion.matches.map((command, index) => (
@@ -345,6 +380,16 @@ export function Composer({
             }
           }}
         />
+        <button
+          className={`send-action composer-voice-action ${voiceInput.state === "recording" ? "is-recording" : ""}`}
+          type="button"
+          title={voiceTitle}
+          aria-label={voiceTitle}
+          onClick={() => void toggleRecording()}
+          disabled={connection !== "open" || voiceInput.state === "processing" || voiceInput.state === "unavailable"}
+        >
+          <Icon name="mic" />
+        </button>
         {showAbortAction ? (
           <button
             className="send-action abort-action"
@@ -480,6 +525,10 @@ function sourceLabel(source: ComposerCommandOption["source"]): string {
     case "skill":
       return "Skill";
   }
+}
+
+function isVoiceInputShortcut(event: KeyboardEvent): boolean {
+  return (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "m";
 }
 
 function streamingBehaviorFromSubmitter(submitter: HTMLButtonElement | null): "steer" | "followUp" | undefined {

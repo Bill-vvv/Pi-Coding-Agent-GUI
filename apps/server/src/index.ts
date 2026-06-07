@@ -6,9 +6,11 @@ import { registerEnvironmentRoutes } from "./routes/environmentRoutes.js";
 import { registerFsRoutes } from "./routes/fsRoutes.js";
 import { registerImportRoutes } from "./routes/importRoutes.js";
 import { registerUsageRoutes } from "./routes/usageRoutes.js";
+import { registerVoiceRoutes } from "./routes/voiceRoutes.js";
 import { RuntimeSupervisor } from "./runtime/runtimeSupervisor.js";
 import { listPiModels } from "./services/modelService.js";
 import { indexKnownPiSessions } from "./services/sessionIndexService.js";
+import { VoiceTranscriptionService } from "./services/voiceInput/index.js";
 import { createSocketMessageHandler } from "./ws/commandHandler.js";
 import { WsHub, type WsClient } from "./ws/wsHub.js";
 
@@ -25,6 +27,7 @@ const db = new AppDatabase();
 indexKnownPiSessions(db);
 const wsHub = new WsHub();
 const supervisor = new RuntimeSupervisor(db, (event) => wsHub.broadcast(event));
+const voiceTranscriptionService = new VoiceTranscriptionService({ getSettings: () => db.getSettings() });
 const handleSocketMessage = createSocketMessageHandler({
   db,
   supervisor,
@@ -38,6 +41,10 @@ await registerFsRoutes(fastify);
 await registerImportRoutes(fastify);
 await registerEnvironmentRoutes(fastify);
 await registerUsageRoutes(fastify, { db });
+await registerVoiceRoutes(fastify, voiceTranscriptionService);
+fastify.addHook("onClose", async () => {
+  voiceTranscriptionService.stop();
+});
 
 fastify.get("/health", async () => ({ ok: true, time: Date.now() }));
 

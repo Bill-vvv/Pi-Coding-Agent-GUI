@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { AppSettings } from "@pi-gui/shared";
+import { normalizeVoiceInputSettings } from "@pi-gui/shared";
 import { parseThinkingLevel } from "./mappers.js";
 
 export class SettingsStore {
@@ -12,6 +13,7 @@ export class SettingsStore {
       if (row.key === "defaultModel") settings.defaultModel = row.value;
       if (row.key === "defaultThinkingLevel") settings.defaultThinkingLevel = parseThinkingLevel(row.value);
       if (row.key === "responseMode") settings.responseMode = row.value === "fast" ? "fast" : "normal";
+      if (row.key === "voiceInput") settings.voiceInput = parseVoiceInputSetting(row.value);
     }
     return settings;
   }
@@ -26,6 +28,10 @@ export class SettingsStore {
     }
     if (settings.responseMode !== undefined) {
       this.upsertSetting("responseMode", settings.responseMode, now);
+    }
+    if (settings.voiceInput !== undefined) {
+      const normalized = normalizeVoiceInputSettings(settings.voiceInput);
+      this.upsertSetting("voiceInput", normalized ? JSON.stringify(normalized) : "", now);
     }
     return this.getSettings();
   }
@@ -42,5 +48,13 @@ export class SettingsStore {
     } else {
       this.db.prepare("delete from settings where key = ?").run(key);
     }
+  }
+}
+
+function parseVoiceInputSetting(value: string): AppSettings["voiceInput"] {
+  try {
+    return normalizeVoiceInputSettings(JSON.parse(value));
+  } catch {
+    return undefined;
   }
 }

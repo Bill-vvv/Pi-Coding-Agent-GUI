@@ -23,6 +23,7 @@ export type Runtime = {
   model?: string;
   thinkingLevel?: ThinkingLevel;
   responseMode?: ResponseMode;
+  voiceInput?: VoiceInputSettings;
 };
 
 export type GuiSession = {
@@ -216,10 +217,51 @@ export type ConversationDelta = {
   isStreaming?: boolean;
 };
 
+export type VoiceInputMode = "disabled" | "externalService" | "managedProcess";
+export type VoiceInputCaptureMode = "browser" | "native";
+
+export type VoiceInputSettings = {
+  mode?: VoiceInputMode;
+  captureMode?: VoiceInputCaptureMode;
+  externalUrl?: string;
+  managedCommand?: string;
+  managedArgs?: string[];
+  managedCwd?: string;
+  modelPath?: string;
+  autoStart?: boolean;
+  startupTimeoutMs?: number;
+  transcriptionTimeoutMs?: number;
+  maxRecordingMs?: number;
+  maxUploadBytes?: number;
+};
+
+export type VoiceInputStatusState = "disabled" | "not_configured" | "starting" | "ready" | "error";
+
+export type VoiceInputStatus = {
+  available: boolean;
+  mode: VoiceInputMode;
+  state: VoiceInputStatusState;
+  message?: string;
+  maxRecordingMs: number;
+  maxUploadBytes: number;
+  transcriptionTimeoutMs: number;
+};
+
+export type VoiceTranscriptionResponse = {
+  text: string;
+  durationMs?: number;
+};
+
+export type VoiceRecordingStartResponse = {
+  recording: true;
+  startedAt: number;
+};
+
 export type AppSettings = {
   defaultModel?: string;
   defaultThinkingLevel?: ThinkingLevel;
   responseMode?: ResponseMode;
+  voiceInput?: VoiceInputSettings;
 };
 
 export type ModelSummary = {

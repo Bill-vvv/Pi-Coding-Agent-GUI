@@ -1,0 +1,9 @@
+# Pi GUI CapsWriter-compatible ASR wrapper dependencies.
+# Install PyTorch CPU first, then this file:
+#   python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+funasr
+modelscope
+numpy
+sounddevice
+soundfile
+websockets
