@@ -14,5 +14,9 @@ __pycache__/
 /.trellis/
 /AGENTS.md
 /plan.md
+/docs/desktop-electron-plan.md
+/docs/refactor-plan.md
+/docs/rewind-checkpoint-gui-plan.md
+/docs/task-plan.md
 
 # Local Trellis/Pi workflow records (do not publish)
