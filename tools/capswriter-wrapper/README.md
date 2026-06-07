@@ -3,6 +3,11 @@
 This directory provides the local HTTP ASR service that Pi GUI voice input expects.
 It is a reference wrapper around FunASR/SenseVoice-style offline ASR models.
 
+Pi GUI does not bundle CapsWriter Offline, ASR model weights, PyTorch wheels,
+ffmpeg binaries, or third-party source trees. See [THIRD_PARTY.md](./THIRD_PARTY.md)
+for provenance, licensing, and security notes before redistributing this wrapper
+with any dependency, binary, or model.
+
 ## Contract
 
 Pi GUI calls:
@@ -21,8 +26,10 @@ The wrapper returns:
 Raw audio and transcript text are not logged by default.
 
 Native recording uses optional `sounddevice` + `numpy` support and records from
-the host where this wrapper process runs. It is intended for desktop/native use;
-run the wrapper on the machine that has the microphone you want Pi GUI to use.
+the host where this wrapper process runs. In WSLg, if PortAudio cannot see an
+input device, the wrapper can fall back to `ffmpeg` + the WSLg PulseAudio socket.
+It is intended for desktop/native use; run the wrapper on the machine that has
+the microphone you want Pi GUI to use.
 
 ## Recommended WSL setup
 
@@ -37,8 +44,11 @@ python -m pip install -r requirements.txt
 python server.py --port 8765 --model iic/SenseVoiceSmall --language chinese
 ```
 
-`iic/SenseVoiceSmall` is a model id. The first transcription may download/cache the
-model. To use a fully local model, replace it with the local model directory:
+`iic/SenseVoiceSmall` is an external ModelScope model id. The first transcription
+may download/cache the model, and model artifacts can have terms that differ from
+source-code dependencies. Review the model card/license before commercial use or
+redistribution. To use a fully local, reviewed model, replace it with the local
+model directory:
 
 ```bash
 python server.py --port 8765 --model /home/me/models/SenseVoiceSmall --language chinese
@@ -74,12 +84,28 @@ python server.py \
 ```
 
 Pi GUI talks to this wrapper at `http://127.0.0.1:18765`; the wrapper converts
-browser audio to CapsWriter's websocket protocol. In WSL, `<windows-host-ip>` is
-the Windows host address reachable from WSL, not necessarily `127.0.0.1`.
+browser audio to a CapsWriter-compatible websocket request. This is an optional
+bridge to a user-installed CapsWriter Offline server; Pi GUI does not include
+CapsWriter binaries, models, or copied source. Users are responsible for complying
+with CapsWriter and model licenses for their own installation. In WSL,
+`<windows-host-ip>` is the Windows host address reachable from WSL, not
+necessarily `127.0.0.1`.
 
 For native recording mode, `/record/start` captures audio from the wrapper host
 microphone at 48 kHz float32, downmixes/downsamples it to CapsWriter-compatible
 16 kHz float32 PCM on `/record/stop`, then sends it through the same CapsWriter
-websocket bridge. If this wrapper runs inside WSL without microphone access,
-native recording will report an unsupported/input-device error; run the wrapper
-on Windows or another host with microphone access for native-quality capture.
+websocket bridge. If this wrapper runs inside WSL without microphone access or
+WSLg PulseAudio, native recording will report an unsupported/input-device error;
+run the wrapper on Windows or another host with microphone access for native-quality capture.
+
+## Security and licensing notes
+
+- The FunASR path loads model ids with `trust_remote_code=True` in `server.py`.
+  Remote model repositories can execute code during model loading. Prefer a local,
+  reviewed model directory in stricter environments.
+- `ffmpeg` is an external system dependency used for audio conversion and WSLg
+  PulseAudio recording fallback. It is not bundled here. If you redistribute an
+  ffmpeg binary later, include the correct LGPL/GPL notices for that build.
+- Python dependencies from `requirements.txt` are installed by the user. If you
+  package a ready-to-run environment, generate a third-party license inventory for
+  the exact dependency versions.

@@ -25,6 +25,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -41,6 +42,114 @@ DEFAULT_PORT = 8765
 MAX_AUDIO_BYTES = 100 * 1024 * 1024
 NATIVE_RECORDING_SAMPLE_RATE = 48_000
 CAPSWRITER_SAMPLE_RATE = 16_000
+DEFAULT_WSLG_PULSE_SERVER = "unix:/mnt/wslg/PulseServer"
+
+
+def native_pulse_server() -> str | None:
+    configured = os.environ.get("PULSE_SERVER", "").strip()
+    if configured:
+        return configured
+    if Path("/mnt/wslg/PulseServer").exists():
+        return DEFAULT_WSLG_PULSE_SERVER
+    return None
+
+
+def native_pulse_source() -> str:
+    return os.environ.get("PI_GUI_VOICE_PULSE_SOURCE", "default").strip() or "default"
+
+
+def native_pulse_recording_available() -> bool:
+    return shutil.which("ffmpeg") is not None and native_pulse_server() is not None
+
+
+class FfmpegPulseStream:
+    def __init__(self, pulse_source: str, pulse_server: str | None) -> None:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise RuntimeError("ffmpeg is required for native PulseAudio recording")
+        env = os.environ.copy()
+        if pulse_server and not env.get("PULSE_SERVER"):
+            env["PULSE_SERVER"] = pulse_server
+        command = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "pulse",
+            "-i",
+            pulse_source,
+            "-ac",
+            "1",
+            "-ar",
+            str(CAPSWRITER_SAMPLE_RATE),
+            "-f",
+            "f32le",
+            "-",
+        ]
+        self._stdout_chunks: list[bytes] = []
+        self._stderr_chunks: list[bytes] = []
+        self._process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE, env=env)
+        self._stdout_thread = threading.Thread(target=self._read_pipe, args=(self._process.stdout, self._stdout_chunks, None), daemon=True)
+        self._stderr_thread = threading.Thread(target=self._read_pipe, args=(self._process.stderr, self._stderr_chunks, 16 * 1024), daemon=True)
+        self._stdout_thread.start()
+        self._stderr_thread.start()
+        time.sleep(0.15)
+        if self._process.poll() is not None:
+            self.close()
+            raise RuntimeError(f"native PulseAudio recording failed: {self.error_message() or self._process.returncode}")
+
+    @staticmethod
+    def _read_pipe(pipe: Any, chunks: list[bytes], max_bytes: int | None) -> None:
+        if pipe is None:
+            return
+        total = 0
+        while True:
+            chunk = pipe.read(8192)
+            if not chunk:
+                return
+            if max_bytes is None:
+                chunks.append(chunk)
+                continue
+            remaining = max_bytes - total
+            if remaining <= 0:
+                continue
+            chunks.append(chunk[:remaining])
+            total += len(chunk[:remaining])
+
+    def stop(self) -> None:
+        if self._process.poll() is None:
+            try:
+                if self._process.stdin is not None:
+                    self._process.stdin.write(b"q\n")
+                    self._process.stdin.flush()
+                    self._process.stdin.close()
+                self._process.wait(timeout=5)
+            except Exception:
+                if self._process.poll() is None:
+                    self._process.terminate()
+                    try:
+                        self._process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self._process.kill()
+                        self._process.wait(timeout=5)
+        self._stdout_thread.join(timeout=2)
+        self._stderr_thread.join(timeout=2)
+
+    def close(self) -> None:
+        self.stop()
+        for pipe in (self._process.stdout, self._process.stderr):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except Exception:
+                pass
+
+    def audio_bytes(self) -> bytes:
+        return b"".join(self._stdout_chunks)
+
+    def error_message(self) -> str:
+        return b"".join(self._stderr_chunks).decode("utf-8", errors="replace").strip()
 
 
 class NativeRecorder:
@@ -51,6 +160,14 @@ class NativeRecorder:
         self._started_at: float | None = None
 
     def start(self) -> dict[str, Any]:
+        try:
+            return self._start_sounddevice()
+        except Exception as exc:
+            if not native_pulse_recording_available():
+                raise
+            return self._start_pulse_fallback(exc)
+
+    def _start_sounddevice(self) -> dict[str, Any]:
         try:
             import numpy as np  # noqa: F401
             import sounddevice as sd
@@ -63,11 +180,8 @@ class NativeRecorder:
             self._chunks = []
             self._started_at = time.time()
 
-            try:
-                device = sd.query_devices(kind="input")
-                channels = max(1, min(2, int(device.get("max_input_channels", 1))))
-            except Exception:
-                channels = 1
+            device = sd.query_devices(kind="input")
+            channels = max(1, min(2, int(device.get("max_input_channels", 1))))
 
             def callback(indata: Any, _frames: int, _time_info: Any, _status: Any) -> None:
                 with self._lock:
@@ -92,6 +206,19 @@ class NativeRecorder:
 
             return {"ok": True, "recording": True, "startedAt": int(self._started_at * 1000)}
 
+    def _start_pulse_fallback(self, sounddevice_error: Exception) -> dict[str, Any]:
+        with self._lock:
+            if self._stream is not None:
+                raise RuntimeError("native recording is already active")
+            self._chunks = []
+            self._started_at = time.time()
+            try:
+                self._stream = FfmpegPulseStream(native_pulse_source(), native_pulse_server())
+            except Exception as exc:
+                self._started_at = None
+                raise RuntimeError(f"native recording fallback failed after sounddevice error ({sounddevice_error}): {exc}") from exc
+            return {"ok": True, "recording": True, "startedAt": int(self._started_at * 1000)}
+
     def stop(self) -> tuple[bytes, int]:
         with self._lock:
             stream = self._stream
@@ -103,6 +230,16 @@ class NativeRecorder:
 
         if stream is None or started_at is None:
             raise RuntimeError("native recording is not active")
+
+        if isinstance(stream, FfmpegPulseStream):
+            stream.close()
+            pcm16k = stream.audio_bytes()
+            if len(pcm16k) < int(0.1 * CAPSWRITER_SAMPLE_RATE) * 4:
+                message = stream.error_message()
+                suffix = f": {message}" if message else ""
+                raise RuntimeError(f"native recording captured too little audio{suffix}")
+            duration_ms = int((len(pcm16k) / 4 / CAPSWRITER_SAMPLE_RATE) * 1000)
+            return pcm16k, duration_ms
 
         try:
             stream.stop()
@@ -424,6 +561,11 @@ async def transcribe_with_capswriter_ws(ws_url: str, audio: bytes, mime_type: st
 
 
 async def transcribe_capswriter_pcm(ws_url: str, pcm: bytes, language: str) -> str:
+    # Protocol-compatibility note: this constructs a request for a user-provided
+    # CapsWriter Offline WebSocket server. Pi GUI does not bundle CapsWriter
+    # binaries/models/source. If this message shape is later copied or adapted
+    # from a specific upstream file or example, add the source URL and license to
+    # THIRD_PARTY.md.
     try:
         import websockets
     except Exception as exc:  # pragma: no cover - environment dependent
@@ -543,6 +685,9 @@ def recording_error_response(error: Exception) -> tuple[int, str]:
         "invalid device",
         "portaudio",
         "no input device",
+        "native recording fallback failed",
+        "native pulseaudio recording failed",
+        "ffmpeg is required for native pulseaudio recording",
     )
     if any(marker in message for marker in unsupported_device_markers):
         return 501, "native_recording_unsupported"
