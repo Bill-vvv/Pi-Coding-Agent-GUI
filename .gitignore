@@ -9,3 +9,8 @@ __pycache__/
 .DS_Store
 .env
 .env.*
+
+# Local Trellis/Pi workflow records (do not publish)
+.trellis/tasks/
+.trellis/workspace/
+.trellis/worktrees/
