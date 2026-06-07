@@ -61,6 +61,7 @@ export type RuntimeConversationStateRow = {
   tokens: number | null;
   context_window: number | null;
   percent: number | null;
+  session_tokens_json: string | null;
   updated_at: number;
   busy: number;
 };

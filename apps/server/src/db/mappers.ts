@@ -1,4 +1,4 @@
-import type { AppSettings, ConversationContextUsage, ConversationMessage, GuiEvent, GuiSession, Project, Runtime, SubagentChildRun, SubagentContextMode, SubagentRun } from "@pi-gui/shared";
+import type { AppSettings, ConversationContextUsage, ConversationMessage, ConversationTokenUsage, GuiEvent, GuiSession, Project, Runtime, SubagentChildRun, SubagentContextMode, SubagentRun } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
 import type { ConversationMessageRow, EventRow, ProjectRow, RuntimeConversationStateRow, RuntimeRow, SessionRow, SubagentRunRow } from "./rows.js";
 
@@ -62,13 +62,38 @@ export function conversationMessageFromRow(row: ConversationMessageRow): Convers
 }
 
 export function conversationContextFromRow(row: RuntimeConversationStateRow): ConversationContextUsage | undefined {
-  if (row.tokens === null && row.context_window === null && row.percent === null) return undefined;
+  const sessionTokens = parseConversationTokenUsage(row.session_tokens_json);
+  if (row.tokens === null && row.context_window === null && row.percent === null && !sessionTokens) return undefined;
   return {
     tokens: row.tokens ?? undefined,
     contextWindow: row.context_window ?? undefined,
     percent: row.percent ?? undefined,
+    sessionTokens,
     updatedAt: row.updated_at,
   };
+}
+
+function parseConversationTokenUsage(value: string | null): ConversationTokenUsage | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isRecord(parsed)) return undefined;
+    const usage: ConversationTokenUsage = {
+      input: finiteNumber(parsed.input),
+      output: finiteNumber(parsed.output),
+      cacheRead: finiteNumber(parsed.cacheRead),
+      cacheWrite: finiteNumber(parsed.cacheWrite),
+      total: finiteNumber(parsed.total),
+      cost: finiteNumber(parsed.cost),
+    };
+    return Object.values(usage).some((item) => item !== undefined) ? usage : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 export function eventFromRow(row: EventRow): GuiEvent {

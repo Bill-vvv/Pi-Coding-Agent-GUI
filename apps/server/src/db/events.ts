@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { GuiEvent } from "@pi-gui/shared";
+import type { GuiEvent, GuiEventKind } from "@pi-gui/shared";
 import { eventFromRow } from "./mappers.js";
 import type { EventRow } from "./rows.js";
 
@@ -39,24 +39,25 @@ export class EventLogStore {
     };
   }
 
-  listEvents(afterEventId = 0, limit = 500, filters: { projectId?: string; runtimeId?: string } = {}): GuiEvent[] {
+  listEvents(afterEventId = 0, limit = 500, filters: { projectId?: string; runtimeId?: string; kinds?: GuiEventKind[] } = {}): GuiEvent[] {
     const boundedLimit = Math.max(1, Math.min(limit, 2000));
-    const conditions = ["id > ?"];
-    const params: Array<string | number> = [afterEventId];
-
-    if (filters.projectId) {
-      conditions.push("project_id = ?");
-      params.push(filters.projectId);
-    }
-    if (filters.runtimeId) {
-      conditions.push("runtime_id = ?");
-      params.push(filters.runtimeId);
-    }
+    const { conditions, params } = eventFilterQuery("id > ?", [afterEventId], filters);
 
     const rows = this.db
       .prepare(`select * from events where ${conditions.join(" and ")} order by id asc limit ?`)
       .all(...params, boundedLimit) as EventRow[];
     return rows.map(eventFromRow);
+  }
+
+  listRecentEvents(limit = 500, filters: { projectId?: string; runtimeId?: string; kinds?: GuiEventKind[] } = {}): GuiEvent[] {
+    const boundedLimit = Math.max(1, Math.min(limit, 2000));
+    const { conditions, params } = eventFilterQuery(undefined, [], filters);
+    const whereClause = conditions.length > 0 ? `where ${conditions.join(" and ")}` : "";
+
+    const rows = this.db
+      .prepare(`select * from events ${whereClause} order by id desc limit ?`)
+      .all(...params, boundedLimit) as EventRow[];
+    return rows.reverse().map(eventFromRow);
   }
 
   recentEvents(limit = 200, maxPayloadBytes?: number): GuiEvent[] {
@@ -96,6 +97,31 @@ export class EventLogStore {
       )
       .run(this.maxEventRows);
   }
+}
+
+function eventFilterQuery(
+  initialCondition: string | undefined,
+  initialParams: Array<string | number>,
+  filters: { projectId?: string; runtimeId?: string; kinds?: GuiEventKind[] },
+): { conditions: string[]; params: Array<string | number> } {
+  const conditions = initialCondition ? [initialCondition] : [];
+  const params = [...initialParams];
+
+  if (filters.projectId) {
+    conditions.push("project_id = ?");
+    params.push(filters.projectId);
+  }
+  if (filters.runtimeId) {
+    conditions.push("runtime_id = ?");
+    params.push(filters.runtimeId);
+  }
+  const kinds = filters.kinds?.filter((kind, index, values) => values.indexOf(kind) === index);
+  if (kinds && kinds.length > 0) {
+    conditions.push(`kind in (${kinds.map(() => "?").join(", ")})`);
+    params.push(...kinds);
+  }
+
+  return { conditions, params };
 }
 
 function boundedIntegerEnv(name: string, fallback: number, min: number, max: number): number {

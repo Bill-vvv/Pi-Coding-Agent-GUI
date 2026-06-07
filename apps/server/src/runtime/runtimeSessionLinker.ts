@@ -20,6 +20,7 @@ export class RuntimeSessionLinker {
 
     const existing = this.db.getSession(sessionId);
     const fileSummary = existing?.title ? undefined : readPiSessionConversationSummary(sessionFile);
+    if (!existing && !fileSummary) return;
     const now = Date.now();
     const session: GuiSession = this.db.upsertSession({
       id: sessionId,
@@ -30,7 +31,9 @@ export class RuntimeSessionLinker {
       updatedAt: now,
       runtimeId: managed.runtime.id,
     });
-    this.broadcast({ type: "session.updated", session });
+    if (this.db.isSessionVisible(session)) {
+      this.broadcast({ type: "session.updated", session });
+    }
   }
 
   findRuntimeForSession(session: GuiSession): Runtime | undefined {

@@ -6,7 +6,7 @@ import type { RuntimeLiveState } from "./runtimeLiveState.js";
 import { handleNativeRpcResponse } from "./runtimeNativeRpcResponse.js";
 import { slashCommandsFromPiResponseData } from "./runtimePiPayload.js";
 import type { RuntimeSessionLinker } from "./runtimeSessionLinker.js";
-import { requestSessionStats } from "./runtimeStateRequester.js";
+import { requestRuntimeMessages, requestRuntimeState, requestSessionStats } from "./runtimeStateRequester.js";
 
 type Broadcast = (event: ServerEvent) => void;
 
@@ -75,6 +75,12 @@ export function handleRuntimeResponsePayload({
   }
 
   if (response.command === "set_model" && response.success === true) {
+    requestSessionStats(managed, events);
+  }
+
+  if (response.command === "abort" && response.success === true) {
+    requestRuntimeState(managed, events);
+    requestRuntimeMessages(managed, events);
     requestSessionStats(managed, events);
   }
 }

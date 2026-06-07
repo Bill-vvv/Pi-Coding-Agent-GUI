@@ -85,6 +85,10 @@ export class SubagentRunStore {
     }
     return files;
   }
+
+  isChildSessionFile(sessionFile: string): boolean {
+    return this.listChildSessionFiles().has(sessionFile);
+  }
 }
 
 function parseRunsJson(value: string): Array<{ sessionFile?: string }> {

@@ -54,6 +54,83 @@ test("voice service stops native recording with the config that started it", asy
   assert.deepEqual(result, { text: "native result" });
 });
 
+test("managed voice service reuses an already reachable wrapper instead of spawning another process", async () => {
+  const calls: string[] = [];
+  const adapter: VoiceAdapter = {
+    async health() {
+      calls.push("health");
+      return { ready: true };
+    },
+    async transcribe() {
+      calls.push("transcribe");
+      return { text: " already running " };
+    },
+    async startRecording() {
+      throw new Error("not used");
+    },
+    async stopRecording() {
+      throw new Error("not used");
+    },
+  };
+  const service = new VoiceTranscriptionService(
+    {
+      getSettings: () => ({
+        voiceInput: {
+          mode: "managedProcess",
+          captureMode: "browser",
+          externalUrl: "http://127.0.0.1:18765",
+          managedCommand: "/path/that/should/not/be/spawned",
+          managedArgs: ["server.py"],
+        },
+      }),
+    },
+    adapter,
+  );
+
+  const result = await service.transcribe(Buffer.from("audio"), "audio/webm");
+
+  assert.deepEqual(result, { text: "already running" });
+  assert.deepEqual(calls, ["health", "transcribe"]);
+});
+
+test("managed voice status reports reachable but unready wrapper without spawning another process", async () => {
+  const adapter: VoiceAdapter = {
+    async health() {
+      return { ready: false, message: "ASR model is not configured" };
+    },
+    async transcribe() {
+      throw new Error("not used");
+    },
+    async startRecording() {
+      throw new Error("not used");
+    },
+    async stopRecording() {
+      throw new Error("not used");
+    },
+  };
+  const service = new VoiceTranscriptionService(
+    {
+      getSettings: () => ({
+        voiceInput: {
+          mode: "managedProcess",
+          captureMode: "browser",
+          externalUrl: "http://127.0.0.1:18765",
+          managedCommand: "/path/that/should/not/be/spawned",
+          managedArgs: ["server.py"],
+          autoStart: true,
+        },
+      }),
+    },
+    adapter,
+  );
+
+  const status = await service.getStatus();
+
+  assert.equal(status.available, false);
+  assert.equal(status.state, "error");
+  assert.equal(status.message, "ASR model is not configured");
+});
+
 test("external voice adapter preserves native recording error codes from wrapper responses", async (t) => {
   const server = createServer((_request, response) => {
     const body = JSON.stringify({ ok: false, message: "native recording is not active", code: "native_recording_not_active" });

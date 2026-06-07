@@ -68,3 +68,26 @@ test("RuntimeSupervisor runtime.configure preserves omitted runtime config field
   assert.equal(runtime?.responseMode, "normal");
   db.close();
 });
+
+test("RuntimeSupervisor rejects resume when the Pi session file is missing", () => {
+  const { db, supervisor } = createHarness();
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-missing-pi-session-"));
+  db.createProject({ id: "project-1", name: "Project", cwd, lastOpenedAt: 1 });
+  db.upsertRuntime({
+    id: "runtime-1",
+    projectId: "project-1",
+    cwd,
+    status: "crashed",
+    sessionId: "missing-session-id",
+    startedAt: 100,
+    model: "openai-codex/gpt-5.2",
+    thinkingLevel: "medium",
+    responseMode: "normal",
+  });
+
+  assert.throws(
+    () => supervisor.resumeRuntime("runtime-1"),
+    /Pi session file not found for 'missing-session-id'.*Start a new conversation/s,
+  );
+  db.close();
+});

@@ -33,8 +33,17 @@ function registerAudioParser(fastify: FastifyInstance): void {
   const parseBuffer: Parameters<FastifyInstance["addContentTypeParser"]>[2] = (_request, body, done) => {
     done(null, body);
   };
-  fastify.addContentTypeParser(/^audio\//, { parseAs: "buffer", bodyLimit: MAX_VOICE_ROUTE_BYTES }, parseBuffer);
-  fastify.addContentTypeParser("application/octet-stream", { parseAs: "buffer", bodyLimit: MAX_VOICE_ROUTE_BYTES }, parseBuffer);
+  addBufferParserIfMissing(fastify, /^audio\//, parseBuffer);
+  addBufferParserIfMissing(fastify, "application/octet-stream", parseBuffer);
+}
+
+function addBufferParserIfMissing(
+  fastify: FastifyInstance,
+  contentType: string | RegExp,
+  parser: Parameters<FastifyInstance["addContentTypeParser"]>[2],
+): void {
+  if (fastify.hasContentTypeParser(contentType)) return;
+  fastify.addContentTypeParser(contentType, { parseAs: "buffer", bodyLimit: MAX_VOICE_ROUTE_BYTES }, parser);
 }
 
 function voiceMimeType(contentType: unknown, override: unknown): string {

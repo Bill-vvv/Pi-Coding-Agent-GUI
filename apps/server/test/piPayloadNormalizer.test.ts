@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { normalizePiPayload } from "../src/runtime/conversation/piPayloadNormalizer.js";
 
@@ -7,7 +10,7 @@ test("normalizePiPayload turns lifecycle events into busy changes", () => {
   assert.deepEqual(normalizePiPayload({ type: "compaction_end" }), [{ type: "busy.changed", busy: false }]);
 });
 
-test("normalizePiPayload extracts context from state and session stats responses", () => {
+test("normalizePiPayload extracts context and session tokens from state and session stats responses", () => {
   assert.deepEqual(
     normalizePiPayload({
       type: "response",
@@ -26,7 +29,11 @@ test("normalizePiPayload extracts context from state and session stats responses
       type: "response",
       command: "get_session_stats",
       success: true,
-      data: { contextUsage: { tokens: 250 } },
+      data: {
+        contextUsage: { tokens: 250 },
+        tokens: { input: 100, output: 20, cacheRead: 300, cacheWrite: 40, total: 460 },
+        cost: 0.1234,
+      },
     },
     { currentContextWindow: 1000 },
   );
@@ -36,7 +43,100 @@ test("normalizePiPayload extracts context from state and session stats responses
     assert.equal(usageEvent.usage.tokens, 250);
     assert.equal(usageEvent.usage.contextWindow, 1000);
     assert.equal(usageEvent.usage.percent, 25);
+    assert.deepEqual(usageEvent.usage.sessionTokens, { input: 100, output: 20, cacheRead: 300, cacheWrite: 40, total: 460, cost: 0.1234 });
   }
+});
+
+test("normalizePiPayload marks post-compaction context tokens as unknown when Pi reports null", () => {
+  const [usageEvent] = normalizePiPayload(
+    {
+      type: "response",
+      command: "get_session_stats",
+      success: true,
+      data: {
+        contextUsage: { tokens: null, contextWindow: 1000, percent: null },
+        tokens: { input: 100, output: 20, total: 120 },
+      },
+    },
+    { currentContextWindow: 1000 },
+  );
+
+  assert.equal(usageEvent?.type, "context.usage");
+  if (usageEvent?.type === "context.usage") {
+    assert.equal(usageEvent.usage.tokens, null);
+    assert.equal(usageEvent.usage.contextWindow, 1000);
+    assert.equal(usageEvent.usage.percent, null);
+    assert.deepEqual(usageEvent.usage.sessionTokens, { input: 100, output: 20, cacheRead: undefined, cacheWrite: undefined, total: 120, cost: undefined });
+  }
+});
+
+test("normalizePiPayload prefers session file usage over compacted stats token totals", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-gui-current-usage-"));
+  const sessionFile = join(dir, "session.jsonl");
+  writeFileSync(
+    sessionFile,
+    [
+      { type: "session", id: "session-1", cwd: dir },
+      { type: "message", message: { role: "assistant", usage: { input: 100, output: 25, cacheRead: 500, cacheWrite: 0, totalTokens: 625, cost: 0.42 } } },
+      { type: "compaction", summary: "older conversation compressed" },
+    ].map((record) => JSON.stringify(record)).join("\n"),
+  );
+
+  const [usageEvent] = normalizePiPayload(
+    {
+      type: "response",
+      command: "get_session_stats",
+      success: true,
+      data: {
+        contextUsage: { tokens: 80 },
+        tokens: { input: 10, output: 5, cacheRead: 20, cacheWrite: 0, total: 35 },
+        cost: 0.02,
+        sessionFile,
+      },
+    },
+    { currentContextWindow: 1000 },
+  );
+
+  assert.equal(usageEvent?.type, "context.usage");
+  if (usageEvent?.type === "context.usage") {
+    assert.deepEqual(usageEvent.usage.sessionTokens, { input: 100, output: 25, cacheRead: 500, cacheWrite: 0, total: 625, cost: 0.42 });
+  }
+});
+
+test("normalizePiPayload falls back to session file usage when stats omit token totals", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-gui-current-usage-"));
+  const sessionFile = join(dir, "session.jsonl");
+  writeFileSync(
+    sessionFile,
+    [
+      { type: "session", id: "session-1", cwd: dir },
+      { type: "message", message: { role: "assistant", usage: { input: 10, output: 5, cacheRead: 20, cacheWrite: 2, totalTokens: 37, cost: 0.01 } } },
+      { type: "message", message: { role: "assistant", usage: { prompt_tokens: 7, completion_tokens: 3, cache_read_tokens: 4, cache_creation_tokens: 1 } } },
+      { type: "message", message: { role: "user", usage: { totalTokens: 999 } } },
+    ].map((record) => JSON.stringify(record)).join("\n"),
+  );
+
+  const [usageEvent] = normalizePiPayload(
+    {
+      type: "response",
+      command: "get_session_stats",
+      success: true,
+      data: { contextUsage: { tokens: 250 }, sessionFile },
+    },
+    { currentContextWindow: 1000 },
+  );
+
+  assert.equal(usageEvent?.type, "context.usage");
+  if (usageEvent?.type === "context.usage") {
+    assert.deepEqual(usageEvent.usage.sessionTokens, { input: 17, output: 8, cacheRead: 24, cacheWrite: 3, total: 52, cost: 0.01 });
+  }
+});
+
+test("normalizePiPayload converts failed prompt responses into visible errors and clears busy", () => {
+  assert.deepEqual(normalizePiPayload({ type: "response", command: "prompt", success: false, error: "No API key found" }), [
+    { type: "busy.changed", busy: false },
+    { type: "assistant.error", reason: "prompt_failed", errorText: "No API key found" },
+  ]);
 });
 
 test("normalizePiPayload converts assistant streaming updates", () => {
@@ -46,6 +146,17 @@ test("normalizePiPayload converts assistant streaming updates", () => {
 
   assert.deepEqual(normalizePiPayload({ type: "message_update", assistantMessageEvent: { type: "error", reason: "oops", error: "failed" } }), [
     { type: "assistant.error", reason: "oops", errorText: "failed" },
+  ]);
+});
+
+test("normalizePiPayload converts auto retry lifecycle events", () => {
+  assert.deepEqual(normalizePiPayload({ type: "auto_retry_start", attempt: 2, maxAttempts: 3, errorMessage: "timeout" }), [
+    { type: "retry.started", attempt: 2, maxAttempts: 3, errorMessage: "timeout" },
+  ]);
+
+  assert.deepEqual(normalizePiPayload({ type: "auto_retry_end", attempt: 2, success: true }), [{ type: "retry.finished", attempt: 2, success: true, finalError: undefined }]);
+  assert.deepEqual(normalizePiPayload({ type: "auto_retry_end", attempt: 3, success: false, finalError: "still down" }), [
+    { type: "retry.finished", attempt: 3, success: false, finalError: "still down" },
   ]);
 });
 

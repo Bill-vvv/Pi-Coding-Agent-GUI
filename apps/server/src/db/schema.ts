@@ -115,6 +115,7 @@ export function migrateDatabase(db: Database.Database): void {
 
   ensureColumn(db, "runtimes", "archived_at", "integer");
   ensureColumn(db, "runtimes", "ended_at", "integer");
+  ensureColumn(db, "runtime_conversation_state", "session_tokens_json", "text");
   const addedRuntimeConfigColumns = [
     ensureColumn(db, "runtimes", "model", "text"),
     ensureColumn(db, "runtimes", "thinking_level", "text"),

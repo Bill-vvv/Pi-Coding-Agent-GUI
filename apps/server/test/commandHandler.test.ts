@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -32,12 +32,6 @@ async function sendCommand(handle: (socket: WsClient, data: Buffer | string) => 
   await handle(socket, typeof command === "string" ? command : JSON.stringify(command));
 }
 
-function writeCheckpointStore(cwd: string, records: unknown[]): void {
-  const dir = join(cwd, ".pi", "rewind");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "checkpoints.jsonl"), records.map((record) => JSON.stringify(record)).join("\n") + "\n");
-}
-
 test("command handler rejects invalid JSON commands with an unknown command result", async () => {
   const { db, sent, socket, handle } = createHarness();
 
@@ -68,6 +62,38 @@ test("command handler creates projects only for valid directory cwd", async () =
   db.close();
 });
 
+test("command handler creates projects using resolved backend cwd", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "pi-gui-project-resolved-"));
+  const { db, sent, broadcasted, socket, handle } = createHarness();
+  const handleWithResolver = createSocketMessageHandler({
+    db,
+    supervisor: {} as RuntimeSupervisor,
+    send: (_socket, event) => sent.push(event),
+    broadcast: (event) => broadcasted.push(event),
+    resolvePath: async (inputPath: string) => ({ inputPath, cwd: projectDir, source: "windows-drive", exists: true, isDirectory: true }),
+  });
+
+  await sendCommand(handleWithResolver, socket, { type: "project.create", requestId: "req-resolved", cwd: "C:\\Users\\me\\project" });
+
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.equal(db.listProjects()[0]?.cwd, projectDir);
+  assert.ok(broadcasted.some((event) => event.type === "project.created" && event.project.cwd === projectDir));
+  db.close();
+});
+
+test("command handler creates remote SSH projects without local stat", async () => {
+  const { db, sent, broadcasted, socket, handle } = createHarness();
+
+  await sendCommand(handle, socket, { type: "project.create", requestId: "req-ssh", cwd: "devbox:/srv/app" });
+
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.equal(db.listProjects()[0]?.cwd, "devbox:/srv/app");
+  assert.ok(broadcasted.some((event) => event.type === "project.created" && event.project.cwd === "devbox:/srv/app"));
+  db.close();
+});
+
 test("command handler returns command.result errors for invalid project cwd", async () => {
   const { db, sent, socket, handle } = createHarness();
 
@@ -82,8 +108,9 @@ test("command handler returns command.result errors for invalid project cwd", as
 });
 
 test("command handler lists sessions with optional project filtering", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "pi-gui-session-list-project-"));
   const { db, sent, socket, handle } = createHarness();
-  db.createProject({ id: "project-1", name: "Project", cwd: process.cwd(), lastOpenedAt: 1 });
+  db.createProject({ id: "project-1", name: "Project", cwd: projectDir, lastOpenedAt: 1 });
   db.upsertSession({ id: "session-1", projectId: "project-1", piSessionFile: "/tmp/session-1.jsonl", createdAt: 1, updatedAt: 2 });
 
   await sendCommand(handle, socket, { type: "session.list", requestId: "req-sessions", projectId: "project-1" });
@@ -168,15 +195,88 @@ test("command handler delegates runtime.commands.list", async () => {
   db.close();
 });
 
-test("command handler delegates native runtime RPC commands", async () => {
-  const calls: unknown[] = [];
+test("command handler delegates runtime queue dequeue and returns restored messages", async () => {
+  const calls: string[] = [];
+  const queue = { steering: ["adjust"], followUp: ["next"] };
   const { db, sent, socket, handle } = createHarness({
-    executeRpcCommand: (runtimeId: string, command: unknown, label: unknown) => calls.push({ runtimeId, command, label }),
+    dequeueQueue: async (runtimeId: string) => {
+      calls.push(runtimeId);
+      return queue;
+    },
   } as Partial<RuntimeSupervisor>);
 
-  await sendCommand(handle, socket, { type: "runtime.rpc", requestId: "req-rpc", runtimeId: "runtime-1", command: { type: "compact" }, label: "/compact" });
+  await sendCommand(handle, socket, { type: "runtime.queue.dequeue", requestId: "req-dequeue", runtimeId: "runtime-1" });
 
-  assert.deepEqual(calls, [{ runtimeId: "runtime-1", command: { type: "compact" }, label: "/compact" }]);
+  assert.deepEqual(calls, ["runtime-1"]);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.equal(result?.requestId, "req-dequeue");
+  assert.deepEqual(result?.data, { queue });
+  db.close();
+});
+
+test("command handler delegates runtime queue reorder", async () => {
+  const calls: unknown[] = [];
+  const queue = { steering: ["second", "first"], followUp: ["later"] };
+  const { db, sent, socket, handle } = createHarness({
+    reorderQueue: async (runtimeId: string, nextQueue: unknown) => {
+      calls.push({ runtimeId, queue: nextQueue });
+    },
+  } as Partial<RuntimeSupervisor>);
+
+  await sendCommand(handle, socket, { type: "runtime.queue.reorder", requestId: "req-reorder", runtimeId: "runtime-1", queue });
+
+  assert.deepEqual(calls, [{ runtimeId: "runtime-1", queue }]);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.equal(result?.requestId, "req-reorder");
+  assert.deepEqual(result?.data, { queue });
+  db.close();
+});
+
+test("command handler rejects malformed runtime queue reorder payloads", async () => {
+  const { db, sent, socket, handle } = createHarness();
+
+  await sendCommand(handle, socket, { type: "runtime.queue.reorder", requestId: "req-reorder", runtimeId: "runtime-1", queue: { steering: "bad", followUp: [] } });
+
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.command, "unknown");
+  assert.equal(result?.success, false);
+  assert.match(result?.error ?? "", /queue\.steering must be an array/);
+  db.close();
+});
+
+test("command handler delegates native runtime RPC commands with display text", async () => {
+  const calls: unknown[] = [];
+  const { db, sent, socket, handle } = createHarness({
+    executeRpcCommand: (runtimeId: string, command: unknown, label: unknown, displayMessage: unknown) => calls.push({ runtimeId, command, label, displayMessage }),
+  } as Partial<RuntimeSupervisor>);
+
+  await sendCommand(handle, socket, { type: "runtime.rpc", requestId: "req-rpc", runtimeId: "runtime-1", command: { type: "compact" }, label: "/compact", displayMessage: "/compact now" });
+
+  assert.deepEqual(calls, [{ runtimeId: "runtime-1", command: { type: "compact" }, label: "/compact", displayMessage: "/compact now" }]);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  db.close();
+});
+
+test("command handler delegates runtime prompts with display text", async () => {
+  const calls: unknown[] = [];
+  const { db, sent, socket, handle } = createHarness({
+    prompt: async (runtimeId: string, message: string, streamingBehavior: unknown, displayMessage: unknown) => {
+      calls.push({ runtimeId, message, streamingBehavior, displayMessage });
+    },
+  } as Partial<RuntimeSupervisor>);
+
+  await sendCommand(handle, socket, {
+    type: "runtime.prompt",
+    requestId: "req-prompt-display",
+    runtimeId: "runtime-1",
+    message: "/goal ship it",
+    displayMessage: "/goal ship it",
+  });
+
+  assert.deepEqual(calls, [{ runtimeId: "runtime-1", message: "/goal ship it", streamingBehavior: undefined, displayMessage: "/goal ship it" }]);
   const result = sent.find((event) => event.type === "command.result");
   assert.equal(result?.success, true);
   db.close();
@@ -277,65 +377,61 @@ test("command handler filters replayed events by runtime and project", async () 
   db.close();
 });
 
-test("command handler lists rewind checkpoints for a project", async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), "pi-gui-checkpoint-command-"));
-  const { db, sent, socket, handle } = createHarness();
-  db.createProject({ id: "project-1", name: "Project", cwd: projectDir, lastOpenedAt: 1 });
-  await writeCheckpointStore(projectDir, [
-    { kind: "checkpoint", version: 1, id: "checkpoint-1", entryId: "entry-1", prompt: "Do work", createdAt: 10, cwd: projectDir, git: { available: true, dirty: false, backend: "patch" } },
-  ]);
-
-  await sendCommand(handle, socket, { type: "checkpoint.list", requestId: "req-checkpoints", projectId: "project-1" });
-
-  const listEvent = sent.find((event) => event.type === "checkpoint.list");
-  assert.equal(listEvent?.projectId, "project-1");
-  assert.deepEqual(listEvent?.checkpoints.map((checkpoint) => checkpoint.id), ["checkpoint-1"]);
-  const result = sent.find((event) => event.type === "command.result");
-  assert.equal(result?.success, true);
-  assert.equal(result?.requestId, "req-checkpoints");
-  db.close();
-});
-
-test("command handler restores checkpoints through runtime prompt", async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), "pi-gui-checkpoint-restore-"));
-  const calls: unknown[] = [];
-  const runtime = { id: "runtime-1", projectId: "project-1", cwd: projectDir, status: "running" as const };
+test("command handler returns sanitized default runtime logs", async () => {
+  const runtime = { id: "runtime-1", projectId: "project-1", cwd: process.cwd(), status: "crashed" as const };
   const { db, sent, socket, handle } = createHarness({
     getRuntime: (runtimeId: string) => (runtimeId === runtime.id ? runtime : undefined),
-    prompt: async (runtimeId: string, message: string) => {
-      calls.push({ runtimeId, message });
-    },
   } as Partial<RuntimeSupervisor>);
-  db.createProject({ id: "project-1", name: "Project", cwd: projectDir, lastOpenedAt: 1 });
-  await writeCheckpointStore(projectDir, [
-    { kind: "checkpoint", version: 1, id: "checkpoint-restore", entryId: "entry-1", prompt: "Do work", createdAt: 10, cwd: projectDir, git: { available: true, dirty: false, backend: "patch" } },
-  ]);
+  const status = db.appendEvent({ runtimeId: runtime.id, projectId: runtime.projectId, kind: "runtime_status", payload: { status: "crashed" } });
+  db.appendEvent({ runtimeId: runtime.id, projectId: runtime.projectId, kind: "pi_event", payload: { type: "message", text: "conversation body" } });
+  const stderr = db.appendEvent({ runtimeId: runtime.id, projectId: runtime.projectId, kind: "stderr", payload: "warning" });
+  db.appendEvent({ runtimeId: "runtime-2", projectId: runtime.projectId, kind: "error", payload: { message: "other" } });
 
-  await sendCommand(handle, socket, { type: "checkpoint.restore", requestId: "req-restore", runtimeId: "runtime-1", checkpointId: "checkpoint-restore", restoreFiles: false });
+  await sendCommand(handle, socket, { type: "runtime.logs", requestId: "req-runtime-logs", runtimeId: runtime.id, limit: 20 });
 
-  assert.deepEqual(calls, [{ runtimeId: "runtime-1", message: "/restore checkpoint-restore --no-restore --force" }]);
+  const logs = sent.find((event): event is Extract<ServerEvent, { type: "runtime.logs" }> => event.type === "runtime.logs");
+  assert.equal(logs?.runtimeId, runtime.id);
+  assert.equal(logs?.projectId, runtime.projectId);
+  assert.deepEqual(logs?.events.map((event) => event.id), [status.id, stderr.id]);
   const result = sent.find((event) => event.type === "command.result");
   assert.equal(result?.success, true);
-  assert.deepEqual(result?.data, { checkpointId: "checkpoint-restore", restoreFiles: false });
+  assert.deepEqual(result?.data, { count: 2, hasMore: false });
   db.close();
 });
 
-test("command handler fast-forwards through runtime prompt", async () => {
-  const calls: unknown[] = [];
+test("command handler returns recent runtime logs by default", async () => {
+  const runtime = { id: "runtime-1", projectId: "project-1", cwd: process.cwd(), status: "crashed" as const };
+  const { db, sent, socket, handle } = createHarness({
+    getRuntime: (runtimeId: string) => (runtimeId === runtime.id ? runtime : undefined),
+  } as Partial<RuntimeSupervisor>);
+  db.appendEvent({ runtimeId: runtime.id, projectId: runtime.projectId, kind: "stderr", payload: "old" });
+  const error = db.appendEvent({ runtimeId: runtime.id, projectId: runtime.projectId, kind: "error", payload: { message: "newer" } });
+  const crashed = db.appendEvent({ runtimeId: runtime.id, projectId: runtime.projectId, kind: "runtime_status", payload: { status: "crashed" } });
+
+  await sendCommand(handle, socket, { type: "runtime.logs", requestId: "req-runtime-recent-logs", runtimeId: runtime.id, limit: 2 });
+
+  const logs = sent.find((event): event is Extract<ServerEvent, { type: "runtime.logs" }> => event.type === "runtime.logs");
+  assert.deepEqual(logs?.events.map((event) => event.id), [error.id, crashed.id]);
+  assert.equal(logs?.hasMore, true);
+  db.close();
+});
+
+test("command handler supports opt-in runtime pi_event logs and hasMore", async () => {
   const runtime = { id: "runtime-1", projectId: "project-1", cwd: process.cwd(), status: "running" as const };
   const { db, sent, socket, handle } = createHarness({
     getRuntime: (runtimeId: string) => (runtimeId === runtime.id ? runtime : undefined),
-    prompt: async (runtimeId: string, message: string) => {
-      calls.push({ runtimeId, message });
-    },
   } as Partial<RuntimeSupervisor>);
+  db.appendEvent({ runtimeId: runtime.id, projectId: runtime.projectId, kind: "pi_event", payload: { type: "tool" } });
+  const latest = db.appendEvent({ runtimeId: runtime.id, projectId: runtime.projectId, kind: "pi_event", payload: { type: "tool_end" } });
 
-  await sendCommand(handle, socket, { type: "checkpoint.fastForward", requestId: "req-ff", runtimeId: "runtime-1", restoreFiles: true });
+  await sendCommand(handle, socket, { type: "runtime.logs", requestId: "req-runtime-pi-events", runtimeId: runtime.id, limit: 1, kinds: ["pi_event"] });
 
-  assert.deepEqual(calls, [{ runtimeId: "runtime-1", message: "/ff --force" }]);
+  const logs = sent.find((event): event is Extract<ServerEvent, { type: "runtime.logs" }> => event.type === "runtime.logs");
+  assert.deepEqual(logs?.events.map((event) => event.id), [latest.id]);
+  assert.equal(logs?.hasMore, true);
   const result = sent.find((event) => event.type === "command.result");
   assert.equal(result?.success, true);
-  assert.deepEqual(result?.data, { restoreFiles: true });
+  assert.deepEqual(result?.data, { count: 1, hasMore: true });
   db.close();
 });
 

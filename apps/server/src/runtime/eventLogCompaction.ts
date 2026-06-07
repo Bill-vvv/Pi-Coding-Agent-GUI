@@ -83,6 +83,8 @@ function compactResponsePayload(response: Record<string, unknown>): Record<strin
   if (response.command === "get_session_stats") {
     compacted.data = compactValue({
       contextUsage: data.contextUsage,
+      tokens: data.tokens,
+      cost: data.cost,
       sessionFile: data.sessionFile,
     });
     return compacted;

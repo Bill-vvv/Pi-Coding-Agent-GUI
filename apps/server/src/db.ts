@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { AppSettings, ConversationContextUsage, ConversationMessage, GuiEvent, GuiSession, Project, Runtime, RuntimeConversationSummary, SubagentRun } from "@pi-gui/shared";
+import type { AppSettings, ConversationContextUsage, ConversationMessage, GuiEvent, GuiEventKind, GuiSession, Project, Runtime, RuntimeConversationSummary, SubagentRun } from "@pi-gui/shared";
 import { ConversationStore } from "./db/conversations.js";
 import { EventLogStore } from "./db/events.js";
 import { ProjectStore } from "./db/projects.js";
@@ -66,6 +66,14 @@ export class AppDatabase {
     return this.settings.updateSettings(settings);
   }
 
+  getSettingValue(key: string): string | undefined {
+    return this.settings.getSettingValue(key);
+  }
+
+  setSettingValue(key: string, value: string | undefined, timestamp?: number): void {
+    this.settings.setSettingValue(key, value, timestamp);
+  }
+
   upsertRuntime(runtime: Runtime): Runtime {
     return this.runtimes.upsertRuntime(runtime);
   }
@@ -92,6 +100,10 @@ export class AppDatabase {
     return this.sessions.listSessions(projectId, limit).filter((session) => !childSessionFiles.has(session.piSessionFile));
   }
 
+  isSessionVisible(session: GuiSession): boolean {
+    return !this.subagentRuns.isChildSessionFile(session.piSessionFile);
+  }
+
   getSession(id: string): GuiSession | undefined {
     return this.sessions.getSession(id);
   }
@@ -110,6 +122,10 @@ export class AppDatabase {
 
   listConversationMessages(runtimeId: string, limit = 100): ConversationMessage[] {
     return this.conversations.listConversationMessages(runtimeId, limit);
+  }
+
+  listLatestConversationMessages(runtimeId: string, limit = 100): { messages: ConversationMessage[]; hasMoreBefore: boolean } {
+    return this.conversations.listLatestConversationMessages(runtimeId, limit);
   }
 
   listConversationMessagesBefore(runtimeId: string, beforeMessageId: string, limit = 100): { messages: ConversationMessage[]; hasMoreBefore: boolean } {
@@ -148,8 +164,12 @@ export class AppDatabase {
     return this.eventLog.appendEvent(input);
   }
 
-  listEvents(afterEventId = 0, limit = 500, filters: { projectId?: string; runtimeId?: string } = {}): GuiEvent[] {
+  listEvents(afterEventId = 0, limit = 500, filters: { projectId?: string; runtimeId?: string; kinds?: GuiEventKind[] } = {}): GuiEvent[] {
     return this.eventLog.listEvents(afterEventId, limit, filters);
+  }
+
+  listRecentEvents(limit = 500, filters: { projectId?: string; runtimeId?: string; kinds?: GuiEventKind[] } = {}): GuiEvent[] {
+    return this.eventLog.listRecentEvents(limit, filters);
   }
 
   recentEvents(limit = 200, maxPayloadBytes?: number): GuiEvent[] {

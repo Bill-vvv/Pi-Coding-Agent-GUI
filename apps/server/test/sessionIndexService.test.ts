@@ -50,6 +50,28 @@ test("indexKnownPiSessions scans Pi session files for known project cwd", () => 
   db.close();
 });
 
+test("indexKnownPiSessions skips empty session files without conversation content", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-gui-empty-session-index-"));
+  const sessionRoot = join(dir, "sessions");
+  const projectCwd = join(dir, "project");
+  const sessionDir = join(sessionRoot, "--tmp-project--");
+  const sessionFile = join(sessionDir, "2026-06-03T10-29-08-506Z_empty-session.jsonl");
+  mkdirSync(projectCwd, { recursive: true });
+  mkdirSync(sessionDir, { recursive: true });
+  writeFileSync(sessionFile, JSON.stringify({ type: "session", version: 3, id: "empty-session", timestamp: "2026-06-03T10:29:08.506Z", cwd: projectCwd }) + "\n", "utf8");
+
+  const db = new AppDatabase(join(dir, "pi-gui.sqlite"));
+  db.createProject({ id: "project-1", name: "Project", cwd: projectCwd, lastOpenedAt: 1 });
+
+  withSessionRoot(sessionRoot, () => {
+    const indexed = indexKnownPiSessions(db);
+    assert.equal(indexed.length, 0);
+    assert.equal(db.listSessions("project-1").length, 0);
+  });
+
+  db.close();
+});
+
 test("readPiSessionConversationSummary scans beyond initial metadata lines and extracts latest detail", () => {
   const dir = mkdtempSync(join(tmpdir(), "pi-gui-session-summary-"));
   const sessionFile = join(dir, "session-3.jsonl");

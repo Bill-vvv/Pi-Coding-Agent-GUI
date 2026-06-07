@@ -4,7 +4,14 @@ import type { ResponseMode, ThinkingLevel } from "@pi-gui/shared";
 import { PiRpcClient } from "./piRpcClient.js";
 import { serviceTierConfigPath, writeServiceTierConfig } from "./serviceTierConfig.js";
 
-const INTERNAL_EXTENSION_PATHS = [resolveSiblingExtensionPath("piServiceTierExtension"), resolveSiblingExtensionPath("piReadyNotificationExtension")];
+// These files are loaded by absolute path and passed to `pi --mode rpc --extension`.
+// They intentionally have no normal TypeScript import edge from production code;
+// do not classify them as zombie modules during static reachability cleanup.
+const INTERNAL_EXTENSION_PATHS = [
+  resolveSiblingExtensionPath("piServiceTierExtension"),
+  resolveSiblingExtensionPath("piReadyNotificationExtension"),
+  resolveSiblingExtensionPath("piCodexTransportMonitorExtension"),
+];
 
 export type PiRuntimeClientOptions = {
   runtimeId: string;

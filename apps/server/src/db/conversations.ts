@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { ConversationContextUsage, ConversationMessage, RuntimeConversationSummary } from "@pi-gui/shared";
+import type { ConversationContextUsage, ConversationMessage, ConversationTokenUsage, RuntimeConversationSummary } from "@pi-gui/shared";
 import { conversationContextFromRow, conversationMessageFromRow } from "./mappers.js";
 import type { ConversationMessageRow, RuntimeConversationStateRow, RuntimeConversationSummaryRow } from "./rows.js";
 import { runtimeConversationSummaryFromRow } from "./summaries.js";
@@ -48,6 +48,10 @@ export class ConversationStore {
   }
 
   listConversationMessages(runtimeId: string, limit = 100): ConversationMessage[] {
+    return this.listLatestConversationMessages(runtimeId, limit).messages;
+  }
+
+  listLatestConversationMessages(runtimeId: string, limit = 100): { messages: ConversationMessage[]; hasMoreBefore: boolean } {
     const boundedLimit = Math.max(1, Math.min(limit, 500));
     const rows = this.db
       .prepare(
@@ -55,8 +59,10 @@ export class ConversationStore {
            select *, rowid as _rowid from conversation_messages where runtime_id = ? order by created_at desc, rowid desc limit ?
          ) order by created_at asc, _rowid asc`,
       )
-      .all(runtimeId, boundedLimit) as ConversationMessageRow[];
-    return rows.map(conversationMessageFromRow);
+      .all(runtimeId, boundedLimit + 1) as ConversationMessageRow[];
+    const hasMoreBefore = rows.length > boundedLimit;
+    const visibleRows = hasMoreBefore ? rows.slice(1) : rows;
+    return { messages: visibleRows.map(conversationMessageFromRow), hasMoreBefore };
   }
 
   listConversationMessagesBefore(runtimeId: string, beforeMessageId: string, limit = 100): { messages: ConversationMessage[]; hasMoreBefore: boolean } {
@@ -159,23 +165,28 @@ export class ConversationStore {
 
   updateConversationContext(runtimeId: string, projectId: string, usage: ConversationContextUsage): ConversationContextUsage {
     const now = usage.updatedAt ?? Date.now();
+    const previous = this.getConversationContext(runtimeId);
+    // Session token/cost usage is cumulative billing data; never let compacted Pi stats lower it.
+    const sessionTokens = mergeCumulativeSessionTokens(previous?.sessionTokens, usage.sessionTokens);
     this.db
       .prepare(
-        `insert into runtime_conversation_state (runtime_id, project_id, tokens, context_window, percent, updated_at, busy)
-         values (@runtimeId, @projectId, @tokens, @contextWindow, @percent, @updatedAt, coalesce((select busy from runtime_conversation_state where runtime_id = @runtimeId), 0))
+        `insert into runtime_conversation_state (runtime_id, project_id, tokens, context_window, percent, session_tokens_json, updated_at, busy)
+         values (@runtimeId, @projectId, @tokens, @contextWindow, @percent, @sessionTokensJson, @updatedAt, coalesce((select busy from runtime_conversation_state where runtime_id = @runtimeId), 0))
          on conflict(runtime_id) do update set
            project_id = excluded.project_id,
            tokens = excluded.tokens,
            context_window = excluded.context_window,
            percent = excluded.percent,
+           session_tokens_json = excluded.session_tokens_json,
            updated_at = excluded.updated_at`,
       )
       .run({
         runtimeId,
         projectId,
-        tokens: usage.tokens ?? null,
-        contextWindow: usage.contextWindow ?? null,
-        percent: usage.percent ?? null,
+        tokens: conversationContextValue(usage, "tokens", previous?.tokens),
+        contextWindow: usage.contextWindow ?? previous?.contextWindow ?? null,
+        percent: conversationContextValue(usage, "percent", previous?.percent),
+        sessionTokensJson: serializeSessionTokens(sessionTokens),
         updatedAt: now,
       });
     return this.getConversationContext(runtimeId) ?? { ...usage, updatedAt: now };
@@ -204,4 +215,41 @@ export class ConversationStore {
       .prepare("select * from runtime_conversation_state where runtime_id = ?")
       .get(runtimeId) as RuntimeConversationStateRow | undefined;
   }
+}
+
+function serializeSessionTokens(usage: ConversationTokenUsage | undefined): string | null {
+  if (!usage || !Object.values(usage).some((item) => item !== undefined)) return null;
+  return JSON.stringify(usage);
+}
+
+function conversationContextValue(
+  usage: ConversationContextUsage,
+  key: "tokens" | "percent",
+  previous: number | null | undefined,
+): number | null {
+  if (Object.prototype.hasOwnProperty.call(usage, key)) {
+    const value = usage[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  }
+  return typeof previous === "number" && Number.isFinite(previous) ? previous : null;
+}
+
+function mergeCumulativeSessionTokens(previous: ConversationTokenUsage | undefined, next: ConversationTokenUsage | undefined): ConversationTokenUsage | undefined {
+  if (!previous) return next;
+  if (!next) return previous;
+  const merged: ConversationTokenUsage = {
+    input: maxOptional(previous.input, next.input),
+    output: maxOptional(previous.output, next.output),
+    cacheRead: maxOptional(previous.cacheRead, next.cacheRead),
+    cacheWrite: maxOptional(previous.cacheWrite, next.cacheWrite),
+    total: maxOptional(previous.total, next.total),
+    cost: maxOptional(previous.cost, next.cost),
+  };
+  return Object.values(merged).some((item) => item !== undefined) ? merged : undefined;
+}
+
+function maxOptional(previous: number | undefined, next: number | undefined): number | undefined {
+  if (previous === undefined) return next;
+  if (next === undefined) return previous;
+  return Math.max(previous, next);
 }

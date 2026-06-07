@@ -38,7 +38,15 @@ export function handleNativeRpcResponse(
     requestRuntimeMessages(managed, events);
     requestSessionStats(managed, events);
   }
-  if (command === "set_session_name" || command === "compact") {
+  if (command === "set_session_name") {
+    requestRuntimeState(managed, events);
+    requestSessionStats(managed, events);
+  }
+  if (command === "compact") {
+    // The compact RPC response is returned after Pi emits compaction_end and rewrites
+    // active context. Force a fresh stats sample so stale pre-compact requests cannot
+    // leave the composer context meter showing the old token count.
+    managed.statsRequestId = undefined;
     requestRuntimeState(managed, events);
     requestSessionStats(managed, events);
   }
@@ -83,7 +91,13 @@ function formatSessionStats(data?: Record<string, unknown>): string {
   const userMessages = typeof data.userMessages === "number" ? data.userMessages : undefined;
   const assistantMessages = typeof data.assistantMessages === "number" ? data.assistantMessages : undefined;
   const toolCalls = typeof data.toolCalls === "number" ? data.toolCalls : undefined;
-  const cost = typeof data.cost === "number" ? data.cost : undefined;
+  const cost = numberFromRecord(data, "cost");
+  const sessionTokens = isRecord(data.tokens) ? data.tokens : undefined;
+  const totalSessionTokens = sessionTokens ? numberFromRecord(sessionTokens, "total") ?? numberFromRecord(sessionTokens, "totalTokens") : undefined;
+  const inputTokens = sessionTokens ? numberFromRecord(sessionTokens, "input") : undefined;
+  const outputTokens = sessionTokens ? numberFromRecord(sessionTokens, "output") : undefined;
+  const cacheReadTokens = sessionTokens ? numberFromRecord(sessionTokens, "cacheRead") : undefined;
+  const cacheWriteTokens = sessionTokens ? numberFromRecord(sessionTokens, "cacheWrite") : undefined;
   const contextUsage = isRecord(data.contextUsage) ? data.contextUsage : undefined;
   const tokens = typeof contextUsage?.tokens === "number" ? contextUsage.tokens : undefined;
   const contextWindow = typeof contextUsage?.contextWindow === "number" ? contextUsage.contextWindow : undefined;
@@ -93,8 +107,20 @@ function formatSessionStats(data?: Record<string, unknown>): string {
   if (totalMessages !== undefined) lines.push(`- 消息：${totalMessages}（用户 ${userMessages ?? 0} / 助手 ${assistantMessages ?? 0}）`);
   if (toolCalls !== undefined) lines.push(`- 工具调用：${toolCalls}`);
   if (tokens !== undefined || contextWindow !== undefined || percent !== undefined) {
-    lines.push(`- 上下文：${tokens?.toLocaleString() ?? "?"} / ${contextWindow?.toLocaleString() ?? "?"} tokens${percent !== undefined ? `（${percent.toFixed(1)}%）` : ""}`);
+    lines.push(`- 上下文：${formatNumber(tokens)} / ${formatNumber(contextWindow)} tokens${percent !== undefined ? `（${percent.toFixed(1)}%）` : ""}`);
+  }
+  if (totalSessionTokens !== undefined || inputTokens !== undefined || outputTokens !== undefined || cacheReadTokens !== undefined || cacheWriteTokens !== undefined) {
+    lines.push(`- Tokens：总计 ${formatNumber(totalSessionTokens)} / 输入 ${formatNumber(inputTokens)} / 输出 ${formatNumber(outputTokens)} / 缓存读 ${formatNumber(cacheReadTokens)} / 缓存写 ${formatNumber(cacheWriteTokens)}`);
   }
   if (cost !== undefined) lines.push(`- 成本：$${cost.toFixed(4)}`);
   return lines.join("\n");
+}
+
+function numberFromRecord(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function formatNumber(value: number | undefined): string {
+  return value === undefined ? "—" : value.toLocaleString();
 }

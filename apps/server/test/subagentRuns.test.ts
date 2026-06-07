@@ -144,6 +144,30 @@ test("SubagentRunProjection accepts progress details even when the start event w
   db.close();
 });
 
+test("SubagentRunProjection ignores Trellis payloads when no progress adapter is registered", () => {
+  const { db, runtime } = createDb();
+  const events: ServerEvent[] = [];
+  const projection = new SubagentRunProjection(db, () => runtime, (event) => events.push(event), []);
+
+  projection.handlePiPayload({
+    type: "tool_execution_update",
+    toolCallId: "subagent-disabled",
+    toolName: "trellis_subagent",
+    partialResult: {
+      details: {
+        kind: "trellis-subagent-progress",
+        agent: "trellis-check",
+        mode: "single",
+        runs: [{ id: "trellis-check-1", agent: "trellis-check", status: "running" }],
+      },
+    },
+  });
+
+  assert.equal(db.getSubagentRun("runtime-1:subagent-disabled"), undefined);
+  assert.equal(events.length, 0);
+  db.close();
+});
+
 test("SubagentRunProjection keeps child finals out of parent finalText until final", () => {
   const { db, runtime } = createDb();
   const projection = new SubagentRunProjection(db, () => runtime, () => undefined);

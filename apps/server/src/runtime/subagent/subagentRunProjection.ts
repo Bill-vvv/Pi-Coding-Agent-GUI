@@ -2,18 +2,25 @@ import type { ServerEvent, SubagentChildRun, SubagentRun, SubagentRunMode, Subag
 import { isRecord } from "@pi-gui/shared";
 import type { AppDatabase } from "../../db.js";
 import type { RuntimeProvider } from "../conversationProjection.js";
-import { toolNameFromPayload } from "../conversation/piToolMessages.js";
-import { aggregateSubagentStatus, finalTextFromToolPayload, subagentProgressFromToolPayload, subagentRunWithDerivedFields } from "./subagentProgress.js";
+import {
+  aggregateSubagentStatus,
+  finalTextFromToolPayload,
+  subagentAdapterForToolPayload,
+  subagentProgressFromToolPayload,
+  subagentRunWithDerivedFields,
+  type SubagentProgressAdapter,
+} from "./subagentProgress.js";
+import { subagentRunForWire } from "./subagentWire.js";
+import { defaultSubagentProgressAdapters } from "./trellisSubagentAdapter.js";
 
 type Broadcast = (event: ServerEvent) => void;
-
-const TRELLIS_SUBAGENT_TOOL = "trellis_subagent";
 
 export class SubagentRunProjection {
   constructor(
     private readonly db: AppDatabase,
     private readonly getRuntime: RuntimeProvider,
     private readonly broadcast: Broadcast,
+    private readonly adapters: readonly SubagentProgressAdapter[] = defaultSubagentProgressAdapters,
   ) {}
 
   handlePiPayload(payload: unknown): void {
@@ -27,17 +34,17 @@ export class SubagentRunProjection {
     if (!runtime) return;
 
     const existing = this.db.getSubagentRunByParentToolCall(runtime.id, toolCallId);
-    const progress = subagentProgressFromToolPayload(payload);
-    const toolName = toolNameFromPayload(payload);
-    if (!existing && toolName !== TRELLIS_SUBAGENT_TOOL && !progress) return;
+    const progress = subagentProgressFromToolPayload(payload, this.adapters);
+    const adapter = subagentAdapterForToolPayload(payload, this.adapters);
+    if (!existing && !adapter && !progress) return;
 
     const now = Date.now();
-    const finalText = finalTextFromToolPayload(payload);
+    const finalText = finalTextFromToolPayload(payload, this.adapters);
     const isEnd = payload.type === "tool_execution_end";
     const fallbackStatus = fallbackStatusFromPayload(payload, existing?.status ?? "running");
     const startedAt = progress?.startedAt ?? existing?.startedAt ?? now;
     const mode = progress?.mode ?? existing?.mode ?? modeFromPayload(payload) ?? "single";
-    const agent = progress?.agent ?? existing?.agent ?? agentFromPayload(payload) ?? "trellis-subagent";
+    const agent = progress?.agent ?? existing?.agent ?? agentFromPayload(payload) ?? adapter?.defaultAgent ?? "subagent";
     const runs = progress?.runs ? mergeChildRuns(existing?.runs ?? [], progress.runs) : existing?.runs ?? [];
     const status = aggregateSubagentStatus(runs, fallbackStatus, isEnd || progress?.final === true);
     const finishedAt = status === "running" || status === "pending" ? existing?.finishedAt : progress?.updatedAt ?? now;
@@ -62,7 +69,7 @@ export class SubagentRunProjection {
     });
 
     const saved = this.db.upsertSubagentRun(next);
-    this.broadcast({ type: "subagent.run", run: saved });
+    this.broadcast({ type: "subagent.run", run: subagentRunForWire(saved) });
   }
 }
 

@@ -3,12 +3,72 @@ export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhi
 export type ResponseMode = "normal" | "fast";
 export type ServiceTier = "auto" | "default" | "flex" | "scale" | "priority";
 
+export const SERVICE_TIERS: readonly ServiceTier[] = ["auto", "default", "flex", "scale", "priority"] as const;
+
+export function isServiceTier(value: unknown): value is ServiceTier {
+  return typeof value === "string" && (SERVICE_TIERS as readonly string[]).includes(value);
+}
+
 export type Project = {
   id: string;
   name: string;
   cwd: string;
   lastOpenedAt: number;
   defaultModel?: string;
+};
+
+export type ResolvedPathSource = "linux" | "windows-drive" | "wsl-unc" | "ssh";
+
+export type ResolvePathErrorCode =
+  | "empty_path"
+  | "relative_path"
+  | "home_expansion_unsupported"
+  | "windows_path_requires_wsl"
+  | "wsl_unc_invalid"
+  | "wsl_unc_distro_mismatch"
+  | "path_not_found"
+  | "path_not_directory";
+
+export type ResolvedPath = {
+  inputPath: string;
+  cwd: string;
+  displayPath?: string;
+  source: ResolvedPathSource;
+  exists: boolean;
+  isDirectory: boolean;
+  error?: string;
+  errorCode?: ResolvePathErrorCode;
+};
+
+export type DirectoryEntry = {
+  name: string;
+  path: string;
+  type: "directory";
+};
+
+export type DirectoryListing = {
+  cwd: string;
+  parent?: string;
+  entries: DirectoryEntry[];
+};
+
+export type FileSearchEntry = {
+  name: string;
+  path: string;
+  relativePath: string;
+  type: "file" | "directory";
+};
+
+export type FileSearchResponse = {
+  root: string;
+  query: string;
+  entries: FileSearchEntry[];
+};
+
+export type ImportedFileResponse = {
+  path: string;
+  name: string;
+  size: number;
 };
 
 export type Runtime = {
@@ -23,7 +83,6 @@ export type Runtime = {
   model?: string;
   thinkingLevel?: ThinkingLevel;
   responseMode?: ResponseMode;
-  voiceInput?: VoiceInputSettings;
 };
 
 export type GuiSession = {
@@ -34,33 +93,6 @@ export type GuiSession = {
   createdAt: number;
   updatedAt: number;
   runtimeId?: string;
-};
-
-export type RewindCheckpointGit = {
-  available: boolean;
-  root?: string;
-  head?: string;
-  branch?: string;
-  dirty?: boolean;
-  backend?: "patch" | "stash";
-  snapshotId?: string;
-  trackedPatch?: string;
-  stagedPatch?: string;
-  untrackedDir?: string;
-  stashSha?: string;
-  statusPreview?: string;
-  error?: string;
-};
-
-export type RewindCheckpoint = {
-  id: string;
-  projectId: string;
-  cwd: string;
-  sessionFile?: string;
-  sessionEntryId: string;
-  prompt: string;
-  createdAt: number;
-  git: RewindCheckpointGit;
 };
 
 export type GuiEventKind = "pi_event" | "runtime_status" | "stderr" | "error";
@@ -76,6 +108,9 @@ export type GuiEvent = {
 
 export type ConversationRole = "user" | "assistant" | "tool" | "error" | "log";
 
+// Provider-agnostic optional capability for child agent/tool runs launched by a
+// Pi extension or workflow adapter. Core Pi GUI must not require Trellis or any
+// specific workflow provider for these shapes to be valid.
 export type SubagentRunStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
 export type SubagentRunMode = "single" | "parallel" | "chain";
 export type SubagentContextMode = "fork" | "isolated";
@@ -151,10 +186,20 @@ export type ConversationMessage = {
   thinking?: string;
 };
 
+export type ConversationTokenUsage = {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  total?: number;
+  cost?: number;
+};
+
 export type ConversationContextUsage = {
-  tokens?: number;
+  tokens?: number | null;
   contextWindow?: number;
-  percent?: number;
+  percent?: number | null;
+  sessionTokens?: ConversationTokenUsage;
   updatedAt?: number;
 };
 
@@ -177,11 +222,33 @@ export type PiRpcCommand = {
   [key: string]: unknown;
 };
 
+export type ExtensionUiAskBatchQuestionKind = "single" | "multi" | "confirm" | "text";
+
+export type ExtensionUiAskBatchOption = {
+  value: string;
+  label: string;
+  description?: string;
+};
+
+export type ExtensionUiAskBatchQuestion = {
+  id: string;
+  label?: string;
+  prompt: string;
+  situation?: string;
+  suggestion?: string;
+  kind?: ExtensionUiAskBatchQuestionKind;
+  options?: ExtensionUiAskBatchOption[];
+  allowOther?: boolean;
+  required?: boolean;
+  defaultValue?: string | string[] | boolean;
+};
+
 export type ExtensionUiRequest =
   | { type: "extension_ui_request"; id: string; method: "select"; title: string; options: string[]; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "confirm"; title: string; message: string; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "input"; title: string; placeholder?: string; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "editor"; title: string; prefill?: string }
+  | { type: "extension_ui_request"; id: string; method: "askBatch"; title?: string; context?: string; questions: ExtensionUiAskBatchQuestion[]; submitPolicy?: "require_all" | "allow_partial"; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "notify"; message: string; notifyType?: "info" | "warning" | "error" }
   | { type: "extension_ui_request"; id: string; method: "setStatus"; statusKey: string; statusText?: string }
   | { type: "extension_ui_request"; id: string; method: "setWidget"; widgetKey: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor" }
@@ -215,6 +282,84 @@ export type ConversationDelta = {
   role?: ConversationRole;
   title?: string;
   isStreaming?: boolean;
+};
+
+export type RemoteAccessCandidateUrl = {
+  host: string;
+  url: string;
+  interfaceName?: string;
+  recommended?: boolean;
+  source?: "server-interface" | "windows-host";
+  requiresPortProxy?: boolean;
+};
+
+export type RemoteAccessSetupCommand = {
+  label: string;
+  command: string;
+  platform: "shell" | "windows-powershell";
+  requiresAdmin?: boolean;
+};
+
+export type RemoteAccessSetupHint = {
+  code: "restart_required" | "bind_loopback" | "wsl_portproxy_required" | "windows_firewall_required" | "no_lan_candidates";
+  severity: "info" | "warning" | "error";
+  message: string;
+  detail?: string;
+  remediation?: string;
+  commands?: RemoteAccessSetupCommand[];
+};
+
+export type RemoteAccessStatus = {
+  enabled: boolean;
+  active: boolean;
+  restartRequired: boolean;
+  mode: "local" | "remote-lan";
+  bindHost: string;
+  port: number;
+  selectedHost?: string;
+  selectedUrl?: string;
+  recommendedUrl?: string;
+  candidateUrls: RemoteAccessCandidateUrl[];
+  tokenConfigured: boolean;
+  tokenPreview?: string;
+  tokenSource?: "env" | "persisted";
+  networkEnvironment?: "native" | "wsl";
+  setupHints?: RemoteAccessSetupHint[];
+};
+
+export type RemoteAccessPairingInfo = {
+  status: RemoteAccessStatus;
+  token: string;
+  pairingUrl: string;
+  warnings: string[];
+};
+
+export type RemoteAccessUpdateRequest = {
+  enabled?: boolean;
+  selectedHost?: string;
+  rotateToken?: boolean;
+  clearToken?: boolean;
+};
+
+export type RemoteAccessUpdateResponse = {
+  status: RemoteAccessStatus;
+  pairing?: RemoteAccessPairingInfo;
+};
+
+export type RemoteAccessWindowsPortProxyResponse = {
+  accepted: boolean;
+  status: RemoteAccessStatus;
+  targetHost: string;
+  listenPort: number;
+  requiresAdmin: boolean;
+  message: string;
+};
+
+export type RemoteAccessRestartResponse = {
+  accepted: boolean;
+  reconnectDelayMs: number;
+  message: string;
+  status: RemoteAccessStatus;
 };
 
 export type VoiceInputMode = "disabled" | "externalService" | "managedProcess";
@@ -325,13 +470,27 @@ export type TokenUsageOverview = {
   models: Array<{ provider?: string; model: string; totalTokens: number; messages: number; activeDays: number }>;
 };
 
+export type EnvironmentReadinessIssue = {
+  code: string;
+  severity: "warning" | "error";
+  message: string;
+  detail?: string;
+  remediation?: string;
+};
+
 export type EnvironmentDiagnostics = {
   checkedAt: number;
   platform: string;
   arch: string;
   nodeVersion: string;
+  npmVersion?: string;
   cwd: string;
   home?: string;
+  backend?: {
+    host: string;
+    port: number;
+    mode: string;
+  };
   wsl: {
     isWsl: boolean;
     distroName?: string;
@@ -343,5 +502,15 @@ export type EnvironmentDiagnostics = {
     path?: string;
     version?: string;
     error?: string;
+    rpcSmoke?: {
+      ok: boolean;
+      command?: string;
+      durationMs?: number;
+      error?: string;
+    };
+  };
+  readiness?: {
+    status: "ready" | "warning" | "error";
+    issues: EnvironmentReadinessIssue[];
   };
 };

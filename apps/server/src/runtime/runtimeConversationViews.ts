@@ -72,6 +72,15 @@ export function buildRuntimeConversationSummaries({
     .slice(0, boundedLimit);
 }
 
+export function runtimeConversationBusyEvents(db: { getConversationBusy(runtimeId: string): boolean }, runtimes: Runtime[]): Array<Extract<ServerEvent, { type: "conversation.busy" }>> {
+  return runtimes.map((runtime) => ({
+    type: "conversation.busy",
+    runtimeId: runtime.id,
+    projectId: runtime.projectId,
+    busy: db.getConversationBusy(runtime.id),
+  }));
+}
+
 export function runtimeConversationPageBefore(db: AppDatabase, runtimeId: string, beforeMessageId: string, limit?: number): ServerEvent | undefined {
   const runtime = db.getRuntime(runtimeId);
   if (!runtime) return undefined;
@@ -92,12 +101,14 @@ export function runtimeConversationSnapshot(db: AppDatabase, runtimes: Map<strin
 
   const runtime = db.getRuntime(runtimeId);
   if (!runtime) return undefined;
+  const snapshot = db.listLatestConversationMessages(runtime.id, limit ?? 100);
   return {
     type: "conversation.snapshot",
     runtimeId: runtime.id,
     projectId: runtime.projectId,
-    messages: db.listConversationMessages(runtime.id, limit ?? 100),
+    messages: snapshot.messages,
     contextUsage: db.getConversationContext(runtime.id),
     busy: db.getConversationBusy(runtime.id),
+    hasMoreBefore: snapshot.hasMoreBefore,
   };
 }

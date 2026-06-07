@@ -1,7 +1,10 @@
+import { existsSync } from "node:fs";
 import type { PiRpcCommand, Runtime, RuntimeConversationSummary, RuntimeQueue, ServerEvent, SlashCommand, SubagentRun } from "@pi-gui/shared";
 import { AppDatabase } from "../db.js";
+import { findPiSessionFileById, readPiSessionConversationSummary } from "../services/sessionIndexService.js";
+import { parseSshProjectCwd } from "../services/sshProjectService.js";
 import type { ManagedRuntime, RuntimeConfigOptions } from "./managedRuntime.js";
-import { applyManagedRuntimeConfiguration, requestRuntimeSlashCommands, runtimeWithConfiguredOptions, sendAbort, sendExtensionUiResponse, sendNativeRpcCommand, sendPrompt, type RuntimeConfigureOptions } from "./runtimeCommandSender.js";
+import { applyManagedRuntimeConfiguration, dequeueQueuedPrompts, replaceQueuedPrompts, requestRuntimeSlashCommands, runtimeWithConfiguredOptions, sendAbort, sendExtensionUiResponse, sendNativeRpcCommand, sendPrompt, type RuntimeConfigureOptions } from "./runtimeCommandSender.js";
 import { reusableNewRuntimeForProject, unhandledNewRuntimeIdsToArchive } from "./newConversationPolicy.js";
 import { buildRuntimeConversationSummaries, runtimeConversationPageBefore, runtimeConversationSnapshot } from "./runtimeConversationViews.js";
 import { RuntimeEventSink } from "./runtimeEventSink.js";
@@ -9,6 +12,7 @@ import { RuntimeLauncher } from "./runtimeLauncher.js";
 import { RuntimeLiveState } from "./runtimeLiveState.js";
 import { RuntimeSessionLinker } from "./runtimeSessionLinker.js";
 import { SubagentChildSessionCache } from "./subagent/childSessionParser.js";
+import { subagentRunsForWire } from "./subagent/subagentWire.js";
 
 type Broadcast = (event: ServerEvent) => void;
 
@@ -69,18 +73,17 @@ export class RuntimeSupervisor {
   }
 
   listSubagentRuns(parentRuntimeId?: string, limit = 500): SubagentRun[] {
-    return this.db.listSubagentRuns(parentRuntimeId, limit);
+    return subagentRunsForWire(this.db.listSubagentRuns(parentRuntimeId, limit));
   }
 
   listActiveSubagentRuns(limit = 500): SubagentRun[] {
-    return this.db.listActiveSubagentRuns(limit);
+    return subagentRunsForWire(this.db.listActiveSubagentRuns(limit));
   }
 
   startRuntime(projectId: string, options: RuntimeConfigOptions = {}): Runtime {
     const runtimes = this.listRuntimes();
-    const hasMessages = (runtimeId: string) => this.db.listConversationMessages(runtimeId, 1).length > 0;
-    const reusable = reusableNewRuntimeForProject(runtimes, projectId, hasMessages);
-    for (const runtimeId of unhandledNewRuntimeIdsToArchive(runtimes, reusable?.id, hasMessages)) {
+    const reusable = reusableNewRuntimeForProject(runtimes, projectId, (runtimeId) => this.runtimeHasConversationActivity(runtimeId));
+    for (const runtimeId of unhandledNewRuntimeIdsToArchive(runtimes, reusable?.id, (runtimeId) => this.runtimeHasConversationActivity(runtimeId))) {
       this.archiveRuntime(runtimeId);
     }
     if (reusable) return this.runtimes.get(reusable.id)?.runtime ?? reusable;
@@ -105,6 +108,7 @@ export class RuntimeSupervisor {
     if (!sourceRuntime.sessionId) {
       throw new Error(`Runtime has no Pi session to resume: ${runtimeId}`);
     }
+    this.assertLocalPiSessionAvailable(sourceRuntime.sessionId, sourceRuntime.cwd);
 
     return this.launcher.createRuntime(sourceRuntime.projectId, options, {
       session: sourceRuntime.sessionId,
@@ -136,6 +140,7 @@ export class RuntimeSupervisor {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`);
     }
+    this.assertLocalPiSessionAvailable(sessionId, session.piSessionFile, session.piSessionFile);
 
     const linkedRuntime = this.sessionLinker.findRuntimeForSession(session);
     if (linkedRuntime) {
@@ -178,6 +183,17 @@ export class RuntimeSupervisor {
     return runtime;
   }
 
+  archiveBlankRuntime(runtimeId: string): Runtime {
+    const runtime = this.getRuntime(runtimeId);
+    if (!runtime) {
+      throw new Error(`Runtime not found: ${runtimeId}`);
+    }
+    if (!isBlankRuntimeSafeToArchive(runtime, (id) => this.runtimeHasConversationActivity(id))) {
+      return runtime;
+    }
+    return this.archiveRuntime(runtimeId);
+  }
+
   configureRuntime(runtimeId: string, options: RuntimeConfigureOptions): void {
     const managed = this.runtimes.get(runtimeId);
     const currentRuntime = managed?.runtime ?? this.db.getRuntime(runtimeId);
@@ -190,15 +206,39 @@ export class RuntimeSupervisor {
     this.events.publishRuntimeStatus(nextRuntime);
   }
 
-  async prompt(runtimeId: string, message: string, streamingBehavior?: "steer" | "followUp"): Promise<void> {
+  async prompt(runtimeId: string, message: string, streamingBehavior?: "steer" | "followUp", displayMessage?: string): Promise<void> {
     const managed = this.requireManaged(runtimeId);
     const project = this.db.getProject(managed.runtime.projectId);
     if (!project) throw new Error(`Project not found for runtime: ${managed.runtime.projectId}`);
-    await sendPrompt(managed, message, streamingBehavior, project.cwd);
+    appendDisplayUserInput(managed, displayMessage);
+    managed.projection.markBusy(true);
+    try {
+      await sendPrompt(managed, message, streamingBehavior, project.cwd);
+    } catch (error) {
+      managed.projection.markBusy(false);
+      throw error;
+    }
   }
 
-  executeRpcCommand(runtimeId: string, command: PiRpcCommand, label?: string): void {
-    sendNativeRpcCommand(this.requireManaged(runtimeId), command, label);
+  async dequeueQueue(runtimeId: string): Promise<RuntimeQueue> {
+    const managed = this.requireManaged(runtimeId);
+    const queue = await dequeueQueuedPrompts(managed);
+    this.liveState.publishQueue(managed, { steering: [], followUp: [] });
+    return queue;
+  }
+
+  async reorderQueue(runtimeId: string, queue: RuntimeQueue): Promise<void> {
+    const managed = this.requireManaged(runtimeId);
+    const project = this.db.getProject(managed.runtime.projectId);
+    if (!project) throw new Error(`Project not found for runtime: ${managed.runtime.projectId}`);
+    await replaceQueuedPrompts(managed, queue, project.cwd);
+    this.liveState.publishQueue(managed, queue);
+  }
+
+  executeRpcCommand(runtimeId: string, command: PiRpcCommand, label?: string, displayMessage?: string): void {
+    const managed = this.requireManaged(runtimeId);
+    appendDisplayUserInput(managed, displayMessage);
+    sendNativeRpcCommand(managed, command, label);
   }
 
   abort(runtimeId: string): void {
@@ -207,6 +247,19 @@ export class RuntimeSupervisor {
 
   respondExtensionUi(runtimeId: string, responseId: string, response: Record<string, unknown>): void {
     sendExtensionUiResponse(this.requireManaged(runtimeId), responseId, response);
+  }
+
+  private assertLocalPiSessionAvailable(sessionId: string, cwd: string, directSessionFile?: string): void {
+    if (parseSshProjectCwd(cwd) || (directSessionFile && parseSshProjectCwd(directSessionFile))) return;
+
+    const indexedSessionFile = this.db.getSession(sessionId)?.piSessionFile;
+    if (directSessionFile && existsSync(directSessionFile)) return;
+    if (indexedSessionFile && existsSync(indexedSessionFile)) return;
+    if (findPiSessionFileById(sessionId, cwd)) return;
+
+    throw new Error(
+      `Pi session file not found for '${sessionId}'. This can happen if the GUI server restarted before Pi persisted the session. Start a new conversation instead of resuming this runtime.`,
+    );
   }
 
   requestSlashCommands(runtimeId: string): SlashCommand[] | undefined {
@@ -228,6 +281,16 @@ export class RuntimeSupervisor {
     return { type: "subagent.detail", ...detail };
   }
 
+  private runtimeHasConversationActivity(runtimeId: string): boolean {
+    if (this.db.listConversationMessages(runtimeId, 1).length > 0 || this.db.getConversationBusy(runtimeId)) return true;
+    const runtime = this.getRuntime(runtimeId);
+    if (!runtime?.sessionId) return false;
+    const session = this.db.getSession(runtime.sessionId);
+    if (!session) return false;
+    if (session.title?.trim()) return true;
+    return (readPiSessionConversationSummary(session.piSessionFile)?.messageCount ?? 0) > 0;
+  }
+
   private requireManaged(runtimeId: string): ManagedRuntime {
     const managed = this.runtimes.get(runtimeId);
     if (!managed) {
@@ -236,4 +299,15 @@ export class RuntimeSupervisor {
     return managed;
   }
 
+}
+
+function isBlankRuntimeSafeToArchive(runtime: Runtime, hasConversationActivity: (runtimeId: string) => boolean): boolean {
+  if (runtime.archivedAt || runtime.sessionId) return false;
+  if (runtime.status !== "running" && runtime.status !== "starting") return false;
+  return !hasConversationActivity(runtime.id);
+}
+
+function appendDisplayUserInput(managed: ManagedRuntime, displayMessage?: string): void {
+  if (!displayMessage?.trim()) return;
+  managed.projection.appendUserInput(displayMessage);
 }

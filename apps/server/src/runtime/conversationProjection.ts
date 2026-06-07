@@ -2,48 +2,23 @@ import { randomUUID } from "node:crypto";
 import type { ConversationContextUsage, ConversationDelta, ConversationMessage, Runtime, ServerEvent } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
 import { ConversationMessageCache } from "./conversation/conversationMessageCache.js";
+import { mergeConversationMessages, snapshotDuplicateSignature, isSyntheticSnapshotMessageId } from "./conversation/conversationSnapshotMerge.js";
 import { compactOptionalText, compactText } from "./conversation/conversationText.js";
 import type { NormalizedConversationEvent, NormalizedMessage, NormalizedSnapshotMessage, NormalizedTool } from "./conversation/normalizedEvents.js";
+import { buildRetryFinalErrorMessage, buildRetryStartedMessage } from "./conversation/retryProjection.js";
 import { normalizePiPayload } from "./conversation/piPayloadNormalizer.js";
 import { toolStatusLabel, type ToolStatus } from "./conversation/toolStatus.js";
 
 type Broadcast = (event: ServerEvent) => void;
 export type RuntimeProvider = () => Runtime | undefined;
 
-function mergeConversationMessages(persistedMessages: ConversationMessage[], cachedMessages: ConversationMessage[], limit: number): ConversationMessage[] {
-  const boundedLimit = Math.max(1, Math.min(limit, 500));
-  const ids: string[] = [];
-  const messagesById = new Map<string, ConversationMessage>();
-
-  for (const message of persistedMessages) {
-    if (!messagesById.has(message.id)) ids.push(message.id);
-    messagesById.set(message.id, message);
-  }
-
-  for (const message of cachedMessages) {
-    if (!messagesById.has(message.id)) ids.push(message.id);
-    messagesById.set(message.id, message);
-  }
-
-  return ids.flatMap((id) => {
-    const message = messagesById.get(id);
-    return message ? [message] : [];
-  }).slice(-boundedLimit);
-}
-
-function snapshotDuplicateSignature(message: ConversationMessage): string | undefined {
-  if (message.timestamp === undefined || !Number.isFinite(message.timestamp)) return undefined;
-  if (!message.text && !message.thinking) return undefined;
-  return JSON.stringify([message.role, message.timestamp, message.text, message.thinking ?? "", message.title ?? ""]);
-}
-
-function isSyntheticSnapshotMessageId(id: string): boolean {
-  return /^snapshot-\d+-\d+$/.test(id) || /^tool-snapshot-\d+-\d+$/.test(id) || /^bash-\d+-\d+$/.test(id);
-}
+const SYNTHETIC_USER_INPUT_DEDUPE_MS = 5000;
 
 export class ConversationProjection {
   private currentAssistantMessageId?: string;
   private currentUserMessageId?: string;
+  private lastAssistantErrorMessageId?: string;
+  private activeRetryMessageId?: string;
   private readonly toolMessageIds = new Map<string, string>();
   private readonly cache = new ConversationMessageCache();
 
@@ -56,18 +31,16 @@ export class ConversationProjection {
   snapshot(limit = 100): ServerEvent | undefined {
     const runtime = this.getRuntime();
     if (!runtime) return undefined;
-    const messages = mergeConversationMessages(
-      this.db.listConversationMessages(runtime.id, limit),
-      this.cache.ordered(limit),
-      limit,
-    );
+    const persisted = this.db.listLatestConversationMessages(runtime.id, limit);
+    const merged = mergeConversationMessages(persisted.messages, this.cache.ordered(limit), limit);
     return {
       type: "conversation.snapshot",
       runtimeId: runtime.id,
       projectId: runtime.projectId,
-      messages,
+      messages: merged.messages,
       contextUsage: this.db.getConversationContext(runtime.id),
       busy: this.db.getConversationBusy(runtime.id),
+      hasMoreBefore: persisted.hasMoreBefore || merged.hasMoreBefore,
     };
   }
 
@@ -81,6 +54,22 @@ export class ConversationProjection {
       timestamp: Date.now(),
       isStreaming: false,
     });
+  }
+
+  appendUserInput(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    this.upsertMessage({
+      id: `user-gui-command-${randomUUID()}`,
+      role: "user",
+      text: compactText(trimmed),
+      timestamp: Date.now(),
+      isStreaming: false,
+    });
+  }
+
+  markBusy(busy: boolean): void {
+    this.setBusy(busy);
   }
 
   handlePiPayload(payload: unknown): void {
@@ -134,9 +123,16 @@ export class ConversationProjection {
           timestamp: Date.now(),
           isStreaming: false,
         });
+        this.lastAssistantErrorMessageId = message.id;
         this.currentAssistantMessageId = undefined;
         return;
       }
+      case "retry.started":
+        this.handleRetryStart(event.attempt, event.maxAttempts, event.errorMessage);
+        return;
+      case "retry.finished":
+        this.handleRetryFinished(event.success, event.finalError);
+        return;
       case "tool.started":
         this.upsertToolMessage(event.tool, "running");
         return;
@@ -151,7 +147,7 @@ export class ConversationProjection {
 
   private handleNormalizedMessageStart(message: NormalizedMessage): void {
     if (message.role === "user") {
-      const id = message.id ?? `user-${randomUUID()}`;
+      const id = this.userMessageIdForPiMessage(message);
       this.currentUserMessageId = id;
       if (message.text) {
         this.upsertMessage({ id, role: "user", text: message.text, timestamp: message.timestamp, isStreaming: false });
@@ -159,8 +155,20 @@ export class ConversationProjection {
       return;
     }
 
-    const id = message.id ?? `assistant-${randomUUID()}`;
+    const retryMessageId = this.activeRetryMessageId;
+    const id = retryMessageId ?? message.id ?? `assistant-${randomUUID()}`;
     this.currentAssistantMessageId = id;
+    if (retryMessageId) {
+      this.upsertMessage({
+        id,
+        role: "assistant",
+        text: message.text,
+        thinking: message.thinking,
+        timestamp: message.timestamp,
+        isStreaming: true,
+      }, false);
+      return;
+    }
     if (message.text || message.thinking) {
       this.upsertMessage({
         id,
@@ -175,7 +183,7 @@ export class ConversationProjection {
 
   private handleNormalizedMessageEnd(message: NormalizedMessage): void {
     if (message.role === "user") {
-      const id = this.currentUserMessageId ?? message.id ?? `user-${randomUUID()}`;
+      const id = this.userMessageIdForPiMessage(message, this.currentUserMessageId);
       if (message.text || message.errorMessage) {
         this.upsertMessage({ id, role: message.errorMessage ? "error" : "user", text: message.text || message.errorMessage || "", timestamp: message.timestamp, isStreaming: false });
       }
@@ -183,7 +191,7 @@ export class ConversationProjection {
       return;
     }
 
-    const id = this.currentAssistantMessageId ?? message.id ?? `assistant-${randomUUID()}`;
+    const id = this.currentAssistantMessageId ?? this.activeRetryMessageId ?? message.id ?? `assistant-${randomUUID()}`;
     const existing = this.getMessage(id);
     const text = message.text || message.errorMessage || existing?.text || "";
     const thinking = message.thinking || existing?.thinking;
@@ -196,8 +204,33 @@ export class ConversationProjection {
         timestamp: message.timestamp,
         isStreaming: false,
       });
+      if (message.errorMessage) {
+        this.lastAssistantErrorMessageId = id;
+      } else {
+        this.lastAssistantErrorMessageId = undefined;
+      }
     }
     this.currentAssistantMessageId = undefined;
+  }
+
+  private handleRetryStart(attempt: number | undefined, maxAttempts: number | undefined, errorMessage: string | undefined): void {
+    const id = this.lastAssistantErrorMessageId ?? this.activeRetryMessageId ?? `assistant-retry-${randomUUID()}`;
+    this.activeRetryMessageId = id;
+    this.lastAssistantErrorMessageId = undefined;
+    this.upsertMessage(buildRetryStartedMessage({ id, attempt, maxAttempts, errorMessage, timestamp: Date.now() }));
+  }
+
+  private handleRetryFinished(success: boolean | undefined, finalError: string | undefined): void {
+    if (success === false) {
+      const id = this.activeRetryMessageId ?? this.lastAssistantErrorMessageId;
+      if (id && finalError) {
+        this.upsertMessage(buildRetryFinalErrorMessage({ id, finalError, timestamp: Date.now() }));
+        this.lastAssistantErrorMessageId = id;
+      }
+    } else {
+      this.lastAssistantErrorMessageId = undefined;
+    }
+    this.activeRetryMessageId = undefined;
   }
 
   private upsertToolMessage(tool: NormalizedTool, status: ToolStatus): void {
@@ -257,7 +290,7 @@ export class ConversationProjection {
     const indexById = new Map<string, number>();
     for (const message of messages) {
       const signature = snapshotDuplicateSignature(message);
-      const existing = signature && isSyntheticSnapshotMessageId(message.id) ? existingBySignature.get(signature) : undefined;
+      const existing = this.matchRecentSyntheticUserInput(message) ?? (signature && isSyntheticSnapshotMessageId(message.id) ? existingBySignature.get(signature) : undefined);
       const normalized = existing ? { ...message, id: existing.id } : message;
       const existingIndex = indexById.get(normalized.id);
       if (existingIndex !== undefined) {
@@ -271,6 +304,22 @@ export class ConversationProjection {
     return normalizedMessages;
   }
 
+  private userMessageIdForPiMessage(message: NormalizedMessage, fallbackId?: string): string {
+    return this.matchRecentSyntheticUserInput({ role: "user", text: message.text, timestamp: message.timestamp })?.id ?? fallbackId ?? message.id ?? `user-${randomUUID()}`;
+  }
+
+  private matchRecentSyntheticUserInput(message: Pick<ConversationMessage, "role" | "text" | "timestamp">): ConversationMessage | undefined {
+    if (message.role !== "user") return undefined;
+    const text = message.text.trim();
+    if (!text) return undefined;
+    const timestamp = message.timestamp;
+    const candidates = [...this.cache.ordered(100), ...this.db.listConversationMessages(this.requireRuntime().id, 100)];
+    return candidates
+      .filter((candidate) => candidate.role === "user" && candidate.id.startsWith("user-gui-command-") && candidate.text.trim() === text)
+      .filter((candidate) => timestamp === undefined || candidate.timestamp === undefined || Math.abs(candidate.timestamp - timestamp) <= SYNTHETIC_USER_INPUT_DEDUPE_MS)
+      .sort((left, right) => (right.timestamp ?? 0) - (left.timestamp ?? 0))[0];
+  }
+
   private ensureAssistantMessage(timestamp: number): ConversationMessage {
     const runtime = this.requireRuntime();
     if (this.currentAssistantMessageId) {
@@ -278,7 +327,7 @@ export class ConversationProjection {
       if (existing) return existing;
     }
 
-    const id = this.currentAssistantMessageId ?? `assistant-${randomUUID()}`;
+    const id = this.currentAssistantMessageId ?? this.activeRetryMessageId ?? `assistant-${randomUUID()}`;
     this.currentAssistantMessageId = id;
     return this.upsertMessage({ id, role: "assistant", text: "", timestamp, isStreaming: true }, false);
   }

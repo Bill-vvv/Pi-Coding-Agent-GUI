@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -122,17 +122,20 @@ process.stdin.resume();
       const { client } = createPiRuntimeClient({ runtimeId: "runtime-extensions", cwd, model: "openai:gpt-5", thinkingLevel: "high" });
       const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
 
-      client.start();
-      const started = (await startedPromise) as { argv: string[] };
-      const extensionPaths = extensionArgsFromArgv(started.argv);
+      try {
+        client.start();
+        const started = (await startedPromise) as { argv: string[] };
+        const extensionPaths = extensionArgsFromArgv(started.argv);
 
-      assert.equal(started.argv.slice(0, 6).join("\0"), ["--mode", "rpc", "--model", "openai:gpt-5", "--thinking", "high"].join("\0"));
-      assert.equal(extensionPaths.length, 2);
-      assert.ok(extensionPaths.some((path) => /piServiceTierExtension\.(?:ts|js)$/.test(path)));
-      assert.ok(extensionPaths.some((path) => /piReadyNotificationExtension\.(?:ts|js)$/.test(path)));
-
-      client.stop();
-      await onceClientEvent(client, "exit");
+        assert.equal(started.argv.slice(0, 6).join("\0"), ["--mode", "rpc", "--model", "openai:gpt-5", "--thinking", "high"].join("\0"));
+        assert.equal(extensionPaths.length, 3);
+        assert.ok(extensionPaths.some((path) => /piServiceTierExtension\.(?:ts|js)$/.test(path)));
+        assert.ok(extensionPaths.some((path) => /piReadyNotificationExtension\.(?:ts|js)$/.test(path)));
+        assert.ok(extensionPaths.some((path) => /piCodexTransportMonitorExtension\.(?:ts|js)$/.test(path)));
+      } finally {
+        client.stop();
+        await onceClientEvent(client, "exit");
+      }
     }),
   );
 });
@@ -211,6 +214,56 @@ process.stdin.resume();
       success: true,
       data: { serviceTier: "priority" },
     });
+
+    client.stop();
+    await onceClientEvent(client, "exit");
+  });
+});
+
+test("PiRpcClient launches SSH project cwd through remote pi rpc", async (t) => {
+  const temp = mkdtempSync(join(tmpdir(), "pi-gui-rpc-ssh-"));
+  const bin = join(temp, "bin");
+  const remoteCwd = join(temp, "remote");
+  mkdirSync(bin);
+  mkdirSync(remoteCwd);
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+
+  writeFileSync(
+    join(bin, "ssh"),
+    `#!/usr/bin/env bash\nset -euo pipefail\ncmd="\${@: -1}"\neval "exec $cmd"\n`,
+    "utf8",
+  );
+  chmodSync(join(bin, "ssh"), 0o755);
+
+  writeFileSync(
+    join(bin, "pi"),
+    `#!/usr/bin/env node\n` +
+      `let buffer = "";\n` +
+      `process.stdin.on("data", (chunk) => {\n` +
+      `  buffer += chunk.toString("utf8");\n` +
+      `  for (;;) {\n` +
+      `    const idx = buffer.indexOf("\\n");\n` +
+      `    if (idx === -1) break;\n` +
+      `    const line = buffer.slice(0, idx);\n` +
+      `    buffer = buffer.slice(idx + 1);\n` +
+      `    if (!line.trim()) continue;\n` +
+      `    const req = JSON.parse(line);\n` +
+      `    if (req.type === "get_state") {\n` +
+      `      console.log(JSON.stringify({ id: req.id, type: "response", command: "get_state", success: true, data: { model: null, thinkingLevel: "off", isStreaming: false, sessionFile: process.cwd() + "/session.jsonl" } }));\n` +
+      `    }\n` +
+      `  }\n` +
+      `});\n`,
+    "utf8",
+  );
+  chmodSync(join(bin, "pi"), 0o755);
+
+  await withPathPrefix(bin, async () => {
+    const client = new PiRpcClient(`fakehost:${remoteCwd}`);
+    client.start();
+    const response = await client.request({ id: "req-1", type: "get_state" });
+
+    assert.equal(response.success, true);
+    assert.equal((response.data as { sessionFile?: string }).sessionFile, `${remoteCwd}/session.jsonl`);
 
     client.stop();
     await onceClientEvent(client, "exit");

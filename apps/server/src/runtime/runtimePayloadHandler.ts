@@ -30,7 +30,8 @@ export function handleRuntimePayload({
   broadcast,
 }: RuntimePayloadHandlerDependencies): void {
   const maybeRecord = isRecord(payload) ? payload : undefined;
-  if (maybeRecord?.type === "response") {
+  const staleInternalStatsResponse = isStaleInternalStatsResponse(managed, maybeRecord);
+  if (maybeRecord?.type === "response" && !staleInternalStatsResponse) {
     handleRuntimeResponsePayload({ managed, response: maybeRecord, events, liveState, sessionLinker, broadcast });
   }
 
@@ -38,8 +39,10 @@ export function handleRuntimePayload({
     broadcast({ type: "extension.ui.request", runtimeId, projectId: managed.runtime.projectId, request: maybeRecord });
   }
 
-  managed.subagents?.handlePiPayload(payload);
-  managed.projection.handlePiPayload(payload);
+  if (!staleInternalStatsResponse) {
+    managed.subagents?.handlePiPayload(payload);
+    managed.projection.handlePiPayload(payload);
+  }
 
   if (maybeRecord?.type === "agent_end" || maybeRecord?.type === "compaction_end") {
     requestSessionStats(managed, events);
@@ -50,4 +53,10 @@ export function handleRuntimePayload({
   }
 
   events.publishGuiEvent(managed.runtime, "pi_event", payload);
+}
+
+function isStaleInternalStatsResponse(managed: ManagedRuntime, payload: Record<string, unknown> | undefined): boolean {
+  if (payload?.type !== "response" || payload.command !== "get_session_stats" || typeof payload.id !== "string") return false;
+  if (!payload.id.startsWith("gui-stats-")) return false;
+  return payload.id !== managed.statsRequestId;
 }

@@ -31,7 +31,7 @@ export class VoiceTranscriptionService {
     if (startingState) return { ...base, available: false, state: startingState, message: "Voice input service is starting" };
 
     try {
-      if (config.mode === "managedProcess" && config.autoStart) await this.managedProcess.ensureStarted(config);
+      if (config.mode === "managedProcess" && config.autoStart) await this.ensureManagedProcessIfServiceIsUnreachable(config);
       const health = await this.adapter.health(config);
       return { ...base, available: health.ready, state: health.ready ? "ready" : "error", message: health.message };
     } catch (error) {
@@ -83,9 +83,23 @@ export class VoiceTranscriptionService {
     const config = effectiveVoiceInputConfig(this.settingsProvider.getSettings().voiceInput);
     if (config.mode === "disabled") throw new VoiceInputError("Voice input is disabled", 400, "voice_input_disabled");
     if (!config.externalUrl) throw new VoiceInputError("Voice input service URL is not configured", 400, "voice_input_not_configured");
-    if (config.mode === "managedProcess") await this.managedProcess.ensureStarted(config);
+    if (config.mode === "managedProcess") await this.ensureManagedProcessIfServiceIsUnreachable(config);
     return config;
   }
+
+  private async ensureManagedProcessIfServiceIsUnreachable(config: VoiceInputEffectiveConfig): Promise<void> {
+    try {
+      await this.adapter.health(config);
+      return;
+    } catch (error) {
+      if (!shouldAttemptManagedStartAfterHealthError(error)) throw error;
+    }
+    await this.managedProcess.ensureStarted(config);
+  }
+}
+
+function shouldAttemptManagedStartAfterHealthError(error: unknown): boolean {
+  return error instanceof VoiceInputError && (error.code === "upstream_unavailable" || error.code === "upstream_timeout");
 }
 
 function normalizedTranscript(result: VoiceTranscriptionResult): VoiceTranscriptionResult {

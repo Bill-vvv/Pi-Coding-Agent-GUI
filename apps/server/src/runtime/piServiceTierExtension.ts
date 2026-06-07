@@ -1,8 +1,5 @@
+import { isServiceTier, type ServiceTier } from "@pi-gui/shared";
 import { readFileSync } from "node:fs";
-
-type ServiceTier = "auto" | "default" | "flex" | "scale" | "priority";
-
-const VALID_SERVICE_TIERS = new Set<ServiceTier>(["auto", "default", "flex", "scale", "priority"]);
 
 function readServiceTier(): ServiceTier | undefined {
   const filePath = process.env.PI_GUI_SERVICE_TIER_FILE;
@@ -10,9 +7,7 @@ function readServiceTier(): ServiceTier | undefined {
 
   try {
     const parsed = JSON.parse(readFileSync(filePath, "utf8")) as { serviceTier?: unknown };
-    return typeof parsed.serviceTier === "string" && VALID_SERVICE_TIERS.has(parsed.serviceTier as ServiceTier)
-      ? (parsed.serviceTier as ServiceTier)
-      : undefined;
+    return isServiceTier(parsed.serviceTier) ? parsed.serviceTier : undefined;
   } catch {
     return undefined;
   }

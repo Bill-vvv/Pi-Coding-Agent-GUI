@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { PiRpcCommand, ResponseMode, Runtime, ServerEvent, SlashCommand, ThinkingLevel } from "@pi-gui/shared";
+import { isRecord, type PiRpcCommand, type ResponseMode, type Runtime, type RuntimeQueue, type ServerEvent, type SlashCommand, type ThinkingLevel } from "@pi-gui/shared";
 import type { ManagedRuntime } from "./managedRuntime.js";
 import { expandPromptFileReferences } from "./promptFileReferences.js";
 import type { RuntimeLiveState } from "./runtimeLiveState.js";
+import { runtimeQueueFromPiPayload } from "./runtimePiPayload.js";
 import { responseModeToServiceTier, writeServiceTierConfig } from "./serviceTierConfig.js";
 
 export type RuntimeConfigureOptions = {
@@ -13,6 +14,8 @@ export type RuntimeConfigureOptions = {
 };
 
 type Broadcast = (event: ServerEvent) => void;
+
+const CLEAR_QUEUE_RPC_TIMEOUT_MS = 5000;
 
 export function runtimeWithConfiguredOptions(currentRuntime: Runtime, options: RuntimeConfigureOptions): Runtime {
   const model = configuredModelKey(options);
@@ -56,6 +59,41 @@ export async function sendPrompt(managed: ManagedRuntime, message: string, strea
   managed.client.send(command);
 }
 
+export async function dequeueQueuedPrompts(managed: ManagedRuntime): Promise<RuntimeQueue> {
+  const response = await managed.client.request({ id: `gui-${randomUUID()}`, type: "clear_queue" }, CLEAR_QUEUE_RPC_TIMEOUT_MS);
+  if (response.success !== true) {
+    const error = typeof response.error === "string" ? response.error : "Failed to restore queued messages";
+    throw new Error(/Unknown command/i.test(error) ? "当前 Pi RPC 不支持队列撤回，请升级 Pi 到支持 clear_queue 的版本" : error);
+  }
+  return runtimeQueueFromPiPayload(isRecord(response.data) ? response.data : {});
+}
+
+export async function replaceQueuedPrompts(managed: ManagedRuntime, requestedQueue: RuntimeQueue, cwd: string): Promise<void> {
+  const currentQueue = await dequeueQueuedPrompts(managed);
+  if (!runtimeQueueHasSameItems(currentQueue, requestedQueue)) {
+    await enqueueRuntimeQueue(managed, currentQueue, cwd);
+    throw new Error("队列已更新，请重试排序");
+  }
+  await enqueueRuntimeQueue(managed, requestedQueue, cwd);
+}
+
+async function enqueueRuntimeQueue(managed: ManagedRuntime, queue: RuntimeQueue, cwd: string): Promise<void> {
+  for (const message of queue.steering) {
+    await sendPrompt(managed, message, "steer", cwd);
+  }
+  for (const message of queue.followUp) {
+    await sendPrompt(managed, message, "followUp", cwd);
+  }
+}
+
+function runtimeQueueHasSameItems(left: RuntimeQueue, right: RuntimeQueue): boolean {
+  return stringMultisetKey(left.steering) === stringMultisetKey(right.steering) && stringMultisetKey(left.followUp) === stringMultisetKey(right.followUp);
+}
+
+function stringMultisetKey(values: string[]): string {
+  return values.map((value) => JSON.stringify(value)).sort().join("\n");
+}
+
 export function sendNativeRpcCommand(managed: ManagedRuntime, command: PiRpcCommand, label?: string): void {
   const id = `gui-${randomUUID()}`;
   managed.pendingNativeRpcCommands.set(id, { command: command.type, label });
@@ -63,6 +101,11 @@ export function sendNativeRpcCommand(managed: ManagedRuntime, command: PiRpcComm
 }
 
 export function sendAbort(managed: ManagedRuntime): void {
+  // Fan out to the known cancellable Pi RPC activities before the generic
+  // agent abort. The generic abort covers the active agent run/retry, while
+  // abort_bash handles standalone RPC bash operations if one is active.
+  managed.client.send({ id: `gui-${randomUUID()}`, type: "abort_retry" });
+  managed.client.send({ id: `gui-${randomUUID()}`, type: "abort_bash" });
   managed.client.send({ id: `gui-${randomUUID()}`, type: "abort" });
 }
 

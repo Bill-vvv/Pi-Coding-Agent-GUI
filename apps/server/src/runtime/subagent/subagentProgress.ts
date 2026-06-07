@@ -12,8 +12,22 @@ export type NormalizedSubagentProgress = {
   runs?: SubagentChildRun[];
 };
 
-export function subagentProgressFromToolPayload(payload: Record<string, unknown>): NormalizedSubagentProgress | undefined {
-  const details = findProgressDetails(payload.result) ?? findProgressDetails(payload.partialResult) ?? findProgressDetails(payload.details) ?? findProgressDetails(payload);
+export type SubagentProgressAdapter = {
+  id: string;
+  defaultAgent?: string;
+  isRunToolPayload?(payload: Record<string, unknown>): boolean;
+  progressDetails(value: unknown): Record<string, unknown> | undefined;
+};
+
+export function subagentAdapterForToolPayload(payload: Record<string, unknown>, adapters: readonly SubagentProgressAdapter[]): SubagentProgressAdapter | undefined {
+  return adapters.find((adapter) => adapter.isRunToolPayload?.(payload) === true);
+}
+
+export function subagentProgressFromToolPayload(
+  payload: Record<string, unknown>,
+  adapters: readonly SubagentProgressAdapter[],
+): NormalizedSubagentProgress | undefined {
+  const details = findProgressDetails(payload.result, adapters) ?? findProgressDetails(payload.partialResult, adapters) ?? findProgressDetails(payload.details, adapters) ?? findProgressDetails(payload, adapters);
   if (!details) return undefined;
 
   const runs = Array.isArray(details.runs) ? details.runs.flatMap((item, index) => normalizeChildRun(item, index, details)) : [];
@@ -28,10 +42,10 @@ export function subagentProgressFromToolPayload(payload: Record<string, unknown>
   };
 }
 
-export function finalTextFromToolPayload(payload: Record<string, unknown>): string | undefined {
+export function finalTextFromToolPayload(payload: Record<string, unknown>, adapters: readonly SubagentProgressAdapter[]): string | undefined {
   const source = payload.result;
   if (source === undefined) return undefined;
-  if (findProgressDetails(source) && !resultHasTextContent(source)) return undefined;
+  if (findProgressDetails(source, adapters) && !resultHasTextContent(source, adapters)) return undefined;
 
   const text = textFromResult(source).trim();
   if (!text || text === "subagent running") return undefined;
@@ -68,32 +82,37 @@ function subagentRunStatusIsTerminal(status: SubagentRunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
-function findProgressDetails(value: unknown, depth = 0): Record<string, unknown> | undefined {
+function findProgressDetails(
+  value: unknown,
+  adapters: readonly SubagentProgressAdapter[],
+  depth = 0,
+): Record<string, unknown> | undefined {
   if (depth > 4) return undefined;
   if (isRecord(value)) {
-    if (value.kind === "trellis-subagent-progress") return value;
-    return findProgressDetails(value.details, depth + 1) ?? findProgressDetails(value.result, depth + 1) ?? findProgressDetails(value.partialResult, depth + 1);
+    const direct = adapters.map((adapter) => adapter.progressDetails(value)).find((details): details is Record<string, unknown> => Boolean(details));
+    if (direct) return direct;
+    return findProgressDetails(value.details, adapters, depth + 1) ?? findProgressDetails(value.result, adapters, depth + 1) ?? findProgressDetails(value.partialResult, adapters, depth + 1);
   }
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = findProgressDetails(item, depth + 1);
+      const found = findProgressDetails(item, adapters, depth + 1);
       if (found) return found;
     }
   }
   return undefined;
 }
 
-function resultHasTextContent(value: unknown, depth = 0): boolean {
+function resultHasTextContent(value: unknown, adapters: readonly SubagentProgressAdapter[], depth = 0): boolean {
   if (depth > 4 || value === null || value === undefined) return false;
   if (typeof value === "string") return value.trim().length > 0;
-  if (Array.isArray(value)) return value.some((item) => resultHasTextContent(item, depth + 1));
-  if (!isRecord(value) || value.kind === "trellis-subagent-progress") return false;
+  if (Array.isArray(value)) return value.some((item) => resultHasTextContent(item, adapters, depth + 1));
+  if (!isRecord(value) || adapters.some((adapter) => adapter.progressDetails(value))) return false;
 
   if (typeof value.text === "string" && value.text.trim()) return true;
   if (typeof value.content === "string" && value.content.trim()) return true;
   if (typeof value.output === "string" && value.output.trim()) return true;
   if (typeof value.result === "string" && value.result.trim()) return true;
-  return resultHasTextContent(value.content, depth + 1) || resultHasTextContent(value.result, depth + 1);
+  return resultHasTextContent(value.content, adapters, depth + 1) || resultHasTextContent(value.result, adapters, depth + 1);
 }
 
 function normalizeChildRun(value: unknown, index: number, details: Record<string, unknown>): SubagentChildRun[] {

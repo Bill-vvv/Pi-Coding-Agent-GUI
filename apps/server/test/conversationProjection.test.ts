@@ -6,6 +6,7 @@ import test from "node:test";
 import type { Runtime, ServerEvent } from "@pi-gui/shared";
 import { AppDatabase } from "../src/db.js";
 import { ConversationProjection } from "../src/runtime/conversationProjection.js";
+import { runtimeConversationBusyEvents, runtimeConversationSnapshot } from "../src/runtime/runtimeConversationViews.js";
 import { RuntimeSupervisor } from "../src/runtime/runtimeSupervisor.js";
 
 function createHarness() {
@@ -41,6 +42,81 @@ test("ConversationProjection tracks busy state for agent lifecycle events", () =
   db.close();
 });
 
+test("runtimeConversationBusyEvents exposes persisted busy state for reconnect seeding", () => {
+  const { db, runtime } = createHarness();
+  db.setConversationBusy(runtime.id, runtime.projectId, true);
+  const idleRuntime: Runtime = {
+    id: "runtime-2",
+    projectId: "project-1",
+    cwd: process.cwd(),
+    status: "running",
+    pid: 456,
+    startedAt: 2,
+  };
+  db.upsertRuntime(idleRuntime);
+
+  assert.deepEqual(runtimeConversationBusyEvents(db, [runtime, idleRuntime]), [
+    { type: "conversation.busy", runtimeId: runtime.id, projectId: runtime.projectId, busy: true },
+    { type: "conversation.busy", runtimeId: idleRuntime.id, projectId: idleRuntime.projectId, busy: false },
+  ]);
+  db.close();
+});
+
+test("ConversationProjection appends displayed slash command input as a user message", () => {
+  const { db, runtime, events, projection } = createHarness();
+
+  projection.appendUserInput("  /goal ship it  ");
+
+  const messages = db.listConversationMessages(runtime.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.role, "user");
+  assert.equal(messages[0]?.text, "/goal ship it");
+  assert.ok(messages[0]?.id.startsWith("user-gui-command-"));
+  assert.ok(events.some((event) => event.type === "conversation.message" && event.message.text === "/goal ship it"));
+  db.close();
+});
+
+test("ConversationProjection folds Pi user echo into displayed GUI prompt input", () => {
+  const { db, runtime, projection } = createHarness();
+
+  projection.appendUserInput("继续修复这个问题");
+  const displayed = db.listConversationMessages(runtime.id)[0];
+  assert.ok(displayed?.id.startsWith("user-gui-command-"));
+
+  projection.handlePiPayload({ type: "message_end", message: { id: "pi-user-1", role: "user", content: "继续修复这个问题", timestamp: Date.now() } });
+
+  const messages = db.listConversationMessages(runtime.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.id, displayed?.id);
+  assert.equal(messages[0]?.text, "继续修复这个问题");
+  db.close();
+});
+
+test("ConversationProjection folds get_messages user echo into displayed GUI prompt input", () => {
+  const { db, runtime, projection } = createHarness();
+
+  projection.appendUserInput("恢复后继续处理");
+  const displayed = db.listConversationMessages(runtime.id)[0];
+  assert.ok(displayed?.id.startsWith("user-gui-command-"));
+
+  projection.handlePiPayload({
+    type: "response",
+    command: "get_messages",
+    success: true,
+    data: {
+      messages: [
+        { id: "pi-user-1", role: "user", content: "恢复后继续处理", timestamp: Date.now() },
+        { id: "assistant-1", role: "assistant", content: "好的", timestamp: Date.now() + 1 },
+      ],
+    },
+  });
+
+  const messages = db.listConversationMessages(runtime.id);
+  assert.deepEqual(messages.map((message) => message.id), [displayed?.id, "assistant-1"]);
+  assert.deepEqual(messages.map((message) => message.text), ["恢复后继续处理", "好的"]);
+  db.close();
+});
+
 test("ConversationProjection turns streaming assistant deltas into snapshot messages", () => {
   const { db, runtime, events, projection } = createHarness();
 
@@ -65,6 +141,85 @@ test("ConversationProjection turns streaming assistant deltas into snapshot mess
   db.close();
 });
 
+test("ConversationProjection collapses transient auto-retry errors into the successful assistant message", () => {
+  const { db, runtime, projection } = createHarness();
+
+  projection.handlePiPayload({
+    type: "message_end",
+    message: { id: "assistant-retry", role: "assistant", content: [], timestamp: 100, errorMessage: "Codex SSE response headers timed out after 10000ms" },
+  });
+  projection.handlePiPayload({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, errorMessage: "Codex SSE response headers timed out after 10000ms" });
+  projection.handlePiPayload({ type: "message_start", message: { role: "assistant", content: [], timestamp: 110 } });
+  projection.handlePiPayload({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "recovered" } });
+  projection.handlePiPayload({ type: "message_end", message: { role: "assistant", content: "recovered", timestamp: 110 } });
+  projection.handlePiPayload({ type: "auto_retry_end", attempt: 1, success: true });
+
+  const messages = db.listConversationMessages(runtime.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.id, "assistant-retry");
+  assert.equal(messages[0]?.role, "assistant");
+  assert.equal(messages[0]?.text, "recovered");
+  db.close();
+});
+
+test("ConversationProjection keeps a single final error when auto retries do not recover", () => {
+  const { db, runtime, projection } = createHarness();
+
+  projection.handlePiPayload({
+    type: "message_end",
+    message: { id: "assistant-retry", role: "assistant", content: [], timestamp: 100, errorMessage: "Codex SSE response headers timed out after 10000ms" },
+  });
+  projection.handlePiPayload({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, errorMessage: "Codex SSE response headers timed out after 10000ms" });
+  projection.handlePiPayload({
+    type: "message_end",
+    message: { role: "assistant", content: [], timestamp: 110, errorMessage: "Codex SSE response headers timed out after 10000ms" },
+  });
+
+  const messages = db.listConversationMessages(runtime.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.id, "assistant-retry");
+  assert.equal(messages[0]?.role, "error");
+  assert.equal(messages[0]?.text, "Codex SSE response headers timed out after 10000ms");
+  db.close();
+});
+
+test("ConversationProjection reuses retry message for deltas without a message_start", () => {
+  const { db, runtime, projection } = createHarness();
+
+  projection.handlePiPayload({
+    type: "message_end",
+    message: { id: "assistant-retry", role: "assistant", content: [], timestamp: 100, errorMessage: "Codex SSE response headers timed out after 10000ms" },
+  });
+  projection.handlePiPayload({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, errorMessage: "Codex SSE response headers timed out after 10000ms" });
+  projection.handlePiPayload({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "recovered" } });
+  projection.handlePiPayload({ type: "message_end", message: { role: "assistant", content: "recovered", timestamp: 110 } });
+
+  const messages = db.listConversationMessages(runtime.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.id, "assistant-retry");
+  assert.equal(messages[0]?.role, "assistant");
+  assert.equal(messages[0]?.text, "recovered");
+  db.close();
+});
+
+test("ConversationProjection projects retry-end final errors when no final message arrives", () => {
+  const { db, runtime, projection } = createHarness();
+
+  projection.handlePiPayload({
+    type: "message_end",
+    message: { id: "assistant-retry", role: "assistant", content: [], timestamp: 100, errorMessage: "Codex SSE response headers timed out after 10000ms" },
+  });
+  projection.handlePiPayload({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, errorMessage: "Codex SSE response headers timed out after 10000ms" });
+  projection.handlePiPayload({ type: "auto_retry_end", attempt: 1, success: false, finalError: "Retry cancelled" });
+
+  const messages = db.listConversationMessages(runtime.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.id, "assistant-retry");
+  assert.equal(messages[0]?.role, "error");
+  assert.equal(messages[0]?.text, "Retry cancelled");
+  db.close();
+});
+
 test("ConversationProjection snapshots merge persisted history with live cached output", () => {
   const { db, runtime, projection } = createHarness();
   db.upsertConversationMessage({
@@ -84,6 +239,57 @@ test("ConversationProjection snapshots merge persisted history with live cached 
   assert.equal(snapshot?.type, "conversation.snapshot");
   assert.deepEqual(snapshot?.messages.map((message) => message.text), ["此前的交互内容", "很长输出的实时片段"]);
   assert.deepEqual(db.listConversationMessages(runtime.id).map((message) => message.text), ["此前的交互内容"]);
+  db.close();
+});
+
+test("ConversationProjection snapshots report whether older persisted messages exist", () => {
+  const { db, runtime, projection } = createHarness();
+  for (let index = 1; index <= 3; index += 1) {
+    db.upsertConversationMessage({
+      id: `message-${index}`,
+      runtimeId: runtime.id,
+      projectId: runtime.projectId,
+      role: "assistant",
+      text: `message ${index}`,
+      timestamp: index,
+      updatedAt: index,
+    });
+  }
+
+  const partialSnapshot = projection.snapshot(2);
+  const fullSnapshot = projection.snapshot(3);
+
+  assert.equal(partialSnapshot?.type, "conversation.snapshot");
+  assert.deepEqual(partialSnapshot?.messages.map((message) => message.id), ["message-2", "message-3"]);
+  assert.equal(partialSnapshot?.hasMoreBefore, true);
+  assert.equal(fullSnapshot?.type, "conversation.snapshot");
+  assert.deepEqual(fullSnapshot?.messages.map((message) => message.id), ["message-1", "message-2", "message-3"]);
+  assert.equal(fullSnapshot?.hasMoreBefore, false);
+  db.close();
+});
+
+test("persisted runtime snapshots report whether older messages exist", () => {
+  const { db, runtime } = createHarness();
+  for (let index = 1; index <= 3; index += 1) {
+    db.upsertConversationMessage({
+      id: `message-${index}`,
+      runtimeId: runtime.id,
+      projectId: runtime.projectId,
+      role: "user",
+      text: `message ${index}`,
+      timestamp: index,
+      updatedAt: index,
+    });
+  }
+
+  const partialSnapshot = runtimeConversationSnapshot(db, new Map(), runtime.id, 2);
+  const fullSnapshot = runtimeConversationSnapshot(db, new Map(), runtime.id, 3);
+
+  assert.equal(partialSnapshot?.type, "conversation.snapshot");
+  assert.deepEqual(partialSnapshot?.messages.map((message) => message.id), ["message-2", "message-3"]);
+  assert.equal(partialSnapshot?.hasMoreBefore, true);
+  assert.equal(fullSnapshot?.type, "conversation.snapshot");
+  assert.equal(fullSnapshot?.hasMoreBefore, false);
   db.close();
 });
 

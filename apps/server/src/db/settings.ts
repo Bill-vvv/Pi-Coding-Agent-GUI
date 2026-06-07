@@ -36,6 +36,15 @@ export class SettingsStore {
     return this.getSettings();
   }
 
+  getSettingValue(key: string): string | undefined {
+    const row = this.db.prepare("select value from settings where key = ?").get(key) as { value: string } | undefined;
+    return row?.value;
+  }
+
+  setSettingValue(key: string, value: string | undefined, timestamp = Date.now()): void {
+    this.upsertSetting(key, value?.trim() ?? "", timestamp);
+  }
+
   private upsertSetting(key: string, value: string, timestamp: number): void {
     if (value) {
       this.db

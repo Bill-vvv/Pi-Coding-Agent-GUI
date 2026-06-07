@@ -16,6 +16,28 @@ export function normalizePiPayload(payload: unknown, options: PiPayloadNormalize
     return [{ type: "busy.changed", busy: true }];
   }
 
+  if (payload.type === "auto_retry_start") {
+    return [
+      {
+        type: "retry.started",
+        attempt: numberOrUndefined(payload.attempt),
+        maxAttempts: numberOrUndefined(payload.maxAttempts),
+        errorMessage: typeof payload.errorMessage === "string" ? payload.errorMessage : undefined,
+      },
+    ];
+  }
+
+  if (payload.type === "auto_retry_end") {
+    return [
+      {
+        type: "retry.finished",
+        attempt: numberOrUndefined(payload.attempt),
+        success: typeof payload.success === "boolean" ? payload.success : undefined,
+        finalError: typeof payload.finalError === "string" ? payload.finalError : undefined,
+      },
+    ];
+  }
+
   if (payload.type === "agent_end" || payload.type === "compaction_end") {
     return [{ type: "busy.changed", busy: false }];
   }
@@ -32,9 +54,19 @@ export function normalizePiPayload(payload: unknown, options: PiPayloadNormalize
     return normalizeToolExecution(payload);
   }
 
-  if (payload.type !== "response" || payload.success !== true) return [];
+  if (payload.type !== "response") return [];
 
   const command = typeof payload.command === "string" ? payload.command : undefined;
+  if (payload.success !== true) {
+    const errorText = typeof payload.error === "string" ? payload.error : undefined;
+    return command === "prompt" && errorText
+      ? [
+          { type: "busy.changed", busy: false },
+          { type: "assistant.error", reason: "prompt_failed", errorText },
+        ]
+      : [];
+  }
+
   const data = isRecord(payload.data) ? payload.data : undefined;
   if (!data) return [];
 

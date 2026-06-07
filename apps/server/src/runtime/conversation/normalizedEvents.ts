@@ -39,6 +39,8 @@ export type NormalizedConversationEvent =
   | { type: "message.finished"; message: NormalizedMessage }
   | { type: "assistant.delta"; appendText?: string; appendThinking?: string; text?: string; thinking?: string; isStreaming?: boolean }
   | { type: "assistant.error"; reason: string; errorText: string }
+  | { type: "retry.started"; attempt?: number; maxAttempts?: number; errorMessage?: string }
+  | { type: "retry.finished"; attempt?: number; success?: boolean; finalError?: string }
   | { type: "tool.started"; tool: NormalizedTool }
   | { type: "tool.updated"; tool: NormalizedTool }
   | { type: "tool.finished"; tool: NormalizedTool };

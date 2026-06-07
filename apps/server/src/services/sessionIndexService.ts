@@ -66,7 +66,7 @@ function discoverPiSessions(projects: Project[]): GuiSession[] {
   const sessions: GuiSession[] = [];
   for (const { filePath, mtimeMs } of files) {
     const metadata = readSessionMetadata(filePath);
-    if (!metadata?.id || !metadata.cwd) continue;
+    if (!metadata?.id || !metadata.cwd || !metadata.title) continue;
 
     const project = projectByCwd.get(resolve(metadata.cwd));
     if (!project) continue;
