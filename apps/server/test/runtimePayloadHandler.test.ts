@@ -4,7 +4,7 @@ import type { Runtime } from "@pi-gui/shared";
 import type { ManagedRuntime } from "../src/runtime/managedRuntime.js";
 import { handleRuntimePayload } from "../src/runtime/runtimePayloadHandler.js";
 
-function createManaged(statsRequestId: string | undefined, projected: unknown[]): ManagedRuntime {
+function createManaged(statsRequestId: string | undefined, projected: unknown[], logs: unknown[] = []): ManagedRuntime {
   const runtime: Runtime = {
     id: "runtime-1",
     projectId: "project-1",
@@ -19,7 +19,10 @@ function createManaged(statsRequestId: string | undefined, projected: unknown[])
     statsRequestId,
     pendingNativeRpcCommands: new Map(),
     configRevision: 0,
-    projection: { handlePiPayload: (payload: unknown) => projected.push(payload) },
+    projection: {
+      handlePiPayload: (payload: unknown) => projected.push(payload),
+      appendLog: (...args: unknown[]) => logs.push(args),
+    },
     subagents: { handlePiPayload: () => undefined },
   } as unknown as ManagedRuntime;
 }
@@ -65,4 +68,32 @@ test("handleRuntimePayload applies the current internal stats response", () => {
   assert.equal(managed.statsRequestId, undefined);
   assert.deepEqual(projected, [payload]);
   assert.equal(indexed.length, 1);
+});
+
+test("handleRuntimePayload appends post-compact token notice from refreshed stats", () => {
+  const projected: unknown[] = [];
+  const logs: unknown[] = [];
+  const managed = createManaged("gui-stats-current", projected, logs);
+  managed.pendingCompactStatsNotice = { tokensBefore: 243849 };
+  const payload = {
+    type: "response",
+    id: "gui-stats-current",
+    command: "get_session_stats",
+    success: true,
+    data: { contextUsage: { tokens: 1200, contextWindow: 272000, percent: 0.441 } },
+  };
+
+  handleRuntimePayload({
+    runtimeId: "runtime-1",
+    managed,
+    payload,
+    events: { publishGuiEvent: () => undefined } as never,
+    liveState: {} as never,
+    sessionLinker: { indexSessionFromPiResponse: () => undefined } as never,
+    broadcast: () => undefined,
+  });
+
+  assert.equal(managed.pendingCompactStatsNotice, undefined);
+  assert.equal(logs.length, 1);
+  assert.deepEqual(logs[0], ["log", "上下文压缩后约 1,200 / 272,000 tokens（0.4%），压缩前约 243,849 tokens", "/compact"]);
 });

@@ -46,6 +46,7 @@ export function handleNativeRpcResponse(
     // The compact RPC response is returned after Pi emits compaction_end and rewrites
     // active context. Force a fresh stats sample so stale pre-compact requests cannot
     // leave the composer context meter showing the old token count.
+    managed.pendingCompactStatsNotice = response.success === true && isRecord(data) ? { tokensBefore: numberFromRecord(data, "tokensBefore") } : undefined;
     managed.statsRequestId = undefined;
     requestRuntimeState(managed, events);
     requestSessionStats(managed, events);

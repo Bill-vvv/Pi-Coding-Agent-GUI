@@ -43,7 +43,8 @@ export function handleRuntimeResponsePayload({
     }
   }
 
-  if (managed.statsRequestId && response.id === managed.statsRequestId) {
+  const isCurrentStatsResponse = Boolean(managed.statsRequestId && response.id === managed.statsRequestId);
+  if (isCurrentStatsResponse) {
     managed.statsRequestId = undefined;
   }
 
@@ -67,6 +68,10 @@ export function handleRuntimeResponsePayload({
     sessionLinker.indexSessionFromPiResponse(managed, data);
   }
 
+  if (data && response.command === "get_session_stats" && isCurrentStatsResponse) {
+    appendPendingCompactStatsNotice(managed, data);
+  }
+
   if (response.command === "get_commands" && data) {
     if (managed.commandsRequestId && response.id === managed.commandsRequestId) {
       managed.commandsRequestId = undefined;
@@ -83,4 +88,37 @@ export function handleRuntimeResponsePayload({
     requestRuntimeMessages(managed, events);
     requestSessionStats(managed, events);
   }
+}
+
+function appendPendingCompactStatsNotice(managed: ManagedRuntime, data: Record<string, unknown>): void {
+  const notice = managed.pendingCompactStatsNotice;
+  if (!notice) return;
+  managed.pendingCompactStatsNotice = undefined;
+
+  const contextUsage = isRecord(data.contextUsage) ? data.contextUsage : undefined;
+  const tokensAfter = numberFromRecord(contextUsage, "tokens");
+  const contextWindow = numberFromRecord(contextUsage, "contextWindow");
+  const percent = numberFromRecord(contextUsage, "percent");
+  const before = notice.tokensBefore !== undefined ? `，压缩前约 ${formatNumber(notice.tokensBefore)} tokens` : "";
+
+  if (tokensAfter !== undefined) {
+    const context = contextWindow !== undefined ? `${formatNumber(tokensAfter)} / ${formatNumber(contextWindow)} tokens` : `${formatNumber(tokensAfter)} tokens`;
+    managed.projection.appendLog("log", `上下文压缩后约 ${context}${percent !== undefined ? `（${percent.toFixed(1)}%）` : ""}${before}`, "/compact");
+    return;
+  }
+
+  managed.projection.appendLog(
+    "log",
+    `上下文压缩后 token 数等待下一次模型响应统计${contextWindow !== undefined ? `（窗口 ${formatNumber(contextWindow)} tokens）` : ""}${before}`,
+    "/compact",
+  );
+}
+
+function numberFromRecord(record: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = record?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function formatNumber(value: number): string {
+  return value.toLocaleString();
 }

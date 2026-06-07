@@ -41,6 +41,7 @@ test("compact native RPC response refreshes post-compaction context stats", () =
   assert.deepEqual(sentCommands.map((command) => (command as { type?: string }).type), ["get_state", "get_session_stats"]);
   assert.match(managed.statsRequestId ?? "", /^gui-stats-/);
   assert.notEqual(managed.statsRequestId, "gui-stats-stale");
+  assert.deepEqual(managed.pendingCompactStatsNotice, { tokensBefore: 208440 });
   assert.equal(logs.length, 1);
 });
 

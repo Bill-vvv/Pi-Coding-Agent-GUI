@@ -14,6 +14,7 @@ export type ManagedRuntime = {
   statsRequestId?: string;
   messageRequestId?: string;
   commandsRequestId?: string;
+  pendingCompactStatsNotice?: { tokensBefore?: number };
   pendingNativeRpcCommands: Map<string, { command: string; label?: string }>;
   configRevision: number;
   projection: ConversationProjection;
