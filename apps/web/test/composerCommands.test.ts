@@ -57,7 +57,7 @@ test("routeNativeComposerCommand reports current GUI hotkeys", () => {
   assert.equal(route.kind, "error");
   if (route.kind !== "error") throw new Error("expected hotkeys to return help text");
   assert.match(route.message, /Esc .*中止本轮输出/);
-  assert.match(route.message, /Ctrl\/Cmd\+Shift\+M 语音输入/);
+  assert.doesNotMatch(route.message, /Ctrl\/Cmd\+Shift\+M/);
   assert.match(route.message, /Ctrl\/Cmd\+, 打开设置/);
 });
 
@@ -100,11 +100,8 @@ test("routeNativeComposerCommand separates browser-side commands from pure routi
   });
 });
 
-test("bare goal native routing is safe when no dynamic goal command is available", () => {
-  const route = routeNativeComposerCommand("goal", "ship it");
-  assert.equal(route.kind, "error");
-  if (route.kind !== "error") throw new Error("expected /goal to require dynamic command binding");
-  assert.match(route.message, /\/goal/);
+test("bare goal native routing passes through to Pi even before dynamic commands refresh", () => {
+  assert.deepEqual(routeNativeComposerCommand("goal", "ship it"), { kind: "runtimePrompt", message: "/goal ship it" });
 });
 
 test("composer command helpers identify runtime launch flow and steering", () => {

@@ -4,7 +4,7 @@
 
 A WSL-first Web GUI for Pi Coding Agent.
 
-Pi Coding Agent GUI provides a browser-based control surface for local Pi RPC runtimes: project management, session/runtime supervision, conversation display, token/context visibility, voice-input experiments, and same-LAN remote access for trusted devices.
+Pi Coding Agent GUI provides a browser-based control surface for local Pi RPC runtimes: project management, session/runtime supervision, conversation display, token/context visibility, same-LAN remote access for trusted devices, and an optional [Pi PET Companion](./docs/pi-pet-companion.md) that visualizes live runtime activity.
 
 ## Development
 
@@ -16,6 +16,39 @@ npm run dev
 ```
 
 Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
+
+Restart both frontend and backend dev servers in the background:
+
+```bash
+npm run dev:restart
+```
+
+For side-by-side development, use isolated stable/dev instances:
+
+```bash
+# Stable dogfood instance: 8787 + 5173, data .pi-gui-stable
+npm run dev:stable
+
+# Feature sandbox instance: 8877 + 5273, data .pi-gui-dev
+npm run dev:sandbox
+```
+
+Background restart/status helpers are also available: `npm run dev:stable:restart`, `npm run dev:sandbox:restart`, `npm run dev:stable:status`, and `npm run dev:sandbox:status`.
+
+Desktop GUI development mirrors the same split on Windows + WSL:
+
+```bash
+# Sync WSL changes into the Windows Electron mirror and rebuild desktop
+npm run sync:desktop-mirror
+
+# Stable instance for ongoing development: 8787 + 5173, data .pi-gui-stable
+npm run dev:desktop:stable
+
+# Dev instance for observing revision effects: 8877 + 5273, data .pi-gui-dev
+npm run dev:desktop:dev
+```
+
+Set `PI_GUI_DESKTOP_MIRROR_DIR` or pass `-- --target <path>` if the Windows mirror is not at the default path.
 
 Useful checks:
 

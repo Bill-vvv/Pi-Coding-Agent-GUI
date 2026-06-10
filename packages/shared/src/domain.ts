@@ -1,3 +1,5 @@
+import type { RuntimeProfileId } from "./capabilities.js";
+
 export type RuntimeStatus = "stopped" | "starting" | "running" | "crashed";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type ResponseMode = "normal" | "fast";
@@ -9,12 +11,22 @@ export function isServiceTier(value: unknown): value is ServiceTier {
   return typeof value === "string" && (SERVICE_TIERS as readonly string[]).includes(value);
 }
 
+export type ExecutionHostKind = "wsl" | "windows" | "unknown";
+
+export type ExecutionHostRef = {
+  kind: ExecutionHostKind;
+  id: string;
+  label?: string;
+};
+
 export type Project = {
   id: string;
   name: string;
   cwd: string;
   lastOpenedAt: number;
   defaultModel?: string;
+  defaultRuntimeProfileId?: RuntimeProfileId;
+  host?: ExecutionHostRef;
 };
 
 export type ResolvedPathSource = "linux" | "windows-drive" | "wsl-unc" | "ssh";
@@ -76,6 +88,7 @@ export type Runtime = {
   projectId: string;
   cwd: string;
   status: RuntimeStatus;
+  host?: ExecutionHostRef;
   pid?: number;
   sessionId?: string;
   startedAt?: number;
@@ -83,12 +96,15 @@ export type Runtime = {
   model?: string;
   thinkingLevel?: ThinkingLevel;
   responseMode?: ResponseMode;
+  runtimeProfileId?: RuntimeProfileId;
+  enabledCapabilityIds?: string[];
 };
 
 export type GuiSession = {
   id: string;
   projectId: string;
   piSessionFile: string;
+  host?: ExecutionHostRef;
   title?: string;
   createdAt: number;
   updatedAt: number;
@@ -144,6 +160,9 @@ export type SubagentChildRun = {
   startedAt?: number;
   finishedAt?: number;
   sessionFile?: string;
+  traceFile?: string;
+  activitySummary?: string;
+  lastAction?: string;
   finalText?: string;
   textTail?: string;
   thinkingTail?: string;
@@ -173,6 +192,12 @@ export type SubagentRun = {
   runs: SubagentChildRun[];
 };
 
+export type ConversationToolDetails = {
+  path?: string;
+  diff?: string;
+  firstChangedLine?: number;
+};
+
 export type ConversationMessage = {
   id: string;
   runtimeId: string;
@@ -184,6 +209,7 @@ export type ConversationMessage = {
   title?: string;
   isStreaming?: boolean;
   thinking?: string;
+  toolDetails?: ConversationToolDetails;
 };
 
 export type ConversationTokenUsage = {
@@ -362,51 +388,12 @@ export type RemoteAccessRestartResponse = {
   status: RemoteAccessStatus;
 };
 
-export type VoiceInputMode = "disabled" | "externalService" | "managedProcess";
-export type VoiceInputCaptureMode = "browser" | "native";
-
-export type VoiceInputSettings = {
-  mode?: VoiceInputMode;
-  captureMode?: VoiceInputCaptureMode;
-  externalUrl?: string;
-  managedCommand?: string;
-  managedArgs?: string[];
-  managedCwd?: string;
-  modelPath?: string;
-  autoStart?: boolean;
-  startupTimeoutMs?: number;
-  transcriptionTimeoutMs?: number;
-  maxRecordingMs?: number;
-  maxUploadBytes?: number;
-};
-
-export type VoiceInputStatusState = "disabled" | "not_configured" | "starting" | "ready" | "error";
-
-export type VoiceInputStatus = {
-  available: boolean;
-  mode: VoiceInputMode;
-  state: VoiceInputStatusState;
-  message?: string;
-  maxRecordingMs: number;
-  maxUploadBytes: number;
-  transcriptionTimeoutMs: number;
-};
-
-export type VoiceTranscriptionResponse = {
-  text: string;
-  durationMs?: number;
-};
-
-export type VoiceRecordingStartResponse = {
-  recording: true;
-  startedAt: number;
-};
-
 export type AppSettings = {
   defaultModel?: string;
   defaultThinkingLevel?: ThinkingLevel;
   responseMode?: ResponseMode;
-  voiceInput?: VoiceInputSettings;
+  defaultRuntimeProfileId?: RuntimeProfileId;
+  confirmedProjectExtensionIds?: string[];
 };
 
 export type ModelSummary = {

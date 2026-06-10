@@ -18,7 +18,7 @@ export type ChildSessionDetail = {
 };
 
 type CachedChildSession = {
-  sessionFile: string;
+  detailFile: string;
   size: number;
   mtimeMs: number;
   parser: ChildSessionParser;
@@ -32,19 +32,19 @@ export class SubagentChildSessionCache {
     return parseSubagentChildSession(run, childRunId, limit, this);
   }
 
-  detailFromFile(run: SubagentRun, childRunId: string, sessionFile: string, limit: number, stat: { size: number; mtimeMs: number }, readAt: number): ChildSessionDetail {
-    const key = `${run.id}:${childRunId}:${sessionFile}`;
+  detailFromFile(run: SubagentRun, childRunId: string, detailFile: string, limit: number, stat: { size: number; mtimeMs: number }, readAt: number): ChildSessionDetail {
+    const key = `${run.id}:${childRunId}:${detailFile}`;
     const boundedLimit = Math.max(1, Math.min(limit, MAX_LIMIT));
     let entry = this.entries.get(key);
 
     if (!entry || stat.size < entry.size || stat.mtimeMs < entry.mtimeMs) {
       const parser = new ChildSessionParser(run, childRunId);
-      const content = readFileSync(sessionFile, "utf8");
+      const content = readFileSync(detailFile, "utf8");
       const partialLine = applyChunk(parser, content, "");
-      entry = { sessionFile, size: stat.size, mtimeMs: stat.mtimeMs, parser, partialLine };
+      entry = { detailFile, size: stat.size, mtimeMs: stat.mtimeMs, parser, partialLine };
       this.entries.set(key, entry);
     } else if (stat.size > entry.size) {
-      const chunk = readFileRange(sessionFile, entry.size, stat.size - entry.size);
+      const chunk = readFileRange(detailFile, entry.size, stat.size - entry.size);
       entry.partialLine = applyChunk(entry.parser, chunk, entry.partialLine);
       entry.size = stat.size;
       entry.mtimeMs = stat.mtimeMs;
@@ -63,28 +63,30 @@ export function parseSubagentChildSession(run: SubagentRun, childRunId?: string,
   if (!childRun) {
     return { runId: run.id, childRunId: resolvedChildRunId, messages: [], readAt, error: "Sub-agent child run not found" };
   }
-  if (!childRun.sessionFile) {
-    return { runId: run.id, childRunId: resolvedChildRunId, messages: [], readAt, error: "Sub-agent session file is not available yet" };
+  const detailFile = childRun.sessionFile ?? childRun.traceFile;
+  const detailKind = childRun.sessionFile ? "session" : childRun.traceFile ? "trace" : undefined;
+  if (!detailFile) {
+    return { runId: run.id, childRunId: resolvedChildRunId, messages: [], readAt, error: "Sub-agent session or trace file is not available yet" };
   }
 
   try {
-    const stat = statSync(childRun.sessionFile);
+    const stat = statSync(detailFile);
     if (stat.size > MAX_SESSION_FILE_BYTES) {
       return {
         runId: run.id,
         childRunId: resolvedChildRunId,
         messages: [],
         readAt,
-        error: `Sub-agent session file is too large to parse (${stat.size} bytes)`,
+        error: `Sub-agent ${detailKind ?? "detail"} file is too large to parse (${stat.size} bytes)`,
       };
     }
 
     if (cache) {
-      return cache.detailFromFile(run, resolvedChildRunId, childRun.sessionFile, limit, stat, readAt);
+      return cache.detailFromFile(run, resolvedChildRunId, detailFile, limit, stat, readAt);
     }
 
     const parser = new ChildSessionParser(run, resolvedChildRunId);
-    const content = readFileSync(childRun.sessionFile, "utf8");
+    const content = readFileSync(detailFile, "utf8");
     applyChunk(parser, content, "", true);
     return {
       runId: run.id,
@@ -93,7 +95,8 @@ export function parseSubagentChildSession(run: SubagentRun, childRunId?: string,
       readAt,
     };
   } catch (error) {
-    return { runId: run.id, childRunId: resolvedChildRunId, messages: [], readAt, error: (error as Error).message };
+    const pathLabel = detailKind ? `${detailKind} file` : "detail file";
+    return { runId: run.id, childRunId: resolvedChildRunId, messages: [], readAt, error: `Unable to read sub-agent ${pathLabel}: ${(error as Error).message}` };
   }
 }
 
@@ -156,6 +159,11 @@ class ChildSessionParser {
 
     if (record.type === "tool_execution_start" || record.type === "tool_execution_update" || record.type === "tool_execution_end") {
       this.applyToolExecution(record);
+      return;
+    }
+
+    if (record.type === "subagent_stderr") {
+      this.applyStderr(record);
     }
   }
 
@@ -240,6 +248,20 @@ class ChildSessionParser {
     if (event.type === "thinking_end" && typeof event.content === "string") {
       this.upsertMessage({ id, role: "assistant", text: current?.text ?? "", thinking: event.content, timestamp, isStreaming: true });
     }
+  }
+
+  private applyStderr(record: Record<string, unknown>): void {
+    const text = typeof record.text === "string" ? record.text : "";
+    if (!text.trim()) return;
+    const timestamp = typeof record.timestamp === "number" ? record.timestamp : Date.now() + this.order.length;
+    this.upsertMessage({
+      id: `stderr-${timestamp}-${this.order.length}`,
+      role: "log",
+      text,
+      title: "stderr",
+      timestamp,
+      isStreaming: false,
+    });
   }
 
   private applyToolExecution(record: Record<string, unknown>): void {

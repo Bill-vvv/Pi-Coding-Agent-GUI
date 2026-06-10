@@ -4,12 +4,13 @@ import { spawn } from "node:child_process";
 import Fastify, { type FastifyRequest } from "fastify";
 import { AppDatabase } from "./db.js";
 import { registerBuiltWebUiRoutes } from "./routes/builtWebRoutes.js";
+import { registerCapabilityRoutes } from "./routes/capabilityRoutes.js";
 import { registerEnvironmentRoutes } from "./routes/environmentRoutes.js";
 import { registerFsRoutes } from "./routes/fsRoutes.js";
 import { registerImportRoutes } from "./routes/importRoutes.js";
 import { registerRemoteAccessRoutes } from "./routes/remoteAccessRoutes.js";
 import { registerUsageRoutes } from "./routes/usageRoutes.js";
-import { registerVoiceRoutes } from "./routes/voiceRoutes.js";
+import { replayGapEventForReconnect, RECONNECT_REPLAY_LIMIT } from "./runtime/eventReplay.js";
 import { runtimeConversationBusyEvents } from "./runtime/runtimeConversationViews.js";
 import { RuntimeSupervisor } from "./runtime/runtimeSupervisor.js";
 import { isWebSocketRequestAuthorized, redactTokenInUrl, registerApiAuth } from "./services/authService.js";
@@ -17,7 +18,6 @@ import { listPiModels } from "./services/modelService.js";
 import { readPersistedRemoteAccessConfig, remoteAccessAuthToken, RemoteAccessService } from "./services/remoteAccessService.js";
 import { readServerRuntimeConfig } from "./services/serverConfig.js";
 import { indexKnownPiSessions } from "./services/sessionIndexService.js";
-import { VoiceTranscriptionService } from "./services/voiceInput/index.js";
 import { createSocketMessageHandler } from "./ws/commandHandler.js";
 import { WsHub, type WsClient } from "./ws/wsHub.js";
 
@@ -25,7 +25,6 @@ const db = new AppDatabase();
 const serverConfig = readServerRuntimeConfig(process.env, readPersistedRemoteAccessConfig(db));
 const { host, port } = serverConfig;
 const remoteAccessService = new RemoteAccessService(db, serverConfig);
-const voiceTranscriptionService = new VoiceTranscriptionService({ getSettings: () => db.getSettings() });
 const authProvider = {
   authRequired: () => serverConfig.authRequired,
   getAuthToken: () => remoteAccessAuthToken(db, serverConfig),
@@ -70,12 +69,16 @@ await registerImportRoutes(fastify);
 await registerRemoteAccessRoutes(fastify, remoteAccessService, { restartServer: restartCurrentServer });
 await registerEnvironmentRoutes(fastify);
 await registerUsageRoutes(fastify, { db });
-await registerVoiceRoutes(fastify, voiceTranscriptionService);
-fastify.addHook("onClose", async () => {
-  voiceTranscriptionService.stop();
-});
+await registerCapabilityRoutes(fastify, { db });
 
 fastify.get("/health", async () => ({ ok: true, time: Date.now() }));
+
+fastify.get("/api/desktop/ready", async () => ({
+  ok: serverConfig.mode === "desktop",
+  mode: serverConfig.mode,
+  launchId: serverConfig.desktopLaunchId,
+  time: Date.now(),
+}));
 
 fastify.get("/api/projects", async () => ({ projects: db.listProjects() }));
 
@@ -95,13 +98,20 @@ fastify.get("/ws", { websocket: true }, (socket: WsClient, request: FastifyReque
     runtimes: supervisor.listRuntimes(),
     settings: db.getSettings(),
     lastEventId: db.lastEventId(),
+    executionHost: db.getExecutionHost(),
     conversationSummaries: supervisor.listRuntimeConversationSummaries(),
     sessions: db.listSessions(),
-    subagentRuns: supervisor.listSubagentRuns(undefined, 500),
+    // Keep the connection bootstrap lightweight: active sub-agent runs are
+    // needed for refresh recovery, while historical per-runtime runs are sent
+    // by `conversation.open`. Sending hundreds of historical runs can bloat the
+    // initial `hello` enough to trip WebSocket backpressure before busy seeds
+    // reach the client, making sidebar dots look idle until a conversation is opened.
+    subagentRuns: supervisor.listActiveSubagentRuns(100),
   });
   sendRuntimeBusyStates(socket);
   sendRuntimeQueues(socket);
   sendRuntimeCommands(socket);
+  sendPendingExtensionUiRequests(socket);
   replayEventsForConnection(socket, parseSinceEventId(request));
 
   socket.on("message", (data) => {
@@ -135,7 +145,6 @@ function logRemoteAccessStartupHint(): void {
 async function restartCurrentServer(): Promise<void> {
   fastify.log.warn("Remote Access requested Pi GUI server restart");
   await fastify.close();
-  voiceTranscriptionService.stop();
   db.close();
   const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
     cwd: process.cwd(),
@@ -191,8 +200,24 @@ function sendRuntimeCommands(socket: WsClient): void {
   }
 }
 
+function sendPendingExtensionUiRequests(socket: WsClient): void {
+  for (const pending of supervisor.listPendingExtensionUiRequests()) {
+    wsHub.send(socket, { type: "extension.ui.request", ...pending });
+  }
+}
+
 function replayEventsForConnection(socket: WsClient, sinceEventId: number | undefined): void {
-  const events = sinceEventId !== undefined ? db.listEvents(sinceEventId, 1000) : db.recentEvents(300, 512 * 1024);
+  const events = sinceEventId !== undefined ? db.listEvents(sinceEventId, RECONNECT_REPLAY_LIMIT) : db.recentEvents(300, 512 * 1024);
+  if (sinceEventId !== undefined) {
+    const gap = replayGapEventForReconnect({
+      requestedSinceEventId: sinceEventId,
+      firstEventId: db.firstEventId(),
+      lastEventId: db.lastEventId(),
+      replayedEventCount: events.length,
+      lastReplayedEventId: events.at(-1)?.id,
+    });
+    if (gap) wsHub.send(socket, gap);
+  }
   for (const event of events) {
     wsHub.send(socket, { type: "gui.event", event });
   }

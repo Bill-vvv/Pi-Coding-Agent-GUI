@@ -25,6 +25,9 @@ test("subagentRunForWire bounds large output fields without mutating persisted r
         agent: "trellis-check",
         status: "succeeded",
         prompt: "p".repeat(3_000),
+        traceFile: `/tmp/${"x".repeat(3_000)}.jsonl`,
+        activitySummary: "activity ".repeat(100),
+        lastAction: "action ".repeat(100),
         finalText: hugeFinalText,
         textTail: "t".repeat(10_000),
         tools: [{ id: "tool-1", name: "bash", status: "succeeded", args: hugeArgs }],
@@ -40,6 +43,9 @@ test("subagentRunForWire bounds large output fields without mutating persisted r
   assert.ok((wired.finalText?.length ?? 0) < hugeFinalText.length);
   assert.match(wired.finalText ?? "", /truncated/);
   assert.ok((wired.runs[0]?.prompt?.length ?? 0) < 3_000);
+  assert.ok((wired.runs[0]?.traceFile?.length ?? 0) < 3_000);
+  assert.ok((wired.runs[0]?.activitySummary?.length ?? 0) < "activity ".repeat(100).length);
+  assert.ok((wired.runs[0]?.lastAction?.length ?? 0) < "action ".repeat(100).length);
   assert.ok((wired.runs[0]?.finalText?.length ?? 0) < hugeFinalText.length);
   assert.ok((wired.runs[0]?.textTail?.length ?? 0) < 10_000);
   assert.ok((wired.runs[0]?.tools?.[0]?.args?.length ?? 0) < hugeArgs.length);

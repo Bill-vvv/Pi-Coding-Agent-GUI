@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SubagentRun } from "@pi-gui/shared";
-import { buildSubagentLiveConversationMessages, subagentRunPreview } from "../src/domain/subagents";
+import { buildSubagentLiveConversationMessages, subagentChildActivityPreview, subagentRunPreview } from "../src/domain/subagents";
 
 function subagentRun(overrides: Partial<SubagentRun> = {}): SubagentRun {
   return {
@@ -41,6 +41,27 @@ test("buildSubagentLiveConversationMessages emits streaming thinking and tools b
   assert.equal(messages[1]?.isStreaming, true);
 });
 
-test("subagentRunPreview uses live thinking as non-final preview", () => {
+test("subagentRunPreview uses live thinking as non-final preview when no activity summary is reported", () => {
   assert.equal(subagentRunPreview(subagentRun(), 80), "思考中：checking the implementation");
+});
+
+test("subagentRunPreview prefers reported activity summary and last action", () => {
+  const run = subagentRun({
+    runs: [
+      {
+        id: "review-agent-1",
+        agent: "review-agent",
+        status: "running",
+        activitySummary: "Inspecting current code state",
+        lastAction: "read: apps/web/src/domain/subagents.ts",
+        thinkingTail: "checking the implementation",
+      },
+    ],
+  });
+
+  assert.equal(subagentRunPreview(run, 120), "Inspecting current code state · read: apps/web/src/domain/subagents.ts");
+});
+
+test("subagentChildActivityPreview can derive a recent tool action for inline detail", () => {
+  assert.equal(subagentChildActivityPreview(subagentRun().runs[0]!, 120), "read: apps/web/src/App.tsx");
 });

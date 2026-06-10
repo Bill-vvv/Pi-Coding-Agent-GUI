@@ -1,7 +1,6 @@
 import type { ClientCommand } from "@pi-gui/shared";
-import { normalizeVoiceInputSettings } from "@pi-gui/shared";
 import type { CommandRecord } from "./types.js";
-import { isRecord, responseModeOrUndefined, stringOrUndefined, thinkingLevelOrUndefined } from "./validators.js";
+import { isRecord, responseModeOrUndefined, runtimeProfileIdOrUndefined, stringArrayOrUndefined, stringOrUndefined, thinkingLevelOrUndefined } from "./validators.js";
 
 type CommandOf<TType extends ClientCommand["type"]> = Extract<ClientCommand, { type: TType }>;
 
@@ -18,6 +17,17 @@ export function parseProjectCreate(value: CommandRecord): CommandOf<"project.cre
     name: stringOrUndefined(value.name),
     cwd: value.cwd,
     defaultModel: stringOrUndefined(value.defaultModel),
+    defaultRuntimeProfileId: runtimeProfileIdOrUndefined(value.defaultRuntimeProfileId),
+  };
+}
+
+export function parseProjectConfigure(value: CommandRecord): CommandOf<"project.configure"> {
+  if (typeof value.projectId !== "string") throw new Error("project.configure requires projectId");
+  return {
+    type: "project.configure",
+    requestId: stringOrUndefined(value.requestId),
+    projectId: value.projectId,
+    defaultRuntimeProfileId: value.defaultRuntimeProfileId === null ? null : runtimeProfileIdOrUndefined(value.defaultRuntimeProfileId),
   };
 }
 
@@ -35,6 +45,7 @@ export function parseSessionResume(value: CommandRecord): CommandOf<"session.res
     model: stringOrUndefined(value.model),
     thinkingLevel: thinkingLevelOrUndefined(value.thinkingLevel),
     responseMode: responseModeOrUndefined(value.responseMode),
+    runtimeProfileId: runtimeProfileIdOrUndefined(value.runtimeProfileId),
   };
 }
 
@@ -51,7 +62,8 @@ export function parseSettingsUpdate(value: CommandRecord): CommandOf<"settings.u
       defaultModel: stringOrUndefined(value.settings.defaultModel) ?? "",
       defaultThinkingLevel: thinkingLevelOrUndefined(value.settings.defaultThinkingLevel),
       responseMode: value.settings.responseMode === "fast" ? "fast" : value.settings.responseMode === "normal" ? "normal" : undefined,
-      voiceInput: value.settings.voiceInput === undefined ? undefined : normalizeVoiceInputSettings(value.settings.voiceInput),
+      defaultRuntimeProfileId: runtimeProfileIdOrUndefined(value.settings.defaultRuntimeProfileId),
+      confirmedProjectExtensionIds: stringArrayOrUndefined(value.settings.confirmedProjectExtensionIds, "settings.confirmedProjectExtensionIds"),
     },
   };
 }

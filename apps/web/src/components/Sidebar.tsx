@@ -6,7 +6,6 @@ import { mediaQueryMatches, subscribeMediaQuery } from "../domain/mediaQuery";
 import { isRecoverableRuntimeInterruption } from "../domain/runtimeRecovery";
 import { sidebarSessionDetail, sidebarSessionTitle } from "../domain/sidebarSessions";
 import { IconButton } from "./ui";
-import { PiLogo } from "./PiLogo";
 import { completedAssistantReplyAt, sessionDotState, sessionDotTitle, useSidebarDragReorder, useSidebarOrdering } from "./sidebar";
 
 const SESSION_DOT_BREATHE_DURATION_MS = 1350;
@@ -139,15 +138,13 @@ export function Sidebar({
   return (
     <aside className={sidebarClassName}>
       <div className={`sidebar-content ${sidebarScrolling ? "is-scrolling" : ""}`} onScroll={handleSidebarScroll}>
-        <div className="brand sidebar-brand">
-          <PiLogo compactMode={isCompactViewport} compactExpanded={compactExpanded} onToggleCompact={onToggleCompact} />
-          <div className="brand-actions">
-            <IconButton className="global-new-chat" icon="plus" label="添加项目" onClick={onAddProject} disabled={connection !== "open"} />
-          </div>
-        </div>
-
         <section className="sidebar-section project-list-section" aria-label="项目">
-          {projects.length === 0 ? <p className="muted">暂无项目。</p> : null}
+          {projects.length === 0 ? (
+            <div className="empty-project-actions">
+              <p className="muted">暂无项目。</p>
+              <IconButton className="empty-project-add" icon="plus" label="添加项目" title="添加项目" onClick={onAddProject} disabled={connection !== "open"} />
+            </div>
+          ) : null}
           {orderedProjects.map((project) => {
             const collapsed = collapsedProjectIds.has(project.id);
             const selected = project.id === selectedProject?.id;
@@ -164,10 +161,20 @@ export function Sidebar({
                 });
               }),
             );
-            const projectSessions = sessions.filter((session) => session.projectId === project.id && session.title);
+            const canExpandProject = projectRuntimes.length > 0;
+            const projectExpanded = canExpandProject && !collapsed;
+            const projectSelectTitle = mobileSidebarInteractions
+              ? canExpandProject
+                ? "点击选择项目"
+                : "点击选择项目，暂无对话可展开"
+              : canExpandProject
+                ? collapsed
+                  ? "点击选择并展开对话，拖动排序"
+                  : "点击选择并收起对话，拖动排序"
+                : "点击选择项目，暂无对话可展开，拖动排序";
             return (
               <article
-                className={`project-session-group ${selected ? "selected" : ""} ${collapsed ? "collapsed" : ""} ${draggingProjectId === project.id ? "dragging" : ""} ${projectDropClass(project.id)}`}
+                className={`project-session-group ${selected ? "selected" : ""} ${projectExpanded ? "" : "collapsed"} ${draggingProjectId === project.id ? "dragging" : ""} ${projectDropClass(project.id)}`}
                 key={project.id}
                 ref={(element) => registerRowElement(`project:${project.id}`, element)}
                 onDragOver={(event) => handleProjectDragOver(event, project.id)}
@@ -182,27 +189,33 @@ export function Sidebar({
                   <button
                     className="project-select"
                     type="button"
-                    title={mobileSidebarInteractions ? "点击选择项目" : collapsed ? "点击选择并展开对话，拖动排序" : "点击选择并收起对话，拖动排序"}
-                    aria-expanded={mobileSidebarInteractions ? undefined : !collapsed}
+                    title={projectSelectTitle}
+                    aria-expanded={mobileSidebarInteractions || !canExpandProject ? undefined : projectExpanded}
                     onClick={(event) => {
                       if (consumePointerDragClick()) return;
                       if (event.detail > 1) return;
                       onSelectProject(project.id);
-                      if (!mobileSidebarInteractions) toggleProjectCollapsed(project.id);
+                      if (isCompactViewport && !compactExpanded) {
+                        onToggleCompact();
+                        return;
+                      }
+                      if (!mobileSidebarInteractions && canExpandProject) toggleProjectCollapsed(project.id);
                     }}
                     onPointerDown={mobileSidebarInteractions ? (event) => handleProjectPointerDown(event, project.id) : undefined}
                   >
                     <strong>{project.name}</strong>
                     <small>{project.cwd}</small>
                   </button>
-                  <IconButton
-                    className="project-collapse-toggle"
-                    icon="arrow-right"
-                    label={collapsed ? `展开 ${project.name} 的对话` : `收起 ${project.name} 的对话`}
-                    title={collapsed ? "展开对话" : "收起对话"}
-                    aria-expanded={!collapsed}
-                    onClick={() => toggleProjectCollapsed(project.id)}
-                  />
+                  {canExpandProject ? (
+                    <IconButton
+                      className="project-collapse-toggle"
+                      icon="arrow-right"
+                      label={collapsed ? `展开 ${project.name} 的对话` : `收起 ${project.name} 的对话`}
+                      title={collapsed ? "展开对话" : "收起对话"}
+                      aria-expanded={projectExpanded}
+                      onClick={() => toggleProjectCollapsed(project.id)}
+                    />
+                  ) : null}
                   <IconButton
                     className="project-new-chat"
                     icon="plus"
@@ -211,7 +224,7 @@ export function Sidebar({
                     disabled={connection !== "open"}
                   />
                 </div>
-                {!collapsed ? (
+                {projectExpanded ? (
                   <div className="session-list">
                     {projectRuntimes.map((runtime) => {
                       const summary = conversationSummaries[runtime.id];
@@ -273,18 +286,6 @@ export function Sidebar({
                         </div>
                       );
                     })}
-                    {projectSessions.length > 0 ? (
-                      <button
-                        className="session-history-link"
-                        type="button"
-                        title={`查看 ${project.name} 的历史对话`}
-                        aria-label={`查看 ${project.name} 的历史对话`}
-                        onClick={() => onOpenSessionHistory(project.id)}
-                      >
-                        <span>查看历史对话…</span>
-                        <small>{projectSessions.length}</small>
-                      </button>
-                    ) : null}
                   </div>
                 ) : null}
               </article>
@@ -294,6 +295,17 @@ export function Sidebar({
 
       </div>
       <div className="sidebar-footer">
+        <IconButton className="add-project-entry" icon="plus" label="添加项目" title="添加项目" onClick={onAddProject} disabled={connection !== "open"} />
+        <IconButton
+          className="archive-entry"
+          icon="archive"
+          label={selectedProject ? `查看 ${selectedProject.name} 的归档对话` : "归档对话"}
+          title={selectedProject ? `查看 ${selectedProject.name} 的归档对话` : "请选择项目后查看归档对话"}
+          disabled={!selectedProject}
+          onClick={() => {
+            if (selectedProject) onOpenSessionHistory(selectedProject.id);
+          }}
+        />
         <IconButton className="settings-entry" icon="settings" label="设置" onClick={onOpenSettings} />
       </div>
     </aside>

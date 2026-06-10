@@ -107,11 +107,9 @@ function appendPendingCompactStatsNotice(managed: ManagedRuntime, data: Record<s
     return;
   }
 
-  managed.projection.appendLog(
-    "log",
-    `上下文压缩后 token 数等待下一次模型响应统计${contextWindow !== undefined ? `（窗口 ${formatNumber(contextWindow)} tokens）` : ""}${before}`,
-    "/compact",
-  );
+  // Pi can report post-compaction context tokens as unknown until the next model
+  // response. Keep the context meter updated via projection, but avoid appending
+  // a noisy chat log for that transient stats state.
 }
 
 function numberFromRecord(record: Record<string, unknown> | undefined, key: string): number | undefined {

@@ -1,4 +1,4 @@
-export type GuiKeybindingActionId = "app.commandMenu.open" | "app.settings.open" | "app.voice.toggle" | "composer.submit" | "composer.newLine" | "composer.followUp" | "composer.dequeue";
+export type GuiKeybindingActionId = "app.commandMenu.open" | "app.settings.open" | "composer.submit" | "composer.newLine" | "composer.followUp" | "composer.dequeue";
 export type GuiKeybindingMap = Partial<Record<GuiKeybindingActionId, string[]>>;
 
 export type GuiKeybindingDefinition = { id: GuiKeybindingActionId; label: string; defaultKeys: string[]; editable: boolean };
@@ -6,7 +6,6 @@ export type GuiKeybindingDefinition = { id: GuiKeybindingActionId; label: string
 export const GUI_KEYBINDING_DEFINITIONS: GuiKeybindingDefinition[] = [
   { id: "app.commandMenu.open", label: "打开命令栏", defaultKeys: ["Ctrl/Cmd+K"], editable: true },
   { id: "app.settings.open", label: "打开设置", defaultKeys: ["Ctrl/Cmd+,"], editable: true },
-  { id: "app.voice.toggle", label: "语音输入", defaultKeys: ["Ctrl/Cmd+Shift+M"], editable: true },
   { id: "composer.submit", label: "发送/执行", defaultKeys: ["Enter"], editable: false },
   { id: "composer.newLine", label: "换行", defaultKeys: ["Shift+Enter"], editable: false },
   { id: "composer.followUp", label: "Follow up", defaultKeys: ["Alt+Enter"], editable: false },

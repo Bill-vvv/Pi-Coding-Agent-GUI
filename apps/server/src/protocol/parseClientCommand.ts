@@ -5,6 +5,7 @@ import {
   parseConversationPage,
   parseEventReplay,
   parseExtensionUiRespond,
+  parseProjectConfigure,
   parseProjectCreate,
   parseProjectList,
   parseRuntimeAbort,
@@ -38,6 +39,8 @@ export function parseClientCommand(value: unknown): ClientCommand {
       return parseProjectList(value);
     case "project.create":
       return parseProjectCreate(value);
+    case "project.configure":
+      return parseProjectConfigure(value);
     case "session.list":
       return parseSessionList(value);
     case "session.resume":

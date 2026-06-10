@@ -14,6 +14,11 @@ export class EventLogStore {
     return row.id;
   }
 
+  firstEventId(): number {
+    const row = this.db.prepare("select coalesce(min(id), 0) as id from events").get() as { id: number };
+    return row.id;
+  }
+
   appendEvent(input: Omit<GuiEvent, "id" | "timestamp"> & { timestamp?: number }): GuiEvent {
     const timestamp = input.timestamp ?? Date.now();
     const payload = JSON.stringify(input.payload);

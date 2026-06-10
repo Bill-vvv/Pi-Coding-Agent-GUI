@@ -18,6 +18,7 @@ test("AppDatabase appends and replays GUI events after an event id", () => {
   const second = db.appendEvent({ runtimeId: "runtime-1", projectId: "project-1", kind: "stderr", payload: "warning", timestamp: 101 });
   const third = db.appendEvent({ runtimeId: "runtime-2", projectId: "project-2", kind: "error", payload: { message: "boom" }, timestamp: 102 });
 
+  assert.equal(db.firstEventId(), first.id);
   assert.equal(db.lastEventId(), third.id);
   assert.deepEqual(db.listEvents(first.id, 10), [second, third]);
 });
@@ -71,6 +72,20 @@ test("AppDatabase recentEvents returns oldest-to-newest order for selected recen
   assert.deepEqual(db.recentEvents(2).map((event) => event.id), [second.id, third.id]);
   assert.notDeepEqual(db.recentEvents(2).map((event) => event.id), [third.id, second.id]);
   assert.equal(first.id + 2, third.id);
+});
+
+test("event log compaction omits embedded image/base64 payload bytes", () => {
+  const compacted = compactPayloadForEventLog("pi_event", {
+    type: "message_end",
+    message: {
+      role: "user",
+      content: [{ type: "image", mimeType: "image/png", data: "a".repeat(5000) }],
+    },
+    preview: "data:image/png;base64," + "b".repeat(5000),
+  }) as { message?: { content?: Array<{ data?: unknown }> }; preview?: unknown };
+
+  assert.equal(compacted.message?.content?.[0]?.data, "[omitted embedded image/base64 payload by Pi GUI event log compaction]: 5000 chars");
+  assert.equal(compacted.preview, "[omitted embedded image/base64 payload by Pi GUI event log compaction]: 5022 chars");
 });
 
 test("event log compaction preserves get_session_stats token totals", () => {

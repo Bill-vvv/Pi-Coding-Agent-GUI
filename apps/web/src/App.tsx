@@ -1,8 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import type { AppSettings } from "@pi-gui/shared";
 import { AppModals } from "./components/AppModals";
 import { ChatView } from "./components/ChatView";
 import { Composer } from "./components/Composer";
+import { DesktopWindowChrome } from "./components/DesktopWindowChrome";
+import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Sidebar } from "./components/Sidebar";
+import { PiPet } from "./components/PiPet";
 import { ProviderAuthPanel } from "./components/ProviderAuthPanel";
 import { ScopedModelsPanel } from "./components/ScopedModelsPanel";
 import { SessionTreeForkPanel } from "./components/SessionTreeForkPanel";
@@ -29,7 +33,10 @@ import { useSessionTreeForkControls } from "./hooks/useSessionTreeForkControls";
 import { useSubagentDrawer } from "./hooks/useSubagentDrawer";
 import { useUiPreferences } from "./hooks/useUiPreferences";
 import { shouldAutoArchiveBlankRuntime } from "./domain/blankRuntimeCleanup";
+import { desktopShellBridge } from "./domain/desktopShell";
+import { isRecoverableRuntimeInterruption } from "./domain/runtimeRecovery";
 import { performanceFixtureEvents } from "./domain/performanceFixtures";
+import { countBackgroundPiPetActivity, derivePiPetDisplay } from "./domain/piPet";
 import { modelsInGuiScope } from "./domain/scopedModels";
 import { appReducer, initialAppState } from "./state/appReducer";
 
@@ -43,15 +50,31 @@ function MainSurfaceFallback() {
   return <div className="empty-state">加载中…</div>;
 }
 
+type LastUserMessageScrollRequest = {
+  runtimeId?: string;
+  sequence: number;
+};
+
+type LastUserMessageScrollAction = { type: "request"; runtimeId: string } | { type: "clear" } | { type: "handled"; sequence: number };
+
+function lastUserMessageScrollRequestReducer(current: LastUserMessageScrollRequest, action: LastUserMessageScrollAction): LastUserMessageScrollRequest {
+  if (action.type === "clear") return current.runtimeId ? { sequence: current.sequence } : current;
+  if (action.type === "handled") return current.runtimeId && current.sequence === action.sequence ? { sequence: current.sequence } : current;
+  return { runtimeId: action.runtimeId, sequence: current.sequence + 1 };
+}
+
 export function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [scrollToBottomSignal, requestConversationScrollToBottom] = useReducer((value: number) => value + 1, 0);
+  const [lastUserMessageScrollRequest, updateLastUserMessageScrollRequest] = useReducer(lastUserMessageScrollRequestReducer, { sequence: 0 });
   const [composerClearanceSignal, requestComposerClearanceFollow] = useReducer((value: number) => value + 1, 0);
   const [composerFocusSignal, requestComposerFocus] = useReducer((value: number) => value + 1, 0);
   const mainChatRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
+  const askBatchComposerRef = useRef<HTMLDivElement | null>(null);
   const models = useModelCatalog();
   const { modelPickerOpen, setModelPickerOpen, settingsOpen, setSettingsOpen, toggleModelPicker, closeModelPicker, closeSettings } = useAppModalState();
+  const [settingsFocusCapabilityId, setSettingsFocusCapabilityId] = useState<string | undefined>();
   const { uiPreferences, setUiPreferences } = useUiPreferences();
   const [providerAuthAction, setProviderAuthAction] = useState<"login" | "logout" | undefined>();
   const [scopedModelsOpen, setScopedModelsOpen] = useState(false);
@@ -66,12 +89,14 @@ export function App() {
     openUsageOverview: openMainUsageOverview,
   } = useMainSurfaceMode();
 
+  const desktopShell = desktopShellBridge();
+  const desktopPetAvailable = Boolean(desktopShell?.setDesktopPetVisible && desktopShell.updateDesktopPet);
   const performanceFixtureMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("fixture") === "performance";
 
   const closeCompactSidebarDrawer = useCallback(() => {
     collapseCompactSidebar();
     window.requestAnimationFrame(() => {
-      document.querySelector<HTMLButtonElement>(".left-sidebar .sidebar-logo-button")?.focus();
+      document.querySelector<HTMLButtonElement>(".left-sidebar .project-session-group.selected .project-select, .left-sidebar .project-select")?.focus();
     });
   }, [collapseCompactSidebar]);
 
@@ -106,6 +131,7 @@ export function App() {
     subagentRuns,
     subagentDetails,
     extensionUiByRuntime,
+    executionHost,
   } = state;
 
   useEffect(() => {
@@ -126,6 +152,12 @@ export function App() {
     onError: (message) => dispatch({ type: "set.operationError", error: message }),
     onOpen: () => dispatch({ type: "clear.transportError" }),
   });
+  const updateAppSettings = useCallback((next: Partial<AppSettings>) => {
+    return send({ type: "settings.update", settings: { ...settings, ...next } });
+  }, [send, settings]);
+  const updateProjectRuntimeProfile = useCallback((projectId: string, defaultRuntimeProfileId: AppSettings["defaultRuntimeProfileId"] | null) => {
+    return send({ type: "project.configure", projectId, defaultRuntimeProfileId });
+  }, [send]);
   const {
     runtimeLogDrawerId,
     runtimeLogDrawerRuntime,
@@ -184,6 +216,7 @@ export function App() {
     defaultThinkingLevel,
     defaultResponseMode,
     send,
+    onRestoredRuntime: (runtimeId) => updateLastUserMessageScrollRequest({ type: "request", runtimeId }),
   });
   const sessionHistoryProject = sessionHistoryProjectId ? projects.find((project) => project.id === sessionHistoryProjectId) : undefined;
   const {
@@ -287,6 +320,8 @@ export function App() {
     [activeRuntime?.id, subagentRuns],
   );
   const activeRuntimeExtensionUi = activeRuntime ? extensionUiByRuntime[activeRuntime.id] : undefined;
+  const activeAskBatchRequest = activeRuntime && extensionUiDialog?.runtimeId === activeRuntime.id && extensionUiDialog.request.method === "askBatch" ? extensionUiDialog.request : undefined;
+  const modalExtensionUiRequest = extensionUiDialog?.request.method === "askBatch" ? undefined : extensionUiDialog?.request;
   const {
     selectedSubagentRun,
     selectedSubagentChildRunId,
@@ -296,6 +331,68 @@ export function App() {
     selectSubagentChildRun,
     copySubagentOutput,
   } = useSubagentDrawer({ subagentRuns, subagentDetails, send, dispatch });
+  const backgroundPetActivity = useMemo(
+    () => countBackgroundPiPetActivity(runtimes, busyByRuntime, activeRuntime?.id),
+    [activeRuntime?.id, busyByRuntime, runtimes],
+  );
+  const activeRuntimeRecoverableInterruption = useMemo(
+    () => isRecoverableRuntimeInterruption(activeRuntime, guiEvents),
+    [activeRuntime, guiEvents],
+  );
+  const piPetDisplay = useMemo(
+    () => derivePiPetDisplay({
+      activeRuntime,
+      activeRuntimeIsBusy,
+      messages: conversationMessages,
+      contextUsage: activeRuntimeContextUsage,
+      queue: activeRuntimeQueue,
+      waitingForInput: Boolean(activeRuntime && extensionUiDialog?.runtimeId === activeRuntime.id),
+      recoverableRuntimeInterruption: activeRuntimeRecoverableInterruption,
+      subagentRuns: activeRuntimeSubagentRuns,
+      backgroundBusyCount: backgroundPetActivity.busy,
+      backgroundAttentionCount: backgroundPetActivity.attention,
+    }),
+    [activeRuntime, activeRuntimeContextUsage, activeRuntimeIsBusy, activeRuntimeQueue, activeRuntimeRecoverableInterruption, activeRuntimeSubagentRuns, backgroundPetActivity.attention, backgroundPetActivity.busy, conversationMessages, extensionUiDialog],
+  );
+  const piPetSuppressed = Boolean(settingsOpen || sessionHistoryProjectId || usageOverviewOpen || sessionTreeForkState.open || providerAuthAction || scopedModelsOpen || activeAskBatchRequest || runtimeLogDrawerRuntime || selectedSubagentRun);
+  useEffect(() => {
+    if (!desktopPetAvailable || !desktopShell?.setDesktopPetVisible || !desktopShell.updateDesktopPet) return;
+    if (!uiPreferences.petEnabled || !uiPreferences.desktopPetEnabled) {
+      void desktopShell.setDesktopPetVisible(false);
+      return;
+    }
+    void desktopShell.updateDesktopPet({
+      mood: piPetDisplay.mood,
+      tone: piPetDisplay.tone,
+      title: piPetDisplay.title,
+      detail: piPetDisplay.detail,
+      badges: piPetDisplay.badges,
+      satelliteCount: piPetDisplay.satelliteCount,
+    });
+    void desktopShell.setDesktopPetVisible(true);
+  }, [desktopPetAvailable, desktopShell, piPetDisplay, uiPreferences.desktopPetEnabled, uiPreferences.petEnabled]);
+  useEffect(() => {
+    if (!desktopShell?.onDesktopPetClosed) return undefined;
+    return desktopShell.onDesktopPetClosed(() => setUiPreferences({ ...uiPreferences, desktopPetEnabled: false }));
+  }, [desktopShell, setUiPreferences, uiPreferences]);
+  const activePiPetSubagentRunId = piPetDisplay.activeSubagentRunId;
+  const activePiPetRuntimeLogId = piPetDisplay.canOpenRuntimeLogs ? activeRuntime?.id : undefined;
+  const openPiPetRuntimeLogs = useCallback(() => {
+    if (activePiPetRuntimeLogId) openRuntimeLogs(activePiPetRuntimeLogId);
+  }, [activePiPetRuntimeLogId, openRuntimeLogs]);
+  const openPiPetSubagentRun = useCallback((runId: string) => {
+    openSubagentRun(runId);
+  }, [openSubagentRun]);
+  const piPetBackgroundTarget = useMemo(() => {
+    const runtimeId = backgroundPetActivity.attentionRuntimeId ?? backgroundPetActivity.busyRuntimeId;
+    const projectId = backgroundPetActivity.attentionProjectId ?? backgroundPetActivity.busyProjectId;
+    return runtimeId && projectId ? { projectId, runtimeId } : undefined;
+  }, [backgroundPetActivity.attentionProjectId, backgroundPetActivity.attentionRuntimeId, backgroundPetActivity.busyProjectId, backgroundPetActivity.busyRuntimeId]);
+  const openPiPetBackgroundRuntime = useCallback(() => {
+    if (!piPetBackgroundTarget) return;
+    updateLastUserMessageScrollRequest({ type: "request", runtimeId: piPetBackgroundTarget.runtimeId });
+    dispatch({ type: "select.runtime", projectId: piPetBackgroundTarget.projectId, runtimeId: piPetBackgroundTarget.runtimeId });
+  }, [piPetBackgroundTarget]);
   const openCommandMenuShortcut = useCallback(() => {
     closeSurfaces({ closeSettings, closeSessionHistory, closeRuntimeLogs, closeSubagentDrawer });
     closeModelPicker();
@@ -305,7 +402,14 @@ export function App() {
     pathPicker.closePicker();
     if (extensionUiDialog) sendExtensionUiResponse({ cancelled: true });
   }, [closeModelPicker, closeRuntimeLogs, closeSessionHistory, closeSettings, closeSessionTreeForkControls, closeSubagentDrawer, closeSurfaces, extensionUiDialog, pathPicker, sendExtensionUiResponse]);
-  const openSettingsShortcut = useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
+  const openSettingsShortcut = useCallback(() => {
+    setSettingsFocusCapabilityId(undefined);
+    setSettingsOpen(true);
+  }, [setSettingsOpen]);
+  const openPiPetCapabilitySettings = useCallback(() => {
+    setSettingsFocusCapabilityId("pi-pet-companion");
+    setSettingsOpen(true);
+  }, [setSettingsOpen]);
   const commandMenuOpenSignal = useCommandMenuHotkey({ onOpenCommandMenu: openCommandMenuShortcut, onOpenSettings: openSettingsShortcut, keybindings: uiPreferences.keybindings });
 
   const composerSurfaceVisible = !settingsOpen && !sessionHistoryProjectId && !usageOverviewOpen && !sessionTreeForkState.open && !providerAuthAction && !scopedModelsOpen && Boolean(activeRuntime);
@@ -420,7 +524,7 @@ export function App() {
   useComposerBottomClearance({
     containerRef: mainChatRef,
     composerRef,
-    enabled: composerSurfaceVisible,
+    enabled: composerSurfaceVisible && !activeAskBatchRequest,
     onClearanceChange: requestComposerClearanceFollow,
   });
 
@@ -443,12 +547,20 @@ export function App() {
   }
 
   function startNewRuntimeForProject(projectId: string) {
+    updateLastUserMessageScrollRequest({ type: "clear" });
     closeSurfaces({ closeSettings, closeSessionHistory });
     startRuntimeForSidebarProject(projectId);
     requestComposerFocus();
   }
 
+  function selectRuntimeFromSessionClick(projectId: string, runtimeId: string) {
+    closeSurfaces({ closeSettings, closeSessionHistory });
+    updateLastUserMessageScrollRequest({ type: "request", runtimeId });
+    dispatch({ type: "select.runtime", projectId, runtimeId });
+  }
+
   function openNotificationTarget(projectId: string, runtimeId: string) {
+    updateLastUserMessageScrollRequest({ type: "clear" });
     closeSurfaces({ closeSettings, closeSessionHistory, closeRuntimeLogs, closeSubagentDrawer });
     closeModelPicker();
     pathPicker.closePicker();
@@ -457,7 +569,9 @@ export function App() {
   }
 
   return (
-    <main className={`app-shell ${compactSidebarExpanded ? "sidebar-compact-expanded" : ""}`}>
+    <main className={`app-shell ${compactSidebarExpanded ? "sidebar-compact-expanded" : ""} ${desktopShell ? "desktop-shell" : ""}`}>
+      {desktopShell ? <DesktopWindowChrome bridge={desktopShell} /> : null}
+
       <Sidebar
         connection={connection}
         projects={projects}
@@ -471,6 +585,7 @@ export function App() {
         compactExpanded={compactSidebarExpanded}
         onToggleCompact={toggleCompactSidebar}
         onAddProject={() => {
+          updateLastUserMessageScrollRequest({ type: "clear" });
           closeSurfaces({ closeSessionHistory });
           void openPathPicker("addProject");
         }}
@@ -480,17 +595,16 @@ export function App() {
           openSessionHistory(projectId);
         }}
         onSelectProject={(projectId) => {
+          updateLastUserMessageScrollRequest({ type: "clear" });
           closeSurfaces({ closeSessionHistory });
           dispatch({ type: "select.project", projectId });
         }}
-        onSelectRuntime={(projectId, runtimeId) => {
-          closeSurfaces({ closeSettings, closeSessionHistory });
-          dispatch({ type: "select.runtime", projectId, runtimeId });
-        }}
+        onSelectRuntime={selectRuntimeFromSessionClick}
         onArchiveRuntime={archiveRuntime}
         onOpenRuntimeLogs={openRuntimeLogs}
         onOpenSettings={() => {
           closeSurfaces({ closeSessionHistory });
+          setSettingsFocusCapabilityId(undefined);
           setSettingsOpen(true);
         }}
         conversationSummaries={conversationSummaries}
@@ -501,25 +615,21 @@ export function App() {
         <button className="sidebar-compact-backdrop" type="button" aria-label="关闭侧边栏" onClick={closeCompactSidebarDrawer} />
       ) : null}
 
-      <section ref={mainChatRef} className={`main-chat ${settingsOpen ? "settings-mode" : ""}`}>
+      <section ref={mainChatRef} className={`main-chat ${settingsOpen ? "settings-mode" : ""} ${activeAskBatchRequest ? "ask-batch-active" : ""}`}>
         {settingsOpen ? (
           <Suspense fallback={<MainSurfaceFallback />}>
             <SettingsPanel
               open={settingsOpen}
-              settings={settings}
               preferences={uiPreferences}
-              projects={projects}
-              sessions={sessions}
-              runtimes={runtimes}
-              conversationSummaries={conversationSummaries}
-              messagesByRuntime={messagesByRuntime}
+              settings={settings}
+              selectedProject={selectedProject}
               onClose={closeSettings}
               onChangePreferences={setUiPreferences}
-              onChangeSettings={(nextSettings) => send({ type: "settings.update", settings: nextSettings })}
-              onOpenArchivedRuntime={(runtimeId: string) => {
-                send({ type: "conversation.open", runtimeId, limit: 200 }, { notifyOnDisconnected: false });
-              }}
+              onChangeSettings={updateAppSettings}
+              onChangeProjectRuntimeProfile={updateProjectRuntimeProfile}
               onOpenUsageOverview={openUsageOverview}
+              focusCapabilityId={settingsFocusCapabilityId}
+              desktopPetAvailable={desktopPetAvailable}
             />
           </Suspense>
         ) : sessionHistoryProject ? (
@@ -529,14 +639,13 @@ export function App() {
               sessions={sessions}
               runtimes={runtimes}
               connection={connection}
+              currentHost={executionHost}
               pendingRestoreId={pendingHistoryRestoreId}
               onClose={closeSessionHistory}
               onResumeSession={(sessionId: string) => {
                 resumeSessionFromHistory(sessionId);
               }}
-              onSelectRuntime={(projectId: string, runtimeId: string) => {
-                dispatch({ type: "select.runtime", projectId, runtimeId });
-              }}
+              onSelectRuntime={selectRuntimeFromSessionClick}
             />
           </Suspense>
         ) : sessionTreeForkState.open ? (
@@ -579,6 +688,12 @@ export function App() {
               extensionUi={activeRuntimeExtensionUi}
               displayMode={uiPreferences.thinkingToolDisplayMode}
               scrollToBottomSignal={scrollToBottomSignal}
+              scrollToLastUserMessageRequest={
+                lastUserMessageScrollRequest.runtimeId
+                  ? { runtimeId: lastUserMessageScrollRequest.runtimeId, sequence: lastUserMessageScrollRequest.sequence }
+                  : undefined
+              }
+              onScrollToLastUserMessageRequestHandled={(sequence) => updateLastUserMessageScrollRequest({ type: "handled", sequence })}
               bottomClearanceSignal={composerClearanceSignal}
               onLoadOlderMessages={activeRuntime ? loadOlderActiveConversationMessages : undefined}
               onOpenSubagentRun={openSubagentRun}
@@ -587,43 +702,69 @@ export function App() {
               onDismissNotice={dismissNotice}
             />
 
-            <Composer
-              ref={composerRef}
-              prompt={prompt}
-              projectCwd={projectCwd}
-              selectedProject={selectedProject}
-              models={scopedModels}
-              selectedModel={selectedModel}
-              selectedThinkingLevel={selectedThinkingLevel}
-              availableThinkingLevels={availableThinkingLevels}
-              responseMode={responseMode}
-              modelPickerOpen={modelPickerOpen}
-              contextUsage={activeRuntimeContextUsage}
-              activeRuntimeQueue={activeRuntimeQueue}
-              slashCommands={activeRuntimeCommands}
-              extensionUi={activeRuntimeExtensionUi}
-              commandMenuOpenSignal={commandMenuOpenSignal}
-              focusRequestSignal={composerFocusSignal}
-              connection={connection}
-              activeRuntime={activeRuntime}
-              activeRuntimeIsBusy={activeRuntimeIsBusy}
-              voiceInputSettings={settings.voiceInput}
-              keybindings={uiPreferences.keybindings}
-              onSubmit={submitPromptAndFollowConversation}
-              onPromptChange={setPrompt}
-              onExecuteCommandInput={executeCommandInput}
-              onOpenPathPicker={() => void openPathPicker("composer")}
-              onAbortRuntime={(runtimeId) => send({ type: "runtime.abort", runtimeId })}
-              onDequeueRuntimeQueue={dequeueRuntimeQueue}
-              onReorderRuntimeQueue={reorderRuntimeQueue}
-              onToggleModelPicker={toggleModelPicker}
-              onCloseModelPicker={closeModelPicker}
-              onChooseModel={chooseModel}
-              onChooseThinkingLevel={chooseThinkingLevel}
-              onChooseResponseMode={chooseResponseMode}
-            />
+            {activeAskBatchRequest ? (
+              <div className="ask-batch-composer-panel" ref={askBatchComposerRef}>
+                <ExtensionUiDialog
+                  request={activeAskBatchRequest}
+                  variant="inline"
+                  onRespond={sendExtensionUiResponse}
+                  onCancel={() => sendExtensionUiResponse({ cancelled: true })}
+                />
+              </div>
+            ) : (
+              <Composer
+                ref={composerRef}
+                prompt={prompt}
+                projectCwd={projectCwd}
+                selectedProject={selectedProject}
+                models={scopedModels}
+                selectedModel={selectedModel}
+                selectedThinkingLevel={selectedThinkingLevel}
+                availableThinkingLevels={availableThinkingLevels}
+                responseMode={responseMode}
+                modelPickerOpen={modelPickerOpen}
+                contextUsage={activeRuntimeContextUsage}
+                activeRuntimeQueue={activeRuntimeQueue}
+                slashCommands={activeRuntimeCommands}
+                extensionUi={activeRuntimeExtensionUi}
+                commandMenuOpenSignal={commandMenuOpenSignal}
+                focusRequestSignal={composerFocusSignal}
+                connection={connection}
+                activeRuntime={activeRuntime}
+                activeRuntimeIsBusy={activeRuntimeIsBusy}
+                onSubmit={submitPromptAndFollowConversation}
+                onPromptChange={setPrompt}
+                onExecuteCommandInput={executeCommandInput}
+                onOpenPathPicker={() => void openPathPicker("composer")}
+                onAbortRuntime={(runtimeId) => send({ type: "runtime.abort", runtimeId })}
+                onDequeueRuntimeQueue={dequeueRuntimeQueue}
+                onReorderRuntimeQueue={reorderRuntimeQueue}
+                onToggleModelPicker={toggleModelPicker}
+                onCloseModelPicker={closeModelPicker}
+                onChooseModel={chooseModel}
+                onChooseThinkingLevel={chooseThinkingLevel}
+                onChooseResponseMode={chooseResponseMode}
+              />
+            )}
           </>
         )}
+
+        {uiPreferences.petEnabled && !piPetSuppressed ? (
+          <PiPet
+            display={piPetDisplay}
+            collapsed={uiPreferences.petCollapsed}
+            onChangeCollapsed={(petCollapsed) => setUiPreferences({ ...uiPreferences, petCollapsed })}
+            onHide={() => setUiPreferences({ ...uiPreferences, petEnabled: false, desktopPetEnabled: false })}
+            onOpenRuntimeLogs={activePiPetRuntimeLogId ? openPiPetRuntimeLogs : undefined}
+            onOpenSubagentRun={activePiPetSubagentRunId ? openPiPetSubagentRun : undefined}
+            onOpenCapabilitySettings={openPiPetCapabilitySettings}
+            onOpenUsageOverview={openUsageOverview}
+            onOpenBackgroundRuntime={piPetBackgroundTarget ? openPiPetBackgroundRuntime : undefined}
+            desktopPetAvailable={desktopPetAvailable}
+            desktopPetEnabled={uiPreferences.desktopPetEnabled}
+            onToggleDesktopPet={(desktopPetEnabled) => setUiPreferences({ ...uiPreferences, petEnabled: true, desktopPetEnabled })}
+          />
+        ) : null}
       </section>
 
       {runtimeLogDrawerRuntime ? (
@@ -658,7 +799,7 @@ export function App() {
       ) : null}
 
       <AppModals
-        extensionUiRequest={extensionUiDialog?.request}
+        extensionUiRequest={modalExtensionUiRequest}
         onRespondExtensionUi={sendExtensionUiResponse}
         pathPicker={pathPicker}
         onChoosePickerCwd={choosePickerCwd}

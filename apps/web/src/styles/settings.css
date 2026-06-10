@@ -55,21 +55,40 @@
   flex-direction: column;
 }
 
+.settings-section-group {
+  margin-top: 0.85rem;
+}
+
+.settings-section-title {
+  margin: 0;
+  border-top: 1px solid var(--color-border-divider);
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  line-height: var(--line-control);
+  padding: 0.72rem 0 0.28rem;
+  text-transform: uppercase;
+}
+
+.settings-section > .settings-section-title:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
 .settings-field,
 .settings-setting-row,
-.settings-archive-dropdown,
 .settings-diagnostics-dropdown,
-.settings-hotkeys-dropdown {
+.settings-hotkeys-dropdown,
+.settings-shim-dropdown {
   border-top: 1px solid var(--color-border-divider);
 }
 
-.settings-section > :first-child { border-top: 0; }
-
 .settings-field,
 .settings-setting-row,
-.settings-archive-dropdown > summary,
 .settings-diagnostics-dropdown > summary,
-.settings-hotkeys-dropdown > summary {
+.settings-hotkeys-dropdown > summary,
+.settings-shim-dropdown > summary {
   display: grid;
   grid-template-columns: minmax(6rem, 0.34fr) minmax(0, 1fr);
   gap: 0.8rem;
@@ -79,7 +98,6 @@
 }
 
 .settings-field > label,
-.settings-archive-summary-main > span,
 .settings-diagnostics-summary-main > span,
 .settings-setting-copy > span {
   color: var(--color-text-primary);
@@ -208,9 +226,7 @@
 }
 
 .settings-setting-copy small,
-.settings-archive-summary-main small,
-.settings-diagnostics-summary-main small,
-.settings-archive-item-main small {
+.settings-diagnostics-summary-main small {
   overflow: hidden;
   color: var(--color-text-muted);
   font-size: var(--text-caption);
@@ -283,20 +299,20 @@
   outline-offset: 2px;
 }
 
-.settings-archive-dropdown > summary,
 .settings-diagnostics-dropdown > summary,
-.settings-hotkeys-dropdown > summary {
+.settings-hotkeys-dropdown > summary,
+.settings-shim-dropdown > summary {
   cursor: pointer;
   list-style: none;
 }
 
-.settings-archive-dropdown > summary::-webkit-details-marker,
 .settings-diagnostics-dropdown > summary::-webkit-details-marker,
-.settings-hotkeys-dropdown > summary::-webkit-details-marker { display: none; }
+.settings-hotkeys-dropdown > summary::-webkit-details-marker,
+.settings-shim-dropdown > summary::-webkit-details-marker { display: none; }
 
-.settings-archive-dropdown > summary::after,
 .settings-diagnostics-dropdown > summary::after,
-.settings-hotkeys-dropdown > summary::after {
+.settings-hotkeys-dropdown > summary::after,
+.settings-shim-dropdown > summary::after {
   content: "⌄";
   justify-self: end;
   color: var(--color-text-muted);
@@ -304,16 +320,16 @@
   transition: transform 140ms ease;
 }
 
-.settings-archive-dropdown[open] > summary::after,
 .settings-diagnostics-dropdown[open] > summary::after,
-.settings-hotkeys-dropdown[open] > summary::after { transform: rotate(180deg); }
+.settings-hotkeys-dropdown[open] > summary::after,
+.settings-shim-dropdown[open] > summary::after { transform: rotate(180deg); }
 
 .settings-diagnostics-dropdown > summary,
-.settings-hotkeys-dropdown > summary {
+.settings-hotkeys-dropdown > summary,
+.settings-shim-dropdown > summary {
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
-.settings-archive-summary-main,
 .settings-diagnostics-summary-main {
   display: flex;
   min-width: 0;
@@ -350,66 +366,6 @@
   display: grid;
   gap: 0.55rem;
   padding: 0 0 0.75rem;
-}
-
-.settings-voice-summary {
-  display: grid;
-  gap: 0.08rem;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-subtle);
-  padding: 0.48rem 0.62rem;
-}
-
-.settings-voice-summary > span {
-  color: var(--color-text-primary);
-  font-size: var(--text-control);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-control);
-}
-
-.settings-voice-summary > small,
-.settings-voice-hint {
-  color: var(--color-text-muted);
-  font-size: var(--text-caption);
-  line-height: var(--line-copy-tight);
-}
-
-.settings-voice-hint {
-  margin: 0;
-}
-
-.settings-voice-hint code {
-  color: var(--color-text-secondary);
-  font-family: var(--font-mono);
-  font-size: 0.95em;
-}
-
-.settings-voice-preset-fields {
-  display: grid;
-}
-
-.settings-voice-advanced {
-  border-top: 1px solid var(--color-border-divider);
-  padding-top: 0.25rem;
-}
-
-.settings-voice-advanced > summary {
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font-size: var(--text-caption);
-  line-height: var(--line-control);
-  padding: 0.25rem 0;
-}
-
-.settings-voice-advanced > summary:hover {
-  color: var(--color-text-primary);
-}
-
-.settings-voice-advanced-body {
-  display: grid;
-  gap: 0.45rem;
-  padding-top: 0.2rem;
 }
 
 .settings-hotkeys-body {
@@ -499,6 +455,144 @@
   color: var(--color-text-muted);
   font-size: var(--text-caption);
   line-height: var(--line-copy-tight);
+}
+
+.settings-shim-body {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0 0 0.75rem;
+}
+
+.settings-shim-list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+}
+
+.settings-shim-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.62rem;
+  align-items: center;
+  border-top: 1px solid var(--color-border-divider);
+  padding: 0.44rem 0.58rem;
+}
+
+.settings-shim-row:first-child { border-top: 0; }
+
+.settings-shim-row.focused {
+  background: color-mix(in srgb, var(--color-accent-primary) 9%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-accent-primary) 72%, transparent);
+}
+
+.settings-shim-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.settings-shim-main > span {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--text-caption);
+  line-height: var(--line-control);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-shim-main > small,
+.settings-shim-note {
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--line-copy-tight);
+}
+
+.settings-shim-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.25rem;
+}
+
+.settings-shim-tags > span {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  font-size: var(--text-meta);
+  line-height: 1.2;
+  padding: 0.12rem 0.38rem;
+}
+
+.settings-shim-tags > span.warning {
+  border-color: var(--color-warning-border);
+  color: var(--color-warning-text);
+}
+
+.settings-inline-action {
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 38%, var(--color-border-subtle));
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-accent-primary) 9%, transparent);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: var(--text-meta);
+  line-height: 1.2;
+  padding: 0.12rem 0.45rem;
+}
+
+.settings-inline-action:hover {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 62%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent-primary) 15%, transparent);
+}
+
+.settings-capability-row {
+  align-items: flex-start;
+}
+
+.settings-capability-group-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--color-text-primary);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  line-height: var(--line-control);
+}
+
+.settings-capability-group-heading > small,
+.settings-capability-surfaces {
+  color: var(--color-text-muted);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-regular);
+}
+
+.settings-capability-tags {
+  max-width: min(480px, 52vw);
+}
+
+.settings-capability-toggle {
+  margin-left: 0.12rem;
+}
+
+.settings-capability-toggle .settings-toggle-track {
+  width: 34px;
+  height: 20px;
+}
+
+.settings-capability-toggle .settings-toggle-track::after {
+  width: 14px;
+  height: 14px;
+}
+
+.settings-capability-toggle input[type="checkbox"]:checked + .settings-toggle-track::after {
+  transform: translateX(14px);
+}
+
+.settings-shim-note {
+  margin: 0;
 }
 
 .settings-diagnostics-grid {
@@ -597,45 +691,6 @@
 .settings-scroll-area.is-scrolling::-webkit-scrollbar-thumb { background-color: var(--color-scrollbar-thumb); }
 .settings-scroll-area.is-scrolling::-webkit-scrollbar-thumb:hover { background-color: var(--color-scrollbar-thumb-hover); }
 
-.settings-archive-list {
-  display: flex;
-  max-height: min(12rem, 32vh);
-  min-width: 0;
-  flex-direction: column;
-  padding-right: 0.1rem;
-}
-
-.settings-archive-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.65rem;
-  align-items: center;
-  min-width: 0;
-  border-top: 1px solid var(--color-border-divider);
-  box-shadow: inset 2px 0 0 transparent;
-  padding: 0.52rem 0 0.52rem 0.58rem;
-}
-
-.settings-archive-item:first-child { border-top: 0; }
-.settings-archive-item.selected { box-shadow: inset 2px 0 0 var(--color-accent-primary); }
-
-.settings-archive-item-main {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.settings-archive-item-main strong {
-  overflow: hidden;
-  color: var(--color-text-primary);
-  font-size: var(--text-control);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-control);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .settings-action-button {
   flex: none;
   width: 30px;
@@ -651,21 +706,6 @@
   color: var(--color-text-primary);
 }
 
-.settings-archive-snippet {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
-  border-top: 1px solid var(--color-border-divider);
-  color: var(--color-text-muted);
-  font-size: var(--text-meta);
-  line-height: 1.5;
-  margin: 0;
-  overflow-wrap: anywhere;
-  padding: 0.55rem 0 0.05rem 0.58rem;
-  white-space: pre-wrap;
-}
-
 @media (max-width: 680px) {
   .settings-panel {
     justify-self: stretch;
@@ -674,22 +714,21 @@
 
   .settings-field,
   .settings-setting-row,
-  .settings-archive-dropdown > summary,
   .settings-diagnostics-dropdown > summary,
   .settings-hotkeys-dropdown > summary,
-  .settings-archive-item,
-  .settings-hotkey-row {
+  .settings-shim-dropdown > summary,
+  .settings-hotkey-row,
+  .settings-shim-row {
     grid-template-columns: 1fr;
   }
 
   .settings-radio-options,
   .settings-color-options,
   .settings-toggle-control,
-  .settings-archive-dropdown > summary::after,
   .settings-diagnostics-dropdown > summary::after,
-  .settings-hotkeys-dropdown > summary::after {
+  .settings-hotkeys-dropdown > summary::after,
+  .settings-shim-dropdown > summary::after,
+  .settings-shim-tags {
     justify-self: start;
   }
-
-  .settings-action-button { justify-self: start; }
 }

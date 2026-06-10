@@ -36,6 +36,31 @@ test("import route stores dropped file bytes with a sanitized name", async (t) =
   assert.equal(await readFile(importedPath, "utf8"), payload.toString("utf8"));
 });
 
+test("import route rejects oversized raster images before staging provider-context hazards", async (t) => {
+  const importDir = await mkdtemp(join(tmpdir(), "pi-gui-import-route-"));
+  const env = installImportEnv({ PI_GUI_IMPORT_DIR: importDir });
+  t.after(async () => {
+    env.restore();
+    await rm(importDir, { recursive: true, force: true });
+  });
+
+  const fastify = Fastify({ logger: false });
+  await registerImportRoutes(fastify);
+  t.after(() => fastify.close());
+
+  const response = await fastify.inject({
+    method: "POST",
+    url: "/api/imports/file?name=page.png",
+    headers: { "content-type": "application/octet-stream" },
+    payload: Buffer.alloc(7 * 1024 * 1024),
+  });
+
+  assert.equal(response.statusCode, 413);
+  const body = response.json() as { message?: unknown };
+  assert.match(typeof body.message === "string" ? body.message : "", /message too big/);
+  assert.deepEqual(await readdir(importDir).catch(() => []), []);
+});
+
 test("import route resolves relative import directories to absolute response paths", async (t) => {
   const importDir = `relative-pi-gui-import-${Date.now()}`;
   const env = installImportEnv({ PI_GUI_IMPORT_DIR: importDir });

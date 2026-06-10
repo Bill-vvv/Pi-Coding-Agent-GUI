@@ -19,20 +19,26 @@ export class RuntimeLauncher {
     const plan = prepareRuntimeLaunchPlan(db, projectId, config, resume);
     let runtime = plan.runtime;
 
-    events.publishRuntimeStatus(runtime);
-
-    const { client, serviceTierConfigFile } = createPiRuntimeClient({
+    const settings = db.getSettings();
+    const { client, serviceTierConfigFile, capabilityPlan } = createPiRuntimeClient({
       runtimeId: runtime.id,
       cwd: plan.project.cwd,
       session: resume?.session,
       model: plan.model,
       thinkingLevel: plan.thinkingLevel,
       responseMode: plan.responseMode,
+      runtimeProfileId: config.runtimeProfileId,
+      savedRuntimeProfileId: resume?.runtime?.runtimeProfileId,
+      defaultRuntimeProfileId: plan.project.defaultRuntimeProfileId ?? settings.defaultRuntimeProfileId,
+      confirmedProjectExtensionIds: settings.confirmedProjectExtensionIds,
     });
+    runtime = { ...runtime, runtimeProfileId: capabilityPlan.runtimeProfileId, enabledCapabilityIds: capabilityPlan.enabledCapabilityIds };
+
+    events.publishRuntimeStatus(runtime);
     const getRuntime = () => runtimes.get(runtime.id)?.runtime ?? runtime;
     const projection = new ConversationProjection(db, getRuntime, broadcast);
     const subagents = new SubagentRunProjection(db, getRuntime, broadcast);
-    const managed: ManagedRuntime = { runtime, client, serviceTierConfigFile, pendingNativeRpcCommands: new Map(), configRevision: 0, projection, subagents };
+    const managed: ManagedRuntime = { runtime, client, serviceTierConfigFile, enabledCapabilityIds: capabilityPlan.enabledCapabilityIds, pendingNativeRpcCommands: new Map(), configRevision: 0, projection, subagents };
     runtimes.set(runtime.id, managed);
     attachRuntimeClientEventHandlers(this.options, runtime.id, managed);
 

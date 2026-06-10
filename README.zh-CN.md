@@ -4,7 +4,7 @@
 
 Pi Coding Agent GUI 是一个优先面向 WSL/本地开发环境的 Web 图形界面。
 
-Pi Coding Agent GUI 提供基于浏览器的控制界面，用于管理本地 Pi RPC 运行时：项目管理、Session/Runtime 监督、对话展示、token/context 可视化、语音输入实验，以及面向受信任设备的同局域网远程访问。
+Pi Coding Agent GUI 提供基于浏览器的控制界面，用于管理本地 Pi RPC 运行时：项目管理、Session/Runtime 监督、对话展示、token/context 可视化、面向受信任设备的同局域网远程访问，以及可选的 [Pi PET Companion](./docs/pi-pet-companion.md) 原生运行状态宠物。
 
 ## 开发
 
@@ -16,6 +16,39 @@ npm run dev
 ```
 
 打开终端中显示的 Vite 地址，通常是 `http://localhost:5173`。
+
+后台重启前端和后端开发服务：
+
+```bash
+npm run dev:restart
+```
+
+并行开发建议使用隔离的 stable/dev 实例：
+
+```bash
+# 稳定 dogfood 实例：8787 + 5173，数据 .pi-gui-stable
+npm run dev:stable
+
+# 新功能沙箱实例：8877 + 5273，数据 .pi-gui-dev
+npm run dev:sandbox
+```
+
+对应后台重启/状态查看命令：`npm run dev:stable:restart`、`npm run dev:sandbox:restart`、`npm run dev:stable:status`、`npm run dev:sandbox:status`。
+
+桌面 GUI 开发也使用同样的隔离方式（Windows + WSL）：
+
+```bash
+# 同步 WSL 改动到 Windows Electron mirror，并重建 desktop
+npm run sync:desktop-mirror
+
+# stable：用于日常开发，8787 + 5173，数据 .pi-gui-stable
+npm run dev:desktop:stable
+
+# dev：用于观察修订效果，8877 + 5273，数据 .pi-gui-dev
+npm run dev:desktop:dev
+```
+
+如果 Windows mirror 不在默认路径，可设置 `PI_GUI_DESKTOP_MIRROR_DIR` 或传入 `-- --target <path>`。
 
 常用检查命令：
 

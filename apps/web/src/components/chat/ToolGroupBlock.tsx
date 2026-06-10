@@ -4,6 +4,7 @@ import { IconButton } from "../ui";
 import { MarkdownMessage } from "../MarkdownMessage";
 import { ThinkingStatus } from "../ThinkingAnimation";
 import { ScrollableContent, ScrollablePre } from "./ScrollableContent";
+import { ToolDiffView } from "./ToolDiffView";
 import { SubagentProcessDetail } from "./SubagentProcessBlock";
 import type { ConversationBlockActions } from "./types";
 
@@ -120,7 +121,7 @@ function FullProcessDetail({ block, actions }: { block: Extract<ConversationDisp
                     <span className="tool-group-item-summary">{tool.summary}</span>
                   </summary>
                   <div className="tool-group-item-detail">
-                    {tool.detail ? <ScrollablePre>{tool.detail}</ScrollablePre> : <p>暂无可展开内容</p>}
+                    <ToolDetailContent tool={tool} />
                   </div>
                 </details>
               </li>
@@ -130,6 +131,18 @@ function FullProcessDetail({ block, actions }: { block: Extract<ConversationDisp
       ) : null}
     </div>
   );
+}
+
+function ToolDetailContent({ tool }: { tool: Extract<ConversationDisplayBlock, { type: "tool_group" }>["model"]["tools"][number] }) {
+  if (tool.toolDetails?.diff) {
+    return (
+      <div className="tool-group-item-diff-detail">
+        {tool.detail ? <p className="tool-diff-result">{tool.detail}</p> : null}
+        <ToolDiffView details={tool.toolDetails} />
+      </div>
+    );
+  }
+  return tool.detail ? <ScrollablePre>{tool.detail}</ScrollablePre> : <p>暂无可展开内容</p>;
 }
 
 function formatThinkingText(thinking: Extract<ConversationDisplayBlock, { type: "tool_group" }>["model"]["thinking"]): string {

@@ -8,14 +8,22 @@ export function useModelCatalog(): ModelSummary[] {
   const [models, setModels] = useState<ModelSummary[]>(FALLBACK_MODELS);
 
   useEffect(() => {
-    void fetch(apiUrl("/api/models"), { headers: authHeaders() })
+    let active = true;
+    const controller = typeof AbortController === "undefined" ? undefined : new AbortController();
+
+    void fetch(apiUrl("/api/models"), { headers: authHeaders(), signal: controller?.signal })
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error("读取模型失败"))))
       .then((data: { models?: ModelSummary[] }) => {
-        if (data.models?.length) setModels(data.models);
+        if (active && data.models?.length) setModels(data.models);
       })
       .catch(() => {
-        setModels(FALLBACK_MODELS);
+        if (active) setModels(FALLBACK_MODELS);
       });
+
+    return () => {
+      active = false;
+      controller?.abort();
+    };
   }, []);
 
   return models;

@@ -1,7 +1,7 @@
 import type { ClientCommand } from "@pi-gui/shared";
 import type { WsClient } from "../wsHub.js";
 import { handleConversationOpen, handleConversationPage, handleEventReplay, handleSubagentDetailOpen } from "./conversationCommands.js";
-import { handleProjectCreate, handleProjectList, handleSessionList, handleSessionResume, handleSettingsGet, handleSettingsUpdate } from "./projectSessionSettingsCommands.js";
+import { handleProjectConfigure, handleProjectCreate, handleProjectList, handleSessionList, handleSessionResume, handleSettingsGet, handleSettingsUpdate } from "./projectSessionSettingsCommands.js";
 import {
   handleExtensionUiRespond,
   handleRuntimeAbort,
@@ -28,6 +28,9 @@ export async function dispatchClientCommand(context: CommandHandlerContext, sock
       break;
     case "project.create":
       await handleProjectCreate(context, socket, command);
+      break;
+    case "project.configure":
+      await handleProjectConfigure(context, socket, command);
       break;
     case "session.list":
       await handleSessionList(context, socket, command);

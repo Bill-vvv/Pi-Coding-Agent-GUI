@@ -44,6 +44,10 @@ export function useModelRuntimeSettings({
 
   function configureActiveRuntime(next: { model?: ModelSummary; thinkingLevel?: ThinkingLevel; responseMode?: ResponseMode }) {
     if (!activeRuntime) return;
+    // Optimistic GUI projection only. Server runtime.status/settings.updated
+    // events remain the source of truth for persisted runtime/provider state.
+    // Optimistic GUI projection only. Backend `runtime.status` and Pi RPC/provider
+    // responses remain the authoritative runtime/provider truth.
     dispatch({
       type: "update.runtimeConfig",
       runtimeId: activeRuntime.id,

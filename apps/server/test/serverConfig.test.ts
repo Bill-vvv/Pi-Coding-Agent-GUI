@@ -23,6 +23,10 @@ test("server config enables auth only when PI_GUI_AUTH_TOKEN is set", () => {
   });
 
   assert.equal(readServerRuntimeConfig({ PI_GUI_HOST: "localhost", HOST: "0.0.0.0", PI_GUI_MODE: "desktop", PI_GUI_AUTH_TOKEN: "secret" }).host, "localhost");
+  assert.equal(
+    readServerRuntimeConfig({ PI_GUI_MODE: "desktop", PI_GUI_AUTH_TOKEN: "secret", PI_GUI_DESKTOP_LAUNCH_ID: " launch-1 " }).desktopLaunchId,
+    "launch-1",
+  );
 });
 
 test("server config rejects desktop or production-managed mode without a token", () => {

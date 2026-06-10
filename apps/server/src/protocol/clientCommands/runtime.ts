@@ -6,6 +6,7 @@ import {
   nonNegativeNumberOrUndefined,
   positiveNumberOrUndefined,
   responseModeOrUndefined,
+  runtimeProfileIdOrUndefined,
   stringOrUndefined,
   thinkingLevelOrUndefined,
 } from "./validators.js";
@@ -21,6 +22,7 @@ export function parseRuntimeStart(value: CommandRecord): CommandOf<"runtime.star
     model: stringOrUndefined(value.model),
     thinkingLevel: thinkingLevelOrUndefined(value.thinkingLevel),
     responseMode: responseModeOrUndefined(value.responseMode),
+    runtimeProfileId: runtimeProfileIdOrUndefined(value.runtimeProfileId),
   };
 }
 
@@ -33,6 +35,7 @@ export function parseRuntimeResume(value: CommandRecord): CommandOf<"runtime.res
     model: stringOrUndefined(value.model),
     thinkingLevel: thinkingLevelOrUndefined(value.thinkingLevel),
     responseMode: responseModeOrUndefined(value.responseMode),
+    runtimeProfileId: runtimeProfileIdOrUndefined(value.runtimeProfileId),
   };
 }
 
@@ -45,6 +48,7 @@ export function parseRuntimeRestart(value: CommandRecord): CommandOf<"runtime.re
     model: stringOrUndefined(value.model),
     thinkingLevel: thinkingLevelOrUndefined(value.thinkingLevel),
     responseMode: responseModeOrUndefined(value.responseMode),
+    runtimeProfileId: runtimeProfileIdOrUndefined(value.runtimeProfileId),
   };
 }
 

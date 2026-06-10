@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -66,6 +66,55 @@ test("RuntimeSupervisor runtime.configure preserves omitted runtime config field
   assert.equal(runtime?.model, "openai-codex/gpt-5.2");
   assert.equal(runtime?.thinkingLevel, "xhigh");
   assert.equal(runtime?.responseMode, "normal");
+  db.close();
+});
+
+test("RuntimeSupervisor rejects resume when the Pi session file is unsafe to send to provider", () => {
+  const { db, supervisor } = createHarness();
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-unsafe-pi-session-"));
+  const sessionFile = join(cwd, "2026-06-08T00-00-00_unsafe-session.jsonl");
+  writeFileSync(sessionFile, `${JSON.stringify({ type: "message", message: { role: "toolResult", content: [{ type: "image", data: "a".repeat(17 * 1024 * 1024) }] } })}\n`, "utf8");
+  db.createProject({ id: "project-1", name: "Project", cwd, lastOpenedAt: 1 });
+  db.upsertSession({ id: "unsafe-session", projectId: "project-1", piSessionFile: sessionFile, createdAt: 1, updatedAt: 1 });
+  db.upsertRuntime({
+    id: "runtime-1",
+    projectId: "project-1",
+    cwd,
+    status: "crashed",
+    sessionId: "unsafe-session",
+    startedAt: 100,
+  });
+
+  assert.throws(
+    () => supervisor.resumeRuntime("runtime-1"),
+    /Pi session is too large to resume safely.*WebSocket 1009.*sanitize-pi-session/s,
+  );
+  db.close();
+});
+
+test("RuntimeSupervisor rejects prompt when the running Pi session file is unsafe to send to provider", async () => {
+  const { db, supervisor } = createHarness();
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-unsafe-running-session-"));
+  const sessionFile = join(cwd, "2026-06-08T00-00-00_running-unsafe.jsonl");
+  writeFileSync(sessionFile, `${JSON.stringify({ type: "message", message: { role: "toolResult", content: [{ type: "image", data: "a".repeat(17 * 1024 * 1024) }] } })}\n`, "utf8");
+  db.createProject({ id: "project-1", name: "Project", cwd, lastOpenedAt: 1 });
+  db.upsertSession({ id: "running-unsafe", projectId: "project-1", piSessionFile: sessionFile, createdAt: 1, updatedAt: 1, runtimeId: "runtime-1" });
+  const runtime = db.upsertRuntime({ id: "runtime-1", projectId: "project-1", cwd, status: "running", sessionId: "running-unsafe", startedAt: 100 });
+  const logs: Array<{ role: string; text: string; title?: string }> = [];
+  (supervisor as unknown as { runtimes: Map<string, unknown> }).runtimes.set("runtime-1", {
+    runtime,
+    projection: {
+      appendLog: (role: string, text: string, title?: string) => logs.push({ role, text, title }),
+      markBusy: () => undefined,
+    },
+    pendingNativeRpcCommands: new Map(),
+  });
+
+  await assert.rejects(
+    () => supervisor.prompt("runtime-1", "continue"),
+    /Pi session is too large to resume safely.*WebSocket 1009.*sanitize-pi-session/s,
+  );
+  assert.equal(logs.at(-1)?.title, "session safety");
   db.close();
 });
 

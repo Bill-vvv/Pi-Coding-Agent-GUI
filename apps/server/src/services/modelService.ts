@@ -5,6 +5,9 @@ import { isRecord } from "@pi-gui/shared";
 import { LfJsonlParser, type JsonlParseBatch } from "../runtime/jsonlFraming.js";
 
 export async function listPiModels(): Promise<ModelSummary[]> {
+  // Pi/provider model discovery is the authoritative source. The CLI fallback
+  // below is a GUI projection fallback only; do not treat it as provider truth
+  // or use it to reject user-selected model IDs before Pi sees them.
   const fromRpc = await listPiModelsViaRpc().catch(() => []);
   if (fromRpc.length > 0) return fromRpc;
 
@@ -94,6 +97,8 @@ function modelSummaryFromRpcModel(value: unknown): ModelSummary | undefined {
   };
 }
 
+// Fallback parser for older Pi builds. This is a GUI projection fallback only;
+// Pi/provider model discovery remains the authoritative source when available.
 function parsePiModelList(output: string): ModelSummary[] {
   const lines = output.split("\n").map((line) => line.trim()).filter(Boolean);
   const [, ...rows] = lines;
@@ -127,6 +132,9 @@ function supportedThinkingLevelsFromRpcModel(model: Record<string, unknown>): Th
   });
 }
 
+// Adapter hint for showing/sending the GUI's temporary fast-mode shim. The
+// provider/Pi layer remains the final authority on whether priority service
+// tier is accepted for a request.
 function supportsPriorityServiceTier(model: Record<string, unknown>): boolean {
   const provider = typeof model.provider === "string" ? model.provider : "";
   const api = typeof model.api === "string" ? model.api : undefined;

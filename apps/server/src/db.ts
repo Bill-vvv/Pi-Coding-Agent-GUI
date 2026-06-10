@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import type { AppSettings, ConversationContextUsage, ConversationMessage, GuiEvent, GuiEventKind, GuiSession, Project, Runtime, RuntimeConversationSummary, SubagentRun } from "@pi-gui/shared";
+import { dirname } from "node:path";
+import type { AppSettings, ConversationContextUsage, ConversationMessage, ExecutionHostRef, GuiEvent, GuiEventKind, GuiSession, Project, Runtime, RuntimeConversationSummary, SubagentRun } from "@pi-gui/shared";
 import { ConversationStore } from "./db/conversations.js";
 import { EventLogStore } from "./db/events.js";
 import { ProjectStore } from "./db/projects.js";
@@ -10,6 +10,9 @@ import { migrateDatabase } from "./db/schema.js";
 import { SessionStore } from "./db/sessions.js";
 import { SettingsStore } from "./db/settings.js";
 import { SubagentRunStore } from "./db/subagentRuns.js";
+import { readExecutionHost } from "./services/executionHost.js";
+import { importLegacyDesktopData } from "./services/legacyDesktopDataImport.js";
+import { defaultDbPath } from "./serverPaths.js";
 
 export class AppDatabase {
   private readonly db: Database.Database;
@@ -20,26 +23,36 @@ export class AppDatabase {
   private readonly sessions: SessionStore;
   private readonly settings: SettingsStore;
   private readonly subagentRuns: SubagentRunStore;
+  private readonly executionHost?: ExecutionHostRef;
 
-  constructor(filePath = defaultDbPath()) {
+  constructor(filePath = defaultDbPath(), executionHost = readExecutionHost()) {
+    this.executionHost = executionHost;
+    const shouldImportLegacyDesktopData = filePath === defaultDbPath();
     mkdirSync(dirname(filePath), { recursive: true });
     this.db = new Database(filePath);
     this.db.pragma("journal_mode = WAL");
     migrateDatabase(this.db);
     this.conversations = new ConversationStore(this.db);
     this.eventLog = new EventLogStore(this.db);
-    this.projects = new ProjectStore(this.db);
-    this.runtimes = new RuntimeStore(this.db);
-    this.sessions = new SessionStore(this.db);
+    this.projects = new ProjectStore(this.db, this.executionHost);
+    this.runtimes = new RuntimeStore(this.db, this.executionHost);
+    this.sessions = new SessionStore(this.db, this.executionHost);
     this.settings = new SettingsStore(this.db);
     this.subagentRuns = new SubagentRunStore(this.db);
-    this.runtimes.markOrphanedRuntimesCrashed();
+    if (shouldImportLegacyDesktopData) importLegacyDesktopData(this);
+    for (const runtime of this.runtimes.markOrphanedRuntimesCrashed()) {
+      this.conversations.markStreamingMessagesInterrupted(runtime.id, runtime.projectId, "GUI 服务重启，工具未返回结果。");
+    }
     this.runtimes.archiveStoppedRuntimesWithoutSessions();
     this.subagentRuns.markOrphanedSubagentRunsFailed();
   }
 
   close(): void {
     this.db.close();
+  }
+
+  getExecutionHost(): ExecutionHostRef | undefined {
+    return this.executionHost;
   }
 
   listProjects(): Project[] {
@@ -52,6 +65,10 @@ export class AppDatabase {
 
   createProject(project: Project): Project {
     return this.projects.createProject(project);
+  }
+
+  updateProjectRuntimeProfile(projectId: string, defaultRuntimeProfileId: Project["defaultRuntimeProfileId"] | null): Project | undefined {
+    return this.projects.updateProjectRuntimeProfile(projectId, defaultRuntimeProfileId);
   }
 
   touchProject(id: string, timestamp = Date.now()): void {
@@ -156,8 +173,16 @@ export class AppDatabase {
     return this.conversations.setConversationBusy(runtimeId, projectId, busy, timestamp);
   }
 
+  markStreamingConversationMessagesInterrupted(runtimeId: string, projectId: string, reasonText: string, timestamp = Date.now()): ConversationMessage[] {
+    return this.conversations.markStreamingMessagesInterrupted(runtimeId, projectId, reasonText, timestamp);
+  }
+
   lastEventId(): number {
     return this.eventLog.lastEventId();
+  }
+
+  firstEventId(): number {
+    return this.eventLog.firstEventId();
   }
 
   appendEvent(input: Omit<GuiEvent, "id" | "timestamp"> & { timestamp?: number }): GuiEvent {
@@ -195,8 +220,4 @@ export class AppDatabase {
   listActiveSubagentRuns(limit = 500): SubagentRun[] {
     return this.subagentRuns.listActiveSubagentRuns(limit);
   }
-}
-
-function defaultDbPath(): string {
-  return resolve(process.env.PI_GUI_DATA_DIR ?? ".pi-gui", "pi-gui.sqlite");
 }

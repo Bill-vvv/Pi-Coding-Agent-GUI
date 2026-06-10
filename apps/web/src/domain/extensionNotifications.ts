@@ -1,5 +1,9 @@
 import type { ExtensionUiRequest, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
 
+// Temporary compatibility bridge with the GUI-managed Pi ready-notification
+// extension. Until Pi exposes first-class ready-for-input metadata, keep this
+// exact classifier centralized here and do not treat generic notify messages as
+// completion/ready desktop notifications.
 export const PI_READY_FOR_INPUT_NOTIFICATION = "Pi is ready for input";
 const PI_READY_FOR_INPUT_LABEL = "Pi 已可继续输入";
 

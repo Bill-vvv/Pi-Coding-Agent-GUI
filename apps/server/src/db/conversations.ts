@@ -12,8 +12,8 @@ export class ConversationStore {
     const timestamp = message.timestamp ?? now;
     this.db
       .prepare(
-        `insert into conversation_messages (runtime_id, project_id, message_id, role, text, thinking, title, is_streaming, timestamp, created_at, updated_at)
-         values (@runtimeId, @projectId, @id, @role, @text, @thinking, @title, @isStreaming, @timestamp, @createdAt, @updatedAt)
+        `insert into conversation_messages (runtime_id, project_id, message_id, role, text, thinking, title, is_streaming, tool_details_json, timestamp, created_at, updated_at)
+         values (@runtimeId, @projectId, @id, @role, @text, @thinking, @title, @isStreaming, @toolDetailsJson, @timestamp, @createdAt, @updatedAt)
          on conflict(runtime_id, message_id) do update set
            project_id = excluded.project_id,
            role = excluded.role,
@@ -21,6 +21,7 @@ export class ConversationStore {
            thinking = excluded.thinking,
            title = excluded.title,
            is_streaming = excluded.is_streaming,
+           tool_details_json = excluded.tool_details_json,
            timestamp = excluded.timestamp,
            updated_at = excluded.updated_at`,
       )
@@ -33,6 +34,7 @@ export class ConversationStore {
         thinking: message.thinking ?? null,
         title: message.title ?? null,
         isStreaming: message.isStreaming ? 1 : 0,
+        toolDetailsJson: serializeToolDetails(message.toolDetails),
         timestamp,
         createdAt: timestamp,
         updatedAt: message.updatedAt ?? now,
@@ -133,8 +135,8 @@ export class ConversationStore {
   replaceConversationMessages(runtimeId: string, messages: ConversationMessage[]): void {
     const deleteMessages = this.db.prepare("delete from conversation_messages where runtime_id = ?");
     const insertMessage = this.db.prepare(
-      `insert into conversation_messages (runtime_id, project_id, message_id, role, text, thinking, title, is_streaming, timestamp, created_at, updated_at)
-       values (@runtimeId, @projectId, @id, @role, @text, @thinking, @title, @isStreaming, @timestamp, @createdAt, @updatedAt)`,
+      `insert into conversation_messages (runtime_id, project_id, message_id, role, text, thinking, title, is_streaming, tool_details_json, timestamp, created_at, updated_at)
+       values (@runtimeId, @projectId, @id, @role, @text, @thinking, @title, @isStreaming, @toolDetailsJson, @timestamp, @createdAt, @updatedAt)`,
     );
     const now = Date.now();
     this.db.transaction((items: ConversationMessage[]) => {
@@ -150,12 +152,45 @@ export class ConversationStore {
           thinking: message.thinking ?? null,
           title: message.title ?? null,
           isStreaming: message.isStreaming ? 1 : 0,
+          toolDetailsJson: serializeToolDetails(message.toolDetails),
           timestamp,
           createdAt: timestamp + index,
           updatedAt: message.updatedAt ?? now,
         });
       });
     })(messages);
+  }
+
+  markStreamingMessagesInterrupted(runtimeId: string, projectId: string, reasonText: string, timestamp = Date.now()): ConversationMessage[] {
+    const rows = this.db
+      .prepare("select * from conversation_messages where runtime_id = ? and is_streaming = 1 order by created_at asc, rowid asc")
+      .all(runtimeId) as ConversationMessageRow[];
+    if (rows.length === 0) return [];
+
+    const updateMessage = this.db.prepare(
+      `update conversation_messages
+       set is_streaming = 0, title = @title, text = @text, updated_at = @updatedAt
+       where runtime_id = @runtimeId and message_id = @messageId`,
+    );
+    const messages = rows.map((row) => {
+      const title = row.role === "tool" ? interruptedToolTitle(row.title) : row.title;
+      const text = row.role === "tool" && !row.text.trim() ? reasonText : row.text;
+      return conversationMessageFromRow({ ...row, project_id: projectId, title, text, is_streaming: 0, updated_at: timestamp });
+    });
+
+    this.db.transaction((items: ConversationMessage[]) => {
+      for (const message of items) {
+        updateMessage.run({
+          runtimeId,
+          messageId: message.id,
+          title: message.title ?? null,
+          text: message.text,
+          updatedAt: timestamp,
+        });
+      }
+    })(messages);
+
+    return messages;
   }
 
   getConversationContext(runtimeId: string): ConversationContextUsage | undefined {
@@ -217,9 +252,22 @@ export class ConversationStore {
   }
 }
 
+function interruptedToolTitle(title: string | null): string {
+  const trimmed = title?.trim();
+  if (!trimmed) return "工具 失败";
+  if (trimmed.endsWith(" 运行中")) return `${trimmed.slice(0, -" 运行中".length)} 失败`;
+  if (trimmed.endsWith(" 完成") || trimmed.endsWith(" 失败")) return trimmed;
+  return `${trimmed} 失败`;
+}
+
 function serializeSessionTokens(usage: ConversationTokenUsage | undefined): string | null {
   if (!usage || !Object.values(usage).some((item) => item !== undefined)) return null;
   return JSON.stringify(usage);
+}
+
+function serializeToolDetails(details: ConversationMessage["toolDetails"]): string | null {
+  if (!details || !Object.values(details).some((item) => item !== undefined)) return null;
+  return JSON.stringify(details);
 }
 
 function conversationContextValue(

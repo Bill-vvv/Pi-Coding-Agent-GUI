@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  codexTransportUserErrorFromStderr,
   formatCodexTransportMonitorLine,
   isCodexProviderRequest,
   isCodexSseHeaderTimeoutText,
   isCodexTransportMonitorEnabled,
   normalizeCodexTransportStats,
+  parseCodexTransportMonitorLine,
   shouldEmitCodexTransportSnapshot,
 } from "../src/runtime/piCodexTransportMonitor.js";
 
@@ -88,4 +90,28 @@ test("formatCodexTransportMonitorLine includes only sanitized counters and short
 test("isCodexSseHeaderTimeoutText detects Codex SSE header timeouts", () => {
   assert.equal(isCodexSseHeaderTimeoutText("Codex SSE response headers timed out after 10000ms"), true);
   assert.equal(isCodexSseHeaderTimeoutText("WebSocket connect timeout after 30000ms"), false);
+});
+
+test("parseCodexTransportMonitorLine decodes sanitized monitor stderr", () => {
+  const snapshot = normalizeCodexTransportStats({ websocketFailures: 1, sseFallbacks: 1, lastWebSocketError: "1009 message too big" });
+  assert.ok(snapshot);
+
+  assert.deepEqual(parseCodexTransportMonitorLine(formatCodexTransportMonitorLine("session-id", snapshot)), snapshot);
+  assert.equal(parseCodexTransportMonitorLine("ordinary stderr"), undefined);
+});
+
+test("codexTransportUserErrorFromStderr explains 1009 and SSE fallback failures", () => {
+  const messageTooBig = codexTransportUserErrorFromStderr(
+    `${formatCodexTransportMonitorLine("session-id", normalizeCodexTransportStats({ websocketFailures: 1, sseFallbacks: 1, lastWebSocketError: "WebSocket close 1009: message too big" })!)}\n`,
+  );
+  assert.match(messageTooBig ?? "", /oversized embedded image\/base64 context/);
+  assert.match(messageTooBig ?? "", /WebSocket 1009/);
+  assert.match(messageTooBig ?? "", /Reduce or remove embedded image payloads/);
+
+  const timeout = codexTransportUserErrorFromStderr(
+    formatCodexTransportMonitorLine("session-id", normalizeCodexTransportStats({ websocketFailures: 1, sseFallbacks: 1, sseHeaderTimeouts: 2 })!),
+  );
+  assert.match(timeout ?? "", /SSE header timeouts: 2/);
+
+  assert.equal(codexTransportUserErrorFromStderr(formatCodexTransportMonitorLine("session-id", normalizeCodexTransportStats({ requests: 1 })!)), undefined);
 });

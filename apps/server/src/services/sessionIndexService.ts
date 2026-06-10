@@ -76,6 +76,7 @@ function discoverPiSessions(projects: Project[]): GuiSession[] {
       id: metadata.id,
       projectId: project.id,
       piSessionFile: filePath,
+      host: project.host,
       title: metadata.title,
       createdAt: Number.isFinite(createdAt) ? createdAt : Math.trunc(mtimeMs || Date.now()),
       updatedAt: Math.trunc(mtimeMs || Date.now()),

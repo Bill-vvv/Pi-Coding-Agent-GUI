@@ -26,6 +26,7 @@ export class RuntimeSessionLinker {
       id: sessionId,
       projectId: managed.runtime.projectId,
       piSessionFile: sessionFile,
+      host: existing?.host ?? managed.runtime.host ?? this.db.getExecutionHost(),
       title: existing?.title ?? fileSummary?.title,
       createdAt: existing?.createdAt ?? managed.runtime.startedAt ?? now,
       updatedAt: now,

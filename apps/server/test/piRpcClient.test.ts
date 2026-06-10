@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { PiRpcClient } from "../src/runtime/piRpcClient.js";
+import { createPiRuntimeEnv, PiRpcClient } from "../src/runtime/piRpcClient.js";
 import { createPiRuntimeClient } from "../src/runtime/piRuntimeFactory.js";
 
 function createFakePiBin(script: string): string {
@@ -32,6 +32,42 @@ async function withCwd<T>(cwd: string, run: () => Promise<T>): Promise<T> {
     process.chdir(previousCwd);
   }
 }
+
+test("createPiRuntimeEnv strips outer session identity and injects GUI extension env", () => {
+  const previous = {
+    PATH: process.env.PATH,
+    TRELLIS_CONTEXT_ID: process.env.TRELLIS_CONTEXT_ID,
+    PI_SESSION_ID: process.env.PI_SESSION_ID,
+    PI_SESSIONID: process.env.PI_SESSIONID,
+    PI_GUI_CODEX_TRANSPORT_MONITOR: process.env.PI_GUI_CODEX_TRANSPORT_MONITOR,
+    PI_GUI_ASK_BATCH_DIALOG: process.env.PI_GUI_ASK_BATCH_DIALOG,
+    PI_GUI_SERVICE_TIER_FILE: process.env.PI_GUI_SERVICE_TIER_FILE,
+  };
+
+  try {
+    process.env.TRELLIS_CONTEXT_ID = "outer-trellis";
+    process.env.PI_SESSION_ID = "outer-session";
+    process.env.PI_SESSIONID = "outer-session-legacy";
+    delete process.env.PI_GUI_CODEX_TRANSPORT_MONITOR;
+    delete process.env.PI_GUI_ASK_BATCH_DIALOG;
+    delete process.env.PI_GUI_SERVICE_TIER_FILE;
+
+    const env = createPiRuntimeEnv({ serviceTierConfigFile: "/tmp/pi-gui-service-tier.json" });
+
+    assert.equal(env.PATH, previous.PATH);
+    assert.equal(env.TRELLIS_CONTEXT_ID, undefined);
+    assert.equal(env.PI_SESSION_ID, undefined);
+    assert.equal(env.PI_SESSIONID, undefined);
+    assert.equal(env.PI_GUI_CODEX_TRANSPORT_MONITOR, "0");
+    assert.equal(env.PI_GUI_ASK_BATCH_DIALOG, "0");
+    assert.equal(env.PI_GUI_SERVICE_TIER_FILE, "/tmp/pi-gui-service-tier.json");
+
+    assert.equal(createPiRuntimeEnv({ interactivePromptsEnabled: true }).PI_GUI_ASK_BATCH_DIALOG, "1");
+    assert.equal(createPiRuntimeEnv({ codexTransportMonitorEnabled: true }).PI_GUI_CODEX_TRANSPORT_MONITOR, "1");
+  } finally {
+    restoreEnv(previous);
+  }
+});
 
 function onceClientEvent<T extends unknown[]>(client: PiRpcClient, event: "event" | "stderr" | "error" | "exit"): Promise<T> {
   return new Promise((resolve) => client.once(event, (...args) => resolve(args as T)));
@@ -110,16 +146,18 @@ process.stdin.resume();
   });
 });
 
-test("createPiRuntimeClient launches GUI-managed runtimes with internal extensions", async () => {
+test("createPiRuntimeClient launches Vanilla Pi with GUI extensions and user extension discovery disabled", async () => {
   const fakeBin = createFakePiBin(`#!/usr/bin/env node
 process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2) }) + "\\n");
 process.stdin.resume();
 `);
   const cwd = mkdtempSync(join(tmpdir(), "pi-gui-factory-cwd-"));
+  mkdirSync(join(cwd, ".pi", "extensions", "trellis"), { recursive: true });
+  writeFileSync(join(cwd, ".pi", "extensions", "trellis", "index.ts"), "pi.registerTool?.({ name: \"trellis_subagent\" });", "utf8");
 
   await withCwd(cwd, () =>
     withPathPrefix(fakeBin, async () => {
-      const { client } = createPiRuntimeClient({ runtimeId: "runtime-extensions", cwd, model: "openai:gpt-5", thinkingLevel: "high" });
+      const { client, capabilityPlan, serviceTierConfigFile } = createPiRuntimeClient({ runtimeId: "runtime-extensions", cwd, model: "openai:gpt-5", thinkingLevel: "high", responseMode: "normal" });
       const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
 
       try {
@@ -127,11 +165,159 @@ process.stdin.resume();
         const started = (await startedPromise) as { argv: string[] };
         const extensionPaths = extensionArgsFromArgv(started.argv);
 
-        assert.equal(started.argv.slice(0, 6).join("\0"), ["--mode", "rpc", "--model", "openai:gpt-5", "--thinking", "high"].join("\0"));
-        assert.equal(extensionPaths.length, 3);
+        assert.deepEqual(started.argv, ["--mode", "rpc", "--model", "openai:gpt-5", "--thinking", "high", "--no-extensions"]);
+        assert.equal(extensionPaths.length, 0);
+        assert.ok(!capabilityPlan.enabledCapabilityIds.includes("provider-models"));
+        assert.equal(existsSync(serviceTierConfigFile), false);
+      } finally {
+        client.stop();
+        await onceClientEvent(client, "exit");
+      }
+    }),
+  );
+});
+
+test("createPiRuntimeClient enables provider shim only for fast response mode", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2) }) + "\\n");
+process.stdin.resume();
+`);
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-fast-mode-cwd-"));
+
+  await withCwd(cwd, () =>
+    withPathPrefix(fakeBin, async () => {
+      const { client, capabilityPlan, serviceTierConfigFile } = createPiRuntimeClient({ runtimeId: "runtime-fast", cwd, responseMode: "fast" });
+      const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
+
+      try {
+        client.start();
+        const started = (await startedPromise) as { argv: string[] };
+        const extensionPaths = extensionArgsFromArgv(started.argv);
+
         assert.ok(extensionPaths.some((path) => /piServiceTierExtension\.(?:ts|js)$/.test(path)));
+        assert.ok(capabilityPlan.enabledCapabilityIds.includes("provider-models"));
+        assert.deepEqual(JSON.parse(readFileSync(serviceTierConfigFile, "utf8")), { serviceTier: "priority" });
+      } finally {
+        client.stop();
+        await onceClientEvent(client, "exit");
+      }
+    }),
+  );
+});
+
+test("createPiRuntimeClient launches enhanced profile with selected GUI extensions", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2), env: { askBatch: process.env.PI_GUI_ASK_BATCH_DIALOG, codex: process.env.PI_GUI_CODEX_TRANSPORT_MONITOR } }) + "\\n");
+process.stdin.resume();
+`);
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-enhanced-cwd-"));
+
+  await withCwd(cwd, () =>
+    withPathPrefix(fakeBin, async () => {
+      const { client, capabilityPlan } = createPiRuntimeClient({ runtimeId: "runtime-enhanced", cwd, runtimeProfileId: "pi-gui-enhanced" });
+      const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
+
+      try {
+        client.start();
+        const started = (await startedPromise) as { argv: string[]; env: { askBatch?: string; codex?: string } };
+        const extensionPaths = extensionArgsFromArgv(started.argv);
+
+        assert.ok(started.argv.includes("--no-extensions"));
+        assert.equal(extensionPaths.length, 1);
         assert.ok(extensionPaths.some((path) => /piReadyNotificationExtension\.(?:ts|js)$/.test(path)));
-        assert.ok(extensionPaths.some((path) => /piCodexTransportMonitorExtension\.(?:ts|js)$/.test(path)));
+        assert.equal(started.env.askBatch, "1");
+        assert.equal(started.env.codex, "0");
+        assert.ok(capabilityPlan.enabledCapabilityIds.includes("interactive-prompts"));
+      } finally {
+        client.stop();
+        await onceClientEvent(client, "exit");
+      }
+    }),
+  );
+});
+
+test("createPiRuntimeClient launches Trellis profile with confirmed project extension explicitly", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2) }) + "\\n");
+process.stdin.resume();
+`);
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-trellis-profile-cwd-"));
+  mkdirSync(join(cwd, ".pi", "extensions", "trellis"), { recursive: true });
+  writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ extensions: ["./extensions/trellis/index.ts"] }), "utf8");
+  writeFileSync(join(cwd, ".pi", "extensions", "trellis", "index.ts"), "pi.registerTool?.({ name: \"trellis_subagent\" });", "utf8");
+
+  const trellisExtensionPath = join(cwd, ".pi", "extensions", "trellis", "index.ts");
+  const trellisExtensionId = `project:${trellisExtensionPath}`;
+
+  await withCwd(cwd, () =>
+    withPathPrefix(fakeBin, async () => {
+      const { client, capabilityPlan } = createPiRuntimeClient({ runtimeId: "runtime-trellis", cwd, runtimeProfileId: "trellis-workflow", confirmedProjectExtensionIds: [trellisExtensionId] });
+      const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
+
+      try {
+        client.start();
+        const started = (await startedPromise) as { argv: string[] };
+        const extensionPaths = extensionArgsFromArgv(started.argv);
+
+        assert.ok(started.argv.includes("--no-extensions"));
+        assert.ok(extensionPaths.some((path) => /piReadyNotificationExtension\.(?:ts|js)$/.test(path)));
+        assert.ok(extensionPaths.some((path) => /\.pi\/extensions\/trellis\/index\.ts$/.test(path)));
+        assert.ok(capabilityPlan.enabledCapabilityIds.includes("trellis-subagent"));
+      } finally {
+        client.stop();
+        await onceClientEvent(client, "exit");
+      }
+    }),
+  );
+});
+
+test("createPiRuntimeClient keeps unconfirmed project extensions isolated", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2) }) + "\\n");
+process.stdin.resume();
+`);
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-trellis-unconfirmed-cwd-"));
+  mkdirSync(join(cwd, ".pi", "extensions", "trellis"), { recursive: true });
+  writeFileSync(join(cwd, ".pi", "extensions", "trellis", "index.ts"), "pi.registerTool?.({ name: \"trellis_subagent\" });", "utf8");
+
+  await withCwd(cwd, () =>
+    withPathPrefix(fakeBin, async () => {
+      const { client } = createPiRuntimeClient({ runtimeId: "runtime-trellis-unconfirmed", cwd, runtimeProfileId: "trellis-workflow" });
+      const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
+
+      try {
+        client.start();
+        const started = (await startedPromise) as { argv: string[] };
+        const extensionPaths = extensionArgsFromArgv(started.argv);
+
+        assert.ok(started.argv.includes("--no-extensions"));
+        assert.ok(extensionPaths.some((path) => /piReadyNotificationExtension\.(?:ts|js)$/.test(path)));
+        assert.ok(!extensionPaths.some((path) => /\.pi\/extensions\/trellis\/index\.ts$/.test(path)));
+      } finally {
+        client.stop();
+        await onceClientEvent(client, "exit");
+      }
+    }),
+  );
+});
+
+test("createPiRuntimeClient lets Pi + User Extensions inherit extension discovery", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2) }) + "\\n");
+process.stdin.resume();
+`);
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-user-ext-cwd-"));
+
+  await withCwd(cwd, () =>
+    withPathPrefix(fakeBin, async () => {
+      const { client, capabilityPlan } = createPiRuntimeClient({ runtimeId: "runtime-user-ext", cwd, runtimeProfileId: "pi-user-extensions" });
+      const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
+
+      try {
+        client.start();
+        const started = (await startedPromise) as { argv: string[] };
+        assert.deepEqual(started.argv, ["--mode", "rpc"]);
+        assert.equal(capabilityPlan.inheritUserExtensions, true);
       } finally {
         client.stop();
         await onceClientEvent(client, "exit");
@@ -272,6 +458,13 @@ test("PiRpcClient launches SSH project cwd through remote pi rpc", async (t) => 
 
 function readText(path: string): string {
   return readFileSync(path, "utf8");
+}
+
+function restoreEnv(values: Record<string, string | undefined>): void {
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 }
 
 function extensionArgsFromArgv(argv: string[]): string[] {

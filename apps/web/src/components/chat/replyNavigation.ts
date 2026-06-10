@@ -132,6 +132,12 @@ export function lastUserMessageScrollOffset(blocks: ConversationDisplayBlock[], 
   return undefined;
 }
 
+export function shouldDeferLastUserMessageScrollTarget(input: { loadedMessageCount: number; summaryMessageCount?: number; runtimeHasSession?: boolean }): boolean {
+  if (input.loadedMessageCount > 0) return false;
+  if (typeof input.summaryMessageCount === "number") return input.summaryMessageCount > 0;
+  return input.runtimeHasSession === true;
+}
+
 export function stepReplyIndexFromDelta(activeIndex: number, anchorCount: number, delta: number): number {
   if (delta === 0) return activeIndex;
   return adjacentReplyAnchorIndex(activeIndex, anchorCount, delta < 0 ? "older" : "newer");

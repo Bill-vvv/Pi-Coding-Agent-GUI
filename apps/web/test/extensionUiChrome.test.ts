@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionUiRequest } from "@pi-gui/shared";
-import { applyExtensionUiChromeRequest, extensionUiChromeRequestFromPayload } from "../src/domain/extensionUiChrome";
+import { applyExtensionUiChromeRequest, extensionGoalWidgetView, extensionUiChromeRequestFromPayload } from "../src/domain/extensionUiChrome";
 
 test("extension UI status requests are stored per runtime and cleared by undefined text", () => {
   const setStatus: ExtensionUiRequest = {
@@ -80,6 +80,21 @@ test("chrome requests can be reconstructed from replayed raw Pi payloads", () =>
     },
   );
   assert.equal(extensionUiChromeRequestFromPayload({ type: "extension_ui_request", id: "bad", method: "setWidget", widgetKey: "x", widgetLines: [1] }), undefined);
+});
+
+test("goal widgets expose a compact GUI view model", () => {
+  const widget = {
+    lines: ["⊙ Goal 1/20 · Active: ship GUI", "↻ Judging progress…", "/goal status · /goal pause · /goal resume · /goal clear"],
+    placement: "aboveEditor" as const,
+  };
+  assert.deepEqual(extensionGoalWidgetView("goal", widget), {
+    title: "⊙ Goal 1/20 · Active: ship GUI",
+    detail: "↻ Judging progress…",
+    status: "active",
+  });
+  assert.equal(extensionGoalWidgetView("other", widget), undefined);
+  assert.equal(extensionGoalWidgetView("goal", { ...widget, lines: ["⏸ Goal 3/20 · Paused: blocked"] })?.status, "paused");
+  assert.equal(extensionGoalWidgetView("goal", { ...widget, lines: ["✓ Goal 4/20 · Done: shipped"] })?.status, "done");
 });
 
 test("non chrome extension UI requests do not change chrome state", () => {

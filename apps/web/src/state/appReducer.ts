@@ -3,6 +3,7 @@ import type {
   ConversationContextUsage,
   ConversationDelta,
   ConversationMessage,
+  ExecutionHostRef,
   GuiEvent,
   GuiSession,
   ResponseMode,
@@ -39,6 +40,7 @@ export type AppState = {
   sessions: GuiSession[];
   subagentRuns: Record<string, SubagentRun>;
   subagentDetails: Record<string, { childRunId: string; messages: ConversationMessage[]; readAt: number; error?: string }>;
+  executionHost?: ExecutionHostRef;
   selectedProjectId?: string;
   selectedRuntimeId?: string;
   selectedRuntimeIdByProject: Record<string, string>;
@@ -206,6 +208,7 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
           // optional subagent run internals.
           sessions: event.sessions ?? state.sessions,
           subagentRuns: nextSubagentRuns,
+          executionHost: event.executionHost,
           selectedProjectId: nextProjectId,
           selectedRuntimeId: nextRuntimeId,
           selectedRuntimeIdByProject: seededRuntimeMap,
@@ -336,9 +339,19 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
       };
     case "command.result":
       return applyCommandResult(state, event);
+    case "event.replay.gap":
+      return {
+        ...state,
+        notice: replayGapNotice(event),
+      };
     case "gui.event":
       return applyGuiEvent(state, event.event);
   }
+}
+
+function replayGapNotice(event: Extract<ServerEvent, { type: "event.replay.gap" }>): string {
+  const reason = event.reason === "pruned" ? "部分较早事件已被清理" : event.reason === "truncated" ? "离线期间事件过多，已截断回放" : "事件回放游标已过期";
+  return `${reason}；界面已使用最新快照恢复，并回放最近 ${event.replayedEvents} 条事件。`;
 }
 
 function mergeSessionList(currentSessions: GuiSession[], nextSessions: GuiSession[], projectId?: string): GuiSession[] {

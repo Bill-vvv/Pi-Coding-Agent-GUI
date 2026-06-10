@@ -13,7 +13,7 @@ export type GuiSocketSendOptions = {
 
 export type GuiSocketSend = (command: ClientCommand, options?: GuiSocketSendOptions) => boolean;
 
-export type PendingPrompt = { projectId: string; message: string; requestId: string };
+export type PendingPrompt = { projectId: string; message: string; requestId: string; waitForConversationSnapshot?: boolean; runtimeId?: string };
 export type PendingProjectStart = { cwd: string; message?: string; requestId: string };
 
 export type UiFontSize = "small" | "medium" | "large";
@@ -29,6 +29,9 @@ export type UiPreferences = {
   accentColor: AccentColor;
   thinkingToolDisplayMode: ThinkingToolDisplayMode;
   desktopNotificationsEnabled: boolean;
+  petEnabled: boolean;
+  petCollapsed: boolean;
+  desktopPetEnabled: boolean;
   guiScopedModels: GuiScopedModelsPreference;
   keybindings: GuiKeybindingMap;
 };

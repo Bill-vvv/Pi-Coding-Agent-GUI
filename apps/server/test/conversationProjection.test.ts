@@ -183,6 +183,38 @@ test("ConversationProjection keeps a single final error when auto retries do not
   db.close();
 });
 
+test("ConversationProjection keeps provider transport diagnostics when projecting auto retry", () => {
+  const { db, runtime, projection } = createHarness();
+
+  projection.handlePiPayload({
+    type: "message_end",
+    message: {
+      id: "assistant-retry",
+      role: "assistant",
+      content: [],
+      timestamp: 100,
+      diagnostics: [
+        {
+          type: "provider_transport_failure",
+          error: { message: "WebSocket error" },
+          details: { configuredTransport: "websocket-cached", fallbackTransport: "sse", phase: "before_message_stream_start", requestBytes: 22255, eventsEmitted: false },
+        },
+      ],
+    },
+  });
+  projection.handlePiPayload({ type: "auto_retry_start", attempt: 2, maxAttempts: 3, errorMessage: "Codex SSE response headers timed out after 10000ms" });
+
+  const messages = db.listConversationMessages(runtime.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.id, "assistant-retry");
+  assert.equal(messages[0]?.role, "log");
+  assert.match(messages[0]?.text ?? "", /Codex SSE response headers timed out after 10000ms/);
+  assert.match(messages[0]?.text ?? "", /Provider diagnostic \(provider_transport_failure\): WebSocket error/);
+  assert.match(messages[0]?.text ?? "", /transport websocket-cached → sse/);
+  assert.match(messages[0]?.text ?? "", /no stream events before failure/);
+  db.close();
+});
+
 test("ConversationProjection reuses retry message for deltas without a message_start", () => {
   const { db, runtime, projection } = createHarness();
 
@@ -421,6 +453,34 @@ test("ConversationProjection projects tool execution events through normalized e
   assert.equal(messages[0]?.title, "read 完成");
   assert.equal(messages[0]?.text, "README.md");
   assert.equal(messages[0]?.isStreaming, false);
+  db.close();
+});
+
+test("ConversationProjection preserves edit diff metadata for GUI rendering", () => {
+  const { db, runtime, projection } = createHarness();
+  const diff = " 1 const value = oldValue;\n-2 oldValue();\n+2 newValue();";
+
+  projection.handlePiPayload({
+    type: "tool_execution_end",
+    toolCallId: "edit-1",
+    toolName: "edit",
+    args: { path: "src/example.ts" },
+    result: {
+      content: [{ type: "text", text: "Successfully replaced 1 block(s) in src/example.ts." }],
+      details: { diff, firstChangedLine: 2 },
+    },
+  });
+
+  const messages = db.listConversationMessages(runtime.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.id, "tool-edit-1");
+  assert.equal(messages[0]?.title, "edit 完成");
+  assert.equal(messages[0]?.text, "Successfully replaced 1 block(s) in src/example.ts.");
+  assert.deepEqual(messages[0]?.toolDetails, { path: "src/example.ts", diff, firstChangedLine: 2 });
+
+  const snapshot = projection.snapshot();
+  assert.equal(snapshot?.type, "conversation.snapshot");
+  assert.deepEqual(snapshot?.messages[0]?.toolDetails, { path: "src/example.ts", diff, firstChangedLine: 2 });
   db.close();
 });
 

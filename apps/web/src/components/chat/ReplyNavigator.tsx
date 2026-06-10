@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type RefObject, type WheelEvent } from "react";
 import type { ConversationDisplayBlock } from "../../domain/conversationDisplay";
+import { observeElementResize } from "../../domain/resizeObserver";
 import {
   activeReplyAnchorIndex,
   adjacentReplyAnchorIndex,
@@ -70,12 +71,11 @@ export const ReplyNavigator = memo(function ReplyNavigator({ blocks, layoutMetri
     updateViewport();
     surface.addEventListener("scroll", updateViewport, { passive: true });
     window.addEventListener("resize", updateViewport);
-    const resizeObserver = new ResizeObserver(updateViewport);
-    resizeObserver.observe(surface);
+    const disconnectResizeObserver = observeElementResize(surface, updateViewport);
     return () => {
       surface.removeEventListener("scroll", updateViewport);
       window.removeEventListener("resize", updateViewport);
-      resizeObserver.disconnect();
+      disconnectResizeObserver();
     };
   }, [surfaceRef, updateViewport]);
 

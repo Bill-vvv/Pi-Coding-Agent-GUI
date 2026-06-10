@@ -7,7 +7,10 @@ export function migrateDatabase(db: Database.Database): void {
       name text not null,
       cwd text not null unique,
       last_opened_at integer not null,
-      default_model text
+      default_model text,
+      default_runtime_profile_id text,
+      cwd_wsl text,
+      cwd_windows text
     );
 
     create table if not exists runtimes (
@@ -63,6 +66,7 @@ export function migrateDatabase(db: Database.Database): void {
       thinking text,
       title text,
       is_streaming integer not null default 0,
+      tool_details_json text,
       timestamp integer,
       created_at integer not null,
       updated_at integer not null,
@@ -113,15 +117,46 @@ export function migrateDatabase(db: Database.Database): void {
     );
   `);
 
+  const addedProjectHostCwdColumns = [
+    ensureColumn(db, "projects", "cwd_wsl", "text"),
+    ensureColumn(db, "projects", "cwd_windows", "text"),
+  ].some(Boolean);
+  ensureColumn(db, "projects", "default_runtime_profile_id", "text");
+  ensureColumn(db, "projects", "host_kind", "text");
+  ensureColumn(db, "projects", "host_id", "text");
+  ensureColumn(db, "projects", "host_label", "text");
   ensureColumn(db, "runtimes", "archived_at", "integer");
   ensureColumn(db, "runtimes", "ended_at", "integer");
+  ensureColumn(db, "runtimes", "host_kind", "text");
+  ensureColumn(db, "runtimes", "host_id", "text");
+  ensureColumn(db, "runtimes", "host_label", "text");
+  ensureColumn(db, "runtimes", "runtime_profile_id", "text");
+  ensureColumn(db, "runtimes", "enabled_capability_ids_json", "text");
+  ensureColumn(db, "sessions", "host_kind", "text");
+  ensureColumn(db, "sessions", "host_id", "text");
+  ensureColumn(db, "sessions", "host_label", "text");
   ensureColumn(db, "runtime_conversation_state", "session_tokens_json", "text");
+  ensureColumn(db, "conversation_messages", "tool_details_json", "text");
+  if (addedProjectHostCwdColumns) backfillProjectHostCwds(db);
+
   const addedRuntimeConfigColumns = [
     ensureColumn(db, "runtimes", "model", "text"),
     ensureColumn(db, "runtimes", "thinking_level", "text"),
     ensureColumn(db, "runtimes", "response_mode", "text"),
   ].some(Boolean);
   if (addedRuntimeConfigColumns) backfillRuntimeConfig(db);
+}
+
+function backfillProjectHostCwds(db: Database.Database): void {
+  db.exec(`
+    update projects
+    set cwd_wsl = cwd
+    where cwd_wsl is null and host_kind = 'wsl';
+
+    update projects
+    set cwd_windows = cwd
+    where cwd_windows is null and host_kind = 'windows';
+  `);
 }
 
 function backfillRuntimeConfig(db: Database.Database): void {

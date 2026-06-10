@@ -28,6 +28,10 @@ export function isExtensionUiRequest(value: Record<string, unknown> | undefined)
   }
 }
 
+export function isExtensionUiDialogRequest(request: ExtensionUiRequest): boolean {
+  return request.method === "select" || request.method === "confirm" || request.method === "input" || request.method === "editor" || request.method === "askBatch";
+}
+
 function isAskBatchRequest(value: Record<string, unknown>): boolean {
   if (!Array.isArray(value.questions) || value.questions.length === 0) return false;
   if (value.title !== undefined && typeof value.title !== "string") return false;

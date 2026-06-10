@@ -31,21 +31,32 @@ export function applyManagedRuntimeConfiguration(managed: ManagedRuntime, option
   const model = configuredModelKey(options);
   managed.runtime = nextRuntime;
   if (model || options.thinkingLevel) managed.configRevision += 1;
-  if (options.modelProvider && options.modelId) {
-    managed.client.send({
-      id: `gui-${randomUUID()}`,
-      type: "set_model",
-      provider: options.modelProvider,
-      modelId: options.modelId,
-    });
-  }
-  if (options.thinkingLevel) {
-    managed.client.send({ id: `gui-${randomUUID()}`, type: "set_thinking_level", level: options.thinkingLevel });
-  }
-  if (options.responseMode) {
-    writeServiceTierConfig(managed.serviceTierConfigFile, options.responseMode);
-    managed.client.send({ id: `gui-${randomUUID()}`, type: "set_service_tier", serviceTier: responseModeToServiceTier(options.responseMode) });
-  }
+  // Preserve existing order while keeping GUI runtime metadata updates separate
+  // from Pi RPC commands and the runtime-local provider shim side effect.
+  sendModelConfiguration(managed, options);
+  sendThinkingConfiguration(managed, options);
+  applyServiceTierShimConfiguration(managed, options);
+}
+
+function sendModelConfiguration(managed: ManagedRuntime, options: RuntimeConfigureOptions): void {
+  if (!options.modelProvider || !options.modelId) return;
+  managed.client.send({
+    id: `gui-${randomUUID()}`,
+    type: "set_model",
+    provider: options.modelProvider,
+    modelId: options.modelId,
+  });
+}
+
+function sendThinkingConfiguration(managed: ManagedRuntime, options: RuntimeConfigureOptions): void {
+  if (!options.thinkingLevel) return;
+  managed.client.send({ id: `gui-${randomUUID()}`, type: "set_thinking_level", level: options.thinkingLevel });
+}
+
+function applyServiceTierShimConfiguration(managed: ManagedRuntime, options: RuntimeConfigureOptions): void {
+  if (!options.responseMode) return;
+  writeServiceTierConfig(managed.serviceTierConfigFile, options.responseMode);
+  managed.client.send({ id: `gui-${randomUUID()}`, type: "set_service_tier", serviceTier: responseModeToServiceTier(options.responseMode) });
 }
 
 export async function sendPrompt(managed: ManagedRuntime, message: string, streamingBehavior: "steer" | "followUp" | undefined, cwd: string): Promise<void> {

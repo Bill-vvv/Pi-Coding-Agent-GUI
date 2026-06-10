@@ -33,7 +33,6 @@ export const GUI_HOTKEY_SECTIONS: GuiHotkeySection[] = [
       { keys: ["Esc"], description: "关闭弹层/正在输出时中止本轮输出" },
       { keys: ["Ctrl/Cmd+K"], description: "打开命令栏" },
       { keys: ["Ctrl/Cmd+,"], description: "打开设置" },
-      { keys: ["Ctrl/Cmd+Shift+M"], description: "语音输入" },
     ],
   },
   {
@@ -74,7 +73,7 @@ export function routeNativeComposerCommand(name: string, args: string, lastAssis
     case "settings":
       return { kind: "openSettings" };
     case "goal":
-      return { kind: "error", message: "当前 Pi runtime 没有暴露可执行的 /goal 命令；请先刷新命令或使用补全列表里的 /goal:*。" };
+      return { kind: "runtimePrompt", message: slashCommandMessage(name, args) };
     case "resume":
       return { kind: "openSessionHistory" };
     case "new":

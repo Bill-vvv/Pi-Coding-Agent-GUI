@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { addMediaQueryChangeListener, subscribeMediaQuery } from "../src/domain/mediaQuery";
 import { createRequestId } from "../src/domain/requestId";
+import { observeElementResize } from "../src/domain/resizeObserver";
 
 test("createRequestId falls back when crypto.randomUUID is unavailable", () => {
   withCrypto(
@@ -57,6 +58,35 @@ test("subscribeMediaQuery reports initial state and returns a safe cleanup", () 
   );
 });
 
+test("observeElementResize is a no-op when ResizeObserver is unavailable", () => {
+  withResizeObserver(undefined, () => {
+    const cleanup = observeElementResize({} as Element, () => assert.fail("resize callback should not run without ResizeObserver"));
+    assert.doesNotThrow(cleanup);
+  });
+});
+
+test("observeElementResize observes and disconnects when ResizeObserver is available", () => {
+  const calls: string[] = [];
+  class MockResizeObserver {
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    observe(element: Element) {
+      calls.push(element === mockElement ? "observe" : "observe-other");
+      this.callback([], this as unknown as ResizeObserver);
+    }
+    disconnect() {
+      calls.push("disconnect");
+    }
+  }
+  const mockElement = {} as Element;
+
+  withResizeObserver(MockResizeObserver as unknown as typeof ResizeObserver, () => {
+    const cleanup = observeElementResize(mockElement, () => calls.push("callback"));
+    cleanup();
+  });
+
+  assert.deepEqual(calls, ["observe", "callback", "disconnect"]);
+});
+
 type MockCrypto = {
   randomUUID?: () => string;
   getRandomValues?: (bytes: Uint8Array) => Uint8Array;
@@ -81,5 +111,17 @@ function withWindowMatchMedia(matchMedia: (query: string) => Pick<MediaQueryList
     run();
   } finally {
     global.window = previousWindow;
+  }
+}
+
+function withResizeObserver(resizeObserver: typeof ResizeObserver | undefined, run: () => void): void {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+  if (resizeObserver) Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: resizeObserver });
+  else Reflect.deleteProperty(globalThis, "ResizeObserver");
+  try {
+    run();
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "ResizeObserver", descriptor);
+    else Reflect.deleteProperty(globalThis, "ResizeObserver");
   }
 }

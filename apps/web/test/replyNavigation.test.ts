@@ -7,8 +7,10 @@ import {
   adjacentReplyAnchorIndex,
   assistantReplyAnchors,
   blockScrollOffset,
+  lastUserMessageScrollOffset,
   replyMarkerWindow,
   replyScrollOffset,
+  shouldDeferLastUserMessageScrollTarget,
   stepReplyIndexFromDelta,
   type ConversationBlockLayoutMetrics,
   type ReplyAnchor,
@@ -178,11 +180,61 @@ test("replyMarkerWindow returns a nine item rolling window near start, middle, a
   assert.equal(startWindow[0]?.length, "peak");
 });
 
+test("replyMarkerWindow keeps boundary active replies centered and omits absent lines", () => {
+  const anchors = Array.from({ length: 4 }, (_value, index) => anchor(`assistant-${index + 1}`, index));
+
+  const topWindow = replyMarkerWindow(anchors, 0);
+  assert.equal(topWindow[0]?.isActive, true);
+  assert.equal(topWindow[0]?.slotIndex, 4);
+  assert.deepEqual(topWindow.map((marker) => marker.slotIndex), [4, 5, 6, 7]);
+  assert.deepEqual(topWindow.map((marker) => marker.length), ["peak", "long", "medium", "short"]);
+
+  const bottomWindow = replyMarkerWindow(anchors, anchors.length - 1);
+  assert.equal(bottomWindow[bottomWindow.length - 1]?.isActive, true);
+  assert.equal(bottomWindow[bottomWindow.length - 1]?.slotIndex, 4);
+  assert.deepEqual(bottomWindow.map((marker) => marker.slotIndex), [1, 2, 3, 4]);
+  assert.deepEqual(bottomWindow.map((marker) => marker.length), ["short", "medium", "long", "peak"]);
+});
+
 test("scroll offsets use measured heights and fall back to estimated heights", () => {
   const metrics = layout(["user-1", "assistant-1", "tool-1", "assistant-2"], [80, 120, 0, 200]);
   const replyAnchor = anchor("assistant-2", 3, "user-1", 0);
 
   assert.equal(blockScrollOffset(metrics, 3), 300);
   assert.equal(replyScrollOffset(replyAnchor, metrics), 0);
+});
+
+test("lastUserMessageScrollOffset targets the final user block", () => {
+  const blocks: ConversationDisplayBlock[] = [
+    messageBlock("user-1", "user"),
+    messageBlock("assistant-1", "assistant"),
+    messageBlock("user-2", "user"),
+    messageBlock("assistant-2", "assistant"),
+  ];
+  const metrics = layout(["user-1", "assistant-1", "user-2", "assistant-2"], [90, 140, 110, 160]);
+
+  assert.equal(lastUserMessageScrollOffset(blocks, metrics), 230);
+});
+
+test("lastUserMessageScrollOffset falls back to block index when metrics are stale", () => {
+  const blocks: ConversationDisplayBlock[] = [messageBlock("user-1", "user"), messageBlock("assistant-1", "assistant"), messageBlock("user-2", "user")];
+  const metrics = layout(["old-user", "old-assistant"], [80, 120]);
+
+  assert.equal(lastUserMessageScrollOffset(blocks, metrics), 200);
+});
+
+test("lastUserMessageScrollOffset returns undefined without a user block", () => {
+  const blocks: ConversationDisplayBlock[] = [messageBlock("assistant-1", "assistant"), messageBlock("tool-1", "tool")];
+  const metrics = layout(["assistant-1", "tool-1"], [120, 80]);
+
+  assert.equal(lastUserMessageScrollOffset(blocks, metrics), undefined);
+});
+
+test("shouldDeferLastUserMessageScrollTarget waits for contentful session messages before handling", () => {
+  assert.equal(shouldDeferLastUserMessageScrollTarget({ loadedMessageCount: 0, summaryMessageCount: 8 }), true);
+  assert.equal(shouldDeferLastUserMessageScrollTarget({ loadedMessageCount: 0, runtimeHasSession: true }), true);
+  assert.equal(shouldDeferLastUserMessageScrollTarget({ loadedMessageCount: 0, summaryMessageCount: 0, runtimeHasSession: true }), false);
+  assert.equal(shouldDeferLastUserMessageScrollTarget({ loadedMessageCount: 0 }), false);
+  assert.equal(shouldDeferLastUserMessageScrollTarget({ loadedMessageCount: 1, summaryMessageCount: 8, runtimeHasSession: true }), false);
 });
 

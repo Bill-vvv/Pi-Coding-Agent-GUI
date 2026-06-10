@@ -8,6 +8,7 @@ export type ServerRuntimeConfig = {
   authRequired: boolean;
   remoteLan: boolean;
   authTokenSource?: "env" | "persisted";
+  desktopLaunchId?: string;
 };
 
 export type PersistedRemoteAccessConfig = {
@@ -46,6 +47,7 @@ export function readServerRuntimeConfig(env: NodeJS.ProcessEnv = process.env, pe
     authRequired: remoteLan || Boolean(authToken),
     remoteLan,
     ...(authTokenSource ? { authTokenSource } : {}),
+    ...(mode === "desktop" && env.PI_GUI_DESKTOP_LAUNCH_ID?.trim() ? { desktopLaunchId: env.PI_GUI_DESKTOP_LAUNCH_ID.trim() } : {}),
   };
 }
 

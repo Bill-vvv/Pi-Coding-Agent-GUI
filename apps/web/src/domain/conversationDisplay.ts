@@ -1,4 +1,4 @@
-import { isSerializedToolCallText, stripSerializedToolCallsFromText, type ConversationMessage, type SubagentRun } from "@pi-gui/shared";
+import { isSerializedToolCallText, stripSerializedToolCallsFromText, type ConversationMessage, type ConversationToolDetails, type SubagentRun } from "@pi-gui/shared";
 import { subagentRunIsActive } from "./subagents";
 
 // Conversation display modes are intentionally centralized so future modes
@@ -15,6 +15,7 @@ export type ToolDisplayModel = {
   summary: string;
   detailLabel: string;
   detail: string;
+  toolDetails?: ConversationToolDetails;
   updatedAt: number;
 };
 
@@ -100,7 +101,7 @@ export function buildConversationDisplayBlocks(
   options: ConversationDisplayOptions = {},
 ): ConversationDisplayBlock[] {
   const displayMessages = dedupeSyntheticSnapshotMessages(messages);
-  if (mode === "chronological") return buildChronologicalConversationDisplayBlocks(displayMessages);
+  if (mode === "chronological") return buildChronologicalConversationDisplayBlocks(displayMessages, options);
   return buildCompactConversationDisplayBlocks(displayMessages, options);
 }
 
@@ -168,18 +169,56 @@ function buildCompactConversationDisplayBlocks(displayMessages: ConversationMess
   return blocks;
 }
 
-function buildChronologicalConversationDisplayBlocks(displayMessages: ConversationMessage[]): ConversationDisplayBlock[] {
+function buildChronologicalConversationDisplayBlocks(displayMessages: ConversationMessage[], options: ConversationDisplayOptions): ConversationDisplayBlock[] {
   const blocks: ConversationDisplayBlock[] = [];
+  const subagentRunByToolMessageId = new Map((options.subagentRuns ?? []).map((run) => [run.parentToolMessageId, run]));
+  let processTools: ConversationMessage[] = [];
+  let processThinkingMessages: ConversationMessage[] = [];
+  let processSubagentRuns: SubagentRun[] = [];
+  let processGroupId: string | undefined;
+
+  function addProcessAnchor(message: ConversationMessage) {
+    if (!processGroupId) processGroupId = message.id;
+  }
+
+  function flushProcessGroup(forceRunning = false) {
+    if (processTools.length > 0 || processThinkingMessages.length > 0 || processSubagentRuns.length > 0) {
+      blocks.push(toolGroupBlock(processTools, processThinkingMessages, processSubagentRuns, processGroupId ?? "chronological", forceRunning));
+    }
+    processTools = [];
+    processThinkingMessages = [];
+    processSubagentRuns = [];
+    processGroupId = undefined;
+  }
 
   for (const message of displayMessages) {
     const displayMessage = conversationMessageForDisplay(message, "chronological");
     if (!displayMessage) continue;
 
-    const displayKind = conversationMessageDisplayKind(displayMessage, "chronological");
+    const hasAssistantThinking = displayMessage.role === "assistant" && Boolean(displayMessage.thinking?.trim());
+    if (hasAssistantThinking) {
+      addProcessAnchor(displayMessage);
+      processThinkingMessages.push(displayMessage);
+    }
+
+    if (isToolDisplayMessage(displayMessage)) {
+      addProcessAnchor(displayMessage);
+      const subagentRun = subagentRunByToolMessageId.get(displayMessage.id);
+      if (subagentRun) processSubagentRuns.push(subagentRun);
+      else processTools.push(displayMessage);
+      continue;
+    }
+
+    const textMessage = hasAssistantThinking ? { ...displayMessage, thinking: undefined } : displayMessage;
+    if (!textMessage.text) continue;
+
+    const displayKind = conversationMessageDisplayKind(textMessage, "chronological");
     if (displayKind === "hidden" || displayKind === "tool") continue;
-    blocks.push(messageBlock(displayMessage, displayKind));
+    flushProcessGroup();
+    blocks.push(messageBlock(textMessage, displayKind));
   }
 
+  flushProcessGroup(options.activeRuntimeIsBusy === true);
   return blocks;
 }
 
@@ -296,8 +335,9 @@ export function toolDisplayModel(message: ConversationMessage): ToolDisplayModel
     status,
     statusLabel,
     summary,
-    detailLabel: status === "failed" ? "错误详情" : status === "running" ? "工具详情" : "工具输出",
+    detailLabel: message.toolDetails?.diff ? "编辑差异" : status === "failed" ? "错误详情" : status === "running" ? "工具详情" : "工具输出",
     detail: message.text.trim(),
+    toolDetails: message.toolDetails,
     updatedAt: message.updatedAt ?? message.timestamp ?? 0,
   };
 }

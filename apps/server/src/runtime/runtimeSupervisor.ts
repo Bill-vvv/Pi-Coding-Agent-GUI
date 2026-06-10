@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import type { PiRpcCommand, Runtime, RuntimeConversationSummary, RuntimeQueue, ServerEvent, SlashCommand, SubagentRun } from "@pi-gui/shared";
 import { AppDatabase } from "../db.js";
+import { inspectPiSessionFile } from "../services/piSessionHealth.js";
 import { findPiSessionFileById, readPiSessionConversationSummary } from "../services/sessionIndexService.js";
 import { parseSshProjectCwd } from "../services/sshProjectService.js";
 import type { ManagedRuntime, RuntimeConfigOptions } from "./managedRuntime.js";
@@ -61,6 +62,13 @@ export class RuntimeSupervisor {
 
   listRuntimeCommands(): Array<{ runtimeId: string; projectId: string; commands: SlashCommand[] }> {
     return this.liveState.listCommands();
+  }
+
+  listPendingExtensionUiRequests(): Array<{ runtimeId: string; projectId: string; request: NonNullable<ManagedRuntime["pendingExtensionUiRequest"]> }> {
+    return Array.from(this.runtimes.values()).flatMap((managed) => {
+      const request = managed.pendingExtensionUiRequest;
+      return request ? [{ runtimeId: managed.runtime.id, projectId: managed.runtime.projectId, request }] : [];
+    });
   }
 
   listRuntimeConversationSummaries(limit = 100): RuntimeConversationSummary[] {
@@ -132,6 +140,7 @@ export class RuntimeSupervisor {
       model: options.model ?? sourceRuntime.model,
       thinkingLevel: options.thinkingLevel ?? sourceRuntime.thinkingLevel,
       responseMode: options.responseMode ?? sourceRuntime.responseMode,
+      runtimeProfileId: options.runtimeProfileId ?? sourceRuntime.runtimeProfileId,
     });
   }
 
@@ -210,6 +219,7 @@ export class RuntimeSupervisor {
     const managed = this.requireManaged(runtimeId);
     const project = this.db.getProject(managed.runtime.projectId);
     if (!project) throw new Error(`Project not found for runtime: ${managed.runtime.projectId}`);
+    this.assertManagedRuntimeSessionHealthy(managed);
     appendDisplayUserInput(managed, displayMessage);
     managed.projection.markBusy(true);
     try {
@@ -246,16 +256,43 @@ export class RuntimeSupervisor {
   }
 
   respondExtensionUi(runtimeId: string, responseId: string, response: Record<string, unknown>): void {
-    sendExtensionUiResponse(this.requireManaged(runtimeId), responseId, response);
+    const managed = this.requireManaged(runtimeId);
+    sendExtensionUiResponse(managed, responseId, response);
+    if (managed.pendingExtensionUiRequest?.id === responseId) {
+      managed.pendingExtensionUiRequest = undefined;
+    }
+  }
+
+  private assertManagedRuntimeSessionHealthy(managed: ManagedRuntime): void {
+    const sessionId = managed.runtime.sessionId;
+    if (!sessionId || parseSshProjectCwd(managed.runtime.cwd)) return;
+
+    const indexedSessionFile = this.db.getSession(sessionId)?.piSessionFile;
+    const sessionFile = indexedSessionFile && existsSync(indexedSessionFile) ? indexedSessionFile : findPiSessionFileById(sessionId, managed.runtime.cwd);
+    if (!sessionFile) return;
+
+    const issue = inspectPiSessionFile(sessionFile);
+    if (!issue) return;
+
+    this.events.publishGuiEvent(managed.runtime, "error", { message: issue.message, code: issue.code });
+    managed.projection.appendLog("error", issue.message, "session safety");
+    throw new Error(issue.message);
   }
 
   private assertLocalPiSessionAvailable(sessionId: string, cwd: string, directSessionFile?: string): void {
     if (parseSshProjectCwd(cwd) || (directSessionFile && parseSshProjectCwd(directSessionFile))) return;
 
     const indexedSessionFile = this.db.getSession(sessionId)?.piSessionFile;
-    if (directSessionFile && existsSync(directSessionFile)) return;
-    if (indexedSessionFile && existsSync(indexedSessionFile)) return;
-    if (findPiSessionFileById(sessionId, cwd)) return;
+    const sessionFile = directSessionFile && existsSync(directSessionFile)
+      ? directSessionFile
+      : indexedSessionFile && existsSync(indexedSessionFile)
+        ? indexedSessionFile
+        : findPiSessionFileById(sessionId, cwd);
+    if (sessionFile) {
+      const issue = inspectPiSessionFile(sessionFile);
+      if (issue) throw new Error(issue.message);
+      return;
+    }
 
     throw new Error(
       `Pi session file not found for '${sessionId}'. This can happen if the GUI server restarted before Pi persisted the session. Start a new conversation instead of resuming this runtime.`,
@@ -302,7 +339,7 @@ export class RuntimeSupervisor {
 }
 
 function isBlankRuntimeSafeToArchive(runtime: Runtime, hasConversationActivity: (runtimeId: string) => boolean): boolean {
-  if (runtime.archivedAt || runtime.sessionId) return false;
+  if (runtime.archivedAt) return false;
   if (runtime.status !== "running" && runtime.status !== "starting") return false;
   return !hasConversationActivity(runtime.id);
 }

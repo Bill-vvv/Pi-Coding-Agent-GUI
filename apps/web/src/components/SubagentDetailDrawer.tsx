@@ -21,6 +21,7 @@ type SubagentDetailDrawerProps = {
 };
 
 const SESSION_FILE_PENDING_ERROR = "Sub-agent session file is not available yet";
+const DETAIL_FILE_PENDING_ERROR = "Sub-agent session or trace file is not available yet";
 
 export function SubagentDetailDrawer({ run, selectedChildRunId, detail, onClose, onSelectChildRun }: SubagentDetailDrawerProps) {
   if (!run) return null;
@@ -35,13 +36,14 @@ export function SubagentDetailDrawer({ run, selectedChildRunId, detail, onClose,
   const primaryOutputText = primaryFinalText || (selectedChild ? childIsActive ? "运行中，等待最终输出。" : "暂无该 child 的最终输出。" : "暂无最终输出。");
   const showGroupFinalText = Boolean(selectedChild && groupFinalText && groupFinalText !== childFinalText);
   const childCount = run.runs.length || 1;
-  const sessionFilePending = Boolean(selectedChild && !selectedChild.sessionFile && childIsActive);
-  const detailError = detail?.error && !(sessionFilePending && detail.error === SESSION_FILE_PENDING_ERROR) ? detail.error : undefined;
+  const detailFileAvailable = Boolean(selectedChild?.sessionFile || selectedChild?.traceFile);
+  const detailFilePending = Boolean(selectedChild && !detailFileAvailable && childIsActive);
+  const detailError = detail?.error && !(detailFilePending && (detail.error === SESSION_FILE_PENDING_ERROR || detail.error === DETAIL_FILE_PENDING_ERROR)) ? detail.error : undefined;
   const detailMessages = detail?.messages ?? [];
   const hasDetailMessages = detailMessages.length > 0;
   const liveMessages = buildSubagentLiveConversationMessages(run, selectedChild);
   const processMessages = hasDetailMessages ? detailMessages : liveMessages;
-  const processSourceLabel = hasDetailMessages ? "session" : liveMessages.length > 0 ? "实时" : selectedChild?.sessionFile || sessionFilePending ? "等待中" : "未连接";
+  const processSourceLabel = hasDetailMessages ? selectedChild?.sessionFile ? "session" : selectedChild?.traceFile ? "trace" : "detail" : liveMessages.length > 0 ? "实时" : detailFileAvailable || detailFilePending ? "等待中" : "未连接";
 
   return (
     <aside className="subagent-drawer" role="dialog" aria-modal="false" aria-label="子代理详情">
@@ -108,14 +110,14 @@ export function SubagentDetailDrawer({ run, selectedChildRunId, detail, onClose,
             <span>本地过程</span>
             <small>{processSourceLabel}</small>
           </div>
-          {selectedChild?.sessionFile ? <small className="subagent-session-file">{selectedChild.sessionFile}</small> : null}
+          {selectedChild?.sessionFile ? <small className="subagent-session-file">{selectedChild.sessionFile}</small> : selectedChild?.traceFile ? <small className="subagent-session-file">{selectedChild.traceFile}</small> : null}
           {detailError ? <p className="subagent-detail-error">{detailError}</p> : null}
           {processMessages.length > 0 ? (
             <div className="subagent-detail-message-list subagent-scroll-area" tabIndex={0}>
               <ConversationBlockList messages={processMessages} />
             </div>
           ) : !detailError ? (
-            <p className="subagent-detail-empty">{selectedChild?.sessionFile ? "等待 session 内容…" : childIsActive ? "等待实时输出…" : "未上报 session 文件。"}</p>
+            <p className="subagent-detail-empty">{detailFileAvailable ? "等待过程内容…" : childIsActive ? "等待实时输出…" : "未上报 session/trace 文件。"}</p>
           ) : null}
         </section>
       </div>
@@ -139,7 +141,7 @@ function SelectedChildSummary({ child }: { child: SubagentChildRun }) {
 }
 
 function childMeta(child: SubagentChildRun): string[] {
-  return [child.model, child.thinking ? `thinking ${child.thinking}` : undefined, usageText(child), child.sessionFile ? "session 已连接" : subagentChildIsActive(child) ? "session 等待中" : "无 session 文件"].filter((part): part is string => Boolean(part));
+  return [child.model, child.thinking ? `thinking ${child.thinking}` : undefined, usageText(child), child.sessionFile ? "session 已连接" : child.traceFile ? "trace 已连接" : subagentChildIsActive(child) ? "过程等待中" : "无过程文件"].filter((part): part is string => Boolean(part));
 }
 
 function usageText(child: SubagentChildRun): string | undefined {

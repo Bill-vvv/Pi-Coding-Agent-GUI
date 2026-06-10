@@ -70,6 +70,26 @@ test("buildConversationDisplayBlocks keeps ordinary tools grouped when no subage
   assert.deepEqual(toolGroups[0]?.tools.map((tool) => tool.id), ["tool-read-1"]);
 });
 
+test("buildConversationDisplayBlocks carries edit diff metadata into tool display models", () => {
+  const diff = " 1 before\n-2 old\n+2 new";
+  const blocks = buildConversationDisplayBlocks([
+    message({
+      id: "tool-edit-1",
+      role: "tool",
+      title: "edit 完成",
+      text: "Successfully replaced 1 block(s) in src/example.ts.",
+      timestamp: 2,
+      updatedAt: 2,
+      toolDetails: { path: "src/example.ts", diff, firstChangedLine: 2 },
+    }),
+  ]);
+
+  const toolGroups = blocks.filter((block) => block.type === "tool_group");
+  assert.equal(toolGroups.length, 1);
+  assert.equal(toolGroups[0]?.model.tools[0]?.detailLabel, "编辑差异");
+  assert.deepEqual(toolGroups[0]?.model.tools[0]?.toolDetails, { path: "src/example.ts", diff, firstChangedLine: 2 });
+});
+
 test("buildConversationDisplayBlocks hides synthetic snapshot duplicates of live messages", () => {
   const blocks = buildConversationDisplayBlocks([
     message({ id: "snapshot-0-100", role: "user", text: "同一个问题", timestamp: 100, updatedAt: 110 }),
@@ -150,20 +170,23 @@ test("buildConversationDisplayBlocks still groups thinking-only assistant update
   assert.deepEqual(toolGroups[0]?.thinkingMessages.map((item) => item.id), ["assistant-thinking"]);
 });
 
-test("buildConversationDisplayBlocks keeps assistant thinking inline in chronological mode", () => {
+test("buildConversationDisplayBlocks groups assistant thinking before the final answer in chronological mode", () => {
   const blocks = buildConversationDisplayBlocks(
     [message({ id: "assistant-1", role: "assistant", text: "最终回答", thinking: "推理过程", timestamp: 100, updatedAt: 100 })],
     "chronological",
   );
 
-  assert.equal(blocks.some((block) => block.type === "tool_group"), false);
+  assert.deepEqual(blocks.map((block) => block.type), ["tool_group", "message"]);
+  const toolGroups = blocks.filter((block) => block.type === "tool_group");
+  assert.deepEqual(toolGroups[0]?.thinkingMessages.map((item) => item.id), ["assistant-1"]);
+
   const messageBlocks = blocks.filter((block) => block.type === "message");
   assert.equal(messageBlocks.length, 1);
   assert.equal(messageBlocks[0]?.message.text, "最终回答");
-  assert.equal(messageBlocks[0]?.message.thinking, "推理过程");
+  assert.equal(messageBlocks[0]?.message.thinking, undefined);
 });
 
-test("buildConversationDisplayBlocks keeps tools inline in chronological mode", () => {
+test("buildConversationDisplayBlocks groups adjacent tools in chronological mode", () => {
   const blocks = buildConversationDisplayBlocks(
     [
       message({ id: "user-1", role: "user", text: "读文件", timestamp: 1, updatedAt: 1 }),
@@ -175,10 +198,14 @@ test("buildConversationDisplayBlocks keeps tools inline in chronological mode", 
     { subagentRuns: [subagentRun()] },
   );
 
-  assert.equal(blocks.some((block) => block.type === "tool_group"), false);
+  assert.deepEqual(blocks.map((block) => block.type), ["message", "tool_group", "message"]);
+  const toolGroups = blocks.filter((block) => block.type === "tool_group");
+  assert.deepEqual(toolGroups[0]?.subagentRuns.map((run) => run.id), ["runtime-1:subagent-1"]);
+  assert.deepEqual(toolGroups[0]?.tools.map((tool) => tool.id), ["tool-read-1"]);
+
   const messageBlocks = blocks.filter((block) => block.type === "message");
-  assert.deepEqual(messageBlocks.map((block) => block.message.id), ["user-1", "tool-subagent-1", "tool-read-1", "assistant-1"]);
-  assert.deepEqual(messageBlocks.map((block) => block.displayKind), ["markdown", "plain", "plain", "markdown"]);
+  assert.deepEqual(messageBlocks.map((block) => block.message.id), ["user-1", "assistant-1"]);
+  assert.deepEqual(messageBlocks.map((block) => block.displayKind), ["markdown", "markdown"]);
 });
 
 test("buildConversationDisplayBlocks strips serialized tool-call payloads in chronological mode", () => {
@@ -190,10 +217,14 @@ test("buildConversationDisplayBlocks strips serialized tool-call payloads in chr
     "chronological",
   );
 
+  const toolGroups = blocks.filter((block) => block.type === "tool_group");
+  assert.equal(toolGroups.length, 1);
+  assert.deepEqual(toolGroups[0]?.thinkingMessages.map((item) => item.id), ["assistant-answer"]);
+
   const messageBlocks = blocks.filter((block) => block.type === "message");
   assert.deepEqual(messageBlocks.map((block) => block.message.id), ["assistant-answer"]);
   assert.equal(messageBlocks[0]?.message.text, "完成 done");
-  assert.equal(messageBlocks[0]?.message.thinking, "先读文件");
+  assert.equal(messageBlocks[0]?.message.thinking, undefined);
 });
 
 test("buildConversationDisplayBlocks merges thinking and subagent runs into one process group", () => {

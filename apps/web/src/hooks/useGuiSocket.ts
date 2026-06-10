@@ -103,9 +103,7 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
         if (!isCurrentSocket()) return;
         try {
           const event = JSON.parse(message.data as string) as ServerEvent;
-          if (event.type === "gui.event") {
-            lastGuiEventIdRef.current = Math.max(lastGuiEventIdRef.current, event.event.id);
-          }
+          lastGuiEventIdRef.current = replayCursorAfterServerEvent(lastGuiEventIdRef.current, event);
           onEventRef.current(event);
         } catch (error) {
           onErrorRef.current((error as Error).message || "WebSocket 消息解析失败");
@@ -174,6 +172,13 @@ function reconnectDelayMs(attempt: number): number {
   const exponential = RECONNECT_BASE_DELAY_MS * 2 ** Math.min(attempt, 4);
   const jitter = Math.floor(Math.random() * 350);
   return Math.min(RECONNECT_MAX_DELAY_MS, exponential + jitter);
+}
+
+export function replayCursorAfterServerEvent(currentEventId: number, event: ServerEvent): number {
+  if (event.type === "hello" && currentEventId > event.lastEventId) return event.lastEventId;
+  if (event.type === "gui.event") return Math.max(currentEventId, event.event.id);
+  if (event.type === "event.replay.gap") return event.lastEventId;
+  return currentEventId;
 }
 
 export function wsUrl(sinceEventId = 0): string {

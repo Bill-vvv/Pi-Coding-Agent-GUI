@@ -33,7 +33,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({ text, streaming =
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[
-          [rehypeHighlight, { ignoreMissing: true }],
+          [rehypeHighlight, { ignoreMissing: true, plainText: ["text", "txt", "plain", "plaintext"] }],
           [rehypeSanitize, markdownSanitizeSchema],
         ]}
         components={markdownComponents}

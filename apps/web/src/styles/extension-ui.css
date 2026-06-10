@@ -21,6 +21,11 @@
   padding: 0.16rem 0.5rem;
 }
 
+.extension-ui-status-chip.is-goal {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 36%, var(--color-border-subtle));
+  color: var(--color-text-primary);
+}
+
 .extension-ui-widget-stack {
   display: flex;
   flex-direction: column;
@@ -46,8 +51,39 @@
   white-space: nowrap;
 }
 
+.extension-ui-goal-widget {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 28%, var(--color-border-subtle));
+  background: var(--color-surface-input);
+}
+
+.extension-ui-goal-widget.status-paused {
+  border-color: color-mix(in srgb, var(--color-warning-text) 32%, var(--color-border-subtle));
+}
+
+.extension-ui-goal-widget.status-done {
+  border-color: color-mix(in srgb, var(--color-status-success) 32%, var(--color-border-subtle));
+}
+
+.extension-ui-goal-title,
+.extension-ui-goal-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extension-ui-goal-title {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.extension-ui-goal-detail {
+  color: var(--color-text-muted);
+}
+
 @media (max-width: 720px) {
   .extension-ui-status-strip {
     max-width: 34vw;
   }
+
 }

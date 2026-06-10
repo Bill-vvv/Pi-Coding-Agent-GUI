@@ -169,6 +169,34 @@ test("normalizePiPayload converts message lifecycle events", () => {
   ]);
 });
 
+test("normalizePiPayload surfaces provider transport diagnostics on assistant errors", () => {
+  const events = normalizePiPayload({
+    type: "message_end",
+    message: {
+      id: "assistant-1",
+      role: "assistant",
+      content: [],
+      timestamp: 100,
+      errorMessage: "Codex SSE response headers timed out after 10000ms",
+      diagnostics: [
+        {
+          type: "provider_transport_failure",
+          error: { message: "WebSocket closed 1009 message too big", code: 1009, stack: "verbose stack omitted by normalizer" },
+          details: { configuredTransport: "websocket-cached", fallbackTransport: "sse", phase: "before_message_stream_start", requestBytes: 28_039_159, eventsEmitted: false },
+        },
+      ],
+    },
+  });
+
+  assert.equal(events[0]?.type, "message.finished");
+  assert.match(events[0]?.message.errorMessage ?? "", /Codex SSE response headers timed out/);
+  assert.match(events[0]?.message.errorMessage ?? "", /WebSocket closed 1009 message too big/);
+  assert.match(events[0]?.message.errorMessage ?? "", /request 26\.7 MB/);
+  assert.match(events[0]?.message.errorMessage ?? "", /transport websocket-cached → sse/);
+  assert.match(events[0]?.message.errorMessage ?? "", /no stream events before failure/);
+  assert.doesNotMatch(events[0]?.message.errorMessage ?? "", /verbose stack/);
+});
+
 test("normalizePiPayload converts get_messages snapshots including tools", () => {
   assert.deepEqual(
     normalizePiPayload({

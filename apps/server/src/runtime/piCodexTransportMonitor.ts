@@ -76,6 +76,8 @@ export function shouldEmitCodexTransportSnapshot(previous: CodexTransportSnapsho
   return JSON.stringify(previous) !== JSON.stringify(next);
 }
 
+const CODEX_TRANSPORT_PREFIX = "[pi-gui-codex-transport] ";
+
 export function formatCodexTransportMonitorLine(sessionId: string | undefined, snapshot: CodexTransportSnapshot): string {
   const payload = {
     sessionId: shortenSessionId(sessionId),
@@ -93,7 +95,33 @@ export function formatCodexTransportMonitorLine(sessionId: string | undefined, s
     lastWebSocketError: snapshot.lastWebSocketError,
     sseHeaderTimeouts: snapshot.sseHeaderTimeouts,
   };
-  return `[pi-gui-codex-transport] ${JSON.stringify(payload)}`;
+  return `${CODEX_TRANSPORT_PREFIX}${JSON.stringify(payload)}`;
+}
+
+export function parseCodexTransportMonitorLine(line: string): CodexTransportSnapshot | undefined {
+  if (!line.startsWith(CODEX_TRANSPORT_PREFIX)) return undefined;
+  try {
+    return normalizeCodexTransportStats(JSON.parse(line.slice(CODEX_TRANSPORT_PREFIX.length)));
+  } catch {
+    return undefined;
+  }
+}
+
+export function codexTransportUserErrorFromStderr(chunk: string): string | undefined {
+  for (const line of chunk.split(/\r?\n/)) {
+    const snapshot = parseCodexTransportMonitorLine(line.trim());
+    if (!snapshot || !isUserVisibleTransportFailure(snapshot)) continue;
+    const lastError = snapshot.lastWebSocketError ? ` Last WebSocket error: ${snapshot.lastWebSocketError}.` : "";
+    const sse = snapshot.sseHeaderTimeouts ? ` SSE header timeouts: ${snapshot.sseHeaderTimeouts}.` : "";
+    return [
+      "Provider transport failed while sending this conversation.",
+      "The session likely contains oversized embedded image/base64 context, which can trigger WebSocket 1009 'message too big' and repeated SSE fallback timeouts.",
+      `${lastError}${sse}`.trim(),
+      "Start a new conversation, or sanitize the affected Pi session before resuming it.",
+      "Reduce or remove embedded image payloads before retrying so the GUI/RPC path stays within provider transport limits.",
+    ].filter(Boolean).join(" ");
+  }
+  return undefined;
 }
 
 function contextModelFromContext(context: unknown): unknown {
@@ -121,6 +149,28 @@ function hasNonZeroCounters(snapshot: CodexTransportSnapshot): boolean {
 
 export function isCodexSseHeaderTimeoutText(value: unknown): boolean {
   return typeof value === "string" && /Codex SSE response headers timed out after \d+ms/.test(value);
+}
+
+export function isProviderPayloadTooLargeErrorText(value: unknown): boolean {
+  return typeof value === "string" && /1009|message too big|request body|payload too large/i.test(value);
+}
+
+export function providerPayloadTooLargeUserMessage(errorText: string | undefined): string {
+  const detail = errorText ? ` Provider error: ${sanitizeErrorText(errorText)}.` : "";
+  return [
+    "Provider transport payload is too large; Pi GUI stopped the automatic retry for this turn.",
+    "The same oversized image/base64 context is unlikely to recover by falling back to another transport.",
+    detail.trim(),
+    "Reduce or remove embedded image payloads, use editable file path references where possible, or start a clean conversation before retrying.",
+  ].filter(Boolean).join(" ");
+}
+
+function isUserVisibleTransportFailure(snapshot: CodexTransportSnapshot): boolean {
+  const error = snapshot.lastWebSocketError ?? "";
+  return (
+    isProviderPayloadTooLargeErrorText(error) ||
+    ((snapshot.sseHeaderTimeouts ?? 0) > 0 && (snapshot.websocketFailures > 0 || snapshot.sseFallbacks > 0 || snapshot.websocketFallbackActive))
+  );
 }
 
 function shortenSessionId(sessionId: string | undefined): string | undefined {

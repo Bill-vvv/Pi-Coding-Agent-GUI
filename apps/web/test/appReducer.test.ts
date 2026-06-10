@@ -46,6 +46,49 @@ test("hello selects an available runtime on fresh frontend load", () => {
   assert.equal(state.selectedRuntimeIdByProject["project-1"], "runtime-running");
 });
 
+test("hello stores the current execution host for host-aware session actions", () => {
+  const executionHost = { kind: "wsl" as const, id: "wsl:Ubuntu", label: "WSL (Ubuntu)" };
+  const state = appReducer(initialAppState, {
+    type: "server.event",
+    event: { ...hello([project("project-1")], []), executionHost },
+  });
+
+  assert.deepEqual(state.executionHost, executionHost);
+});
+
+test("event replay gap surfaces a recoverable notice", () => {
+  const state = appReducer(initialAppState, {
+    type: "server.event",
+    event: {
+      type: "event.replay.gap",
+      requestedSinceEventId: 10,
+      firstAvailableEventId: 20,
+      lastEventId: 30,
+      replayedEvents: 11,
+      reason: "pruned",
+    },
+  });
+
+  assert.match(state.notice ?? "", /较早事件已被清理/);
+  assert.match(state.notice ?? "", /最新快照恢复/);
+});
+
+test("event replay stale cursor gap explains snapshot recovery", () => {
+  const state = appReducer(initialAppState, {
+    type: "server.event",
+    event: {
+      type: "event.replay.gap",
+      requestedSinceEventId: 100,
+      lastEventId: 30,
+      replayedEvents: 0,
+      reason: "stale_cursor",
+    },
+  });
+
+  assert.match(state.notice ?? "", /回放游标已过期/);
+  assert.match(state.notice ?? "", /最新快照恢复/);
+});
+
 test("runtime.status selects the new runtime when the active project has no selection", () => {
   const withProject = appReducer(initialAppState, {
     type: "server.event",

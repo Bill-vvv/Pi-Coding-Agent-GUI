@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 
 const MAX_IMPORT_FILE_BYTES = 100 * 1024 * 1024;
+const MAX_SAFE_IMAGE_IMPORT_FILE_BYTES = 6 * 1024 * 1024;
 const DEFAULT_IMPORT_FILE_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_IMPORT_DIR_MAX_BYTES = 512 * 1024 * 1024;
 
@@ -21,11 +22,13 @@ export async function registerImportRoutes(fastify: FastifyInstance): Promise<vo
       throw new Error("Expected application/octet-stream file body");
     }
 
+    const name = sanitizeImportFileName(typeof query.name === "string" ? query.name : "dropped-file");
+    assertSafeImportedFile(name, body);
+
     const importDir = importDirectory();
     await mkdir(importDir, { recursive: true });
     await cleanupImportDirectory(importDir, { now: Date.now() });
 
-    const name = sanitizeImportFileName(typeof query.name === "string" ? query.name : "dropped-file");
     const path = join(importDir, `${Date.now()}-${randomUUID()}-${name}`);
     await writeFile(path, body);
     await cleanupImportDirectory(importDir, { now: Date.now(), preservePath: path });
@@ -82,6 +85,25 @@ function sanitizeImportFileName(name: string): string {
   const normalized = name.normalize("NFC").replace(/[\\/\0\r\n\t]/g, "_").trim();
   const withoutControlChars = normalized.replace(/[\u0000-\u001f\u007f]/g, "_");
   return withoutControlChars.slice(0, 160) || "dropped-file";
+}
+
+function assertSafeImportedFile(name: string, body: Buffer): void {
+  if (!isRasterImageImportName(name) || body.length <= MAX_SAFE_IMAGE_IMPORT_FILE_BYTES) return;
+  const error = new Error(
+    `Image import is too large (${formatBytes(body.length)}). High-resolution image batches can be resent as embedded base64 context and trigger WebSocket 1009/message too big; compress, reduce resolution, split the batch, or use a file path reference before sending.`,
+  );
+  (error as Error & { statusCode?: number }).statusCode = 413;
+  throw error;
+}
+
+function isRasterImageImportName(name: string): boolean {
+  return /\.(?:png|jpe?g|webp|gif|bmp|tiff?)$/i.test(name);
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${Math.floor(bytes)} B`;
 }
 
 type ImportDirectoryFile = {

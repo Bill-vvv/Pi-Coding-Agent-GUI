@@ -1,4 +1,4 @@
-import type { ConversationContextUsage } from "@pi-gui/shared";
+import type { ConversationContextUsage, ConversationToolDetails } from "@pi-gui/shared";
 
 export type NormalizedMessageRole = "user" | "assistant";
 export type NormalizedConversationRole = NormalizedMessageRole | "tool" | "error";
@@ -20,6 +20,7 @@ export type NormalizedSnapshotMessage = {
   title?: string;
   timestamp: number;
   isStreaming?: boolean;
+  toolDetails?: ConversationToolDetails;
 };
 
 export type NormalizedTool = {
@@ -28,6 +29,7 @@ export type NormalizedTool = {
   text: string;
   timestamp: number;
   isError?: boolean;
+  toolDetails?: ConversationToolDetails;
 };
 
 export type NormalizedConversationEvent =

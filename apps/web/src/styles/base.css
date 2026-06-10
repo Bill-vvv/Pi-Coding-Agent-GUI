@@ -45,6 +45,10 @@
   --color-surface-subtle-strong: rgb(255 255 255 / 7%);
   --color-code-bg: rgb(13 13 13 / 56%);
   --color-code-header-bg: rgb(255 255 255 / 4%);
+  --color-composer-panel-bg: var(--color-surface-panel);
+  --color-composer-input-bg: var(--color-surface-input);
+  --color-inline-code-bg: var(--color-surface-subtle-strong);
+  --color-inline-code-border: var(--color-border-subtle);
   --color-text-primary: #f1eee8;
   --color-text-body: #f0ece4;
   --color-text-soft: #c9c3b8;
@@ -85,7 +89,6 @@
   --color-drag-indicator-shadow: color-mix(in srgb, var(--color-accent-primary) 34%, transparent);
   --color-overlay: rgb(18 18 17 / 72%);
   --color-extension-backdrop: rgb(0 0 0 / 34%);
-  --color-logo-shadow: rgb(0 0 0 / 18%);
   --color-scrollbar-track: transparent;
   --color-scrollbar-thumb: rgb(181 170 156 / 28%);
   --color-scrollbar-thumb-hover: rgb(181 170 156 / 40%);

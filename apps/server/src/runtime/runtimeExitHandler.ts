@@ -46,6 +46,10 @@ export function handleRuntimeExit({
   if (status === "crashed") managed.projection.appendLog("error", JSON.stringify(exitPayload, null, 2), "runtime crashed");
   db.setConversationBusy(runtimeId, managed.runtime.projectId, false);
   broadcast({ type: "conversation.busy", runtimeId, projectId: managed.runtime.projectId, busy: false });
+  const reasonText = status === "crashed" ? "运行已崩溃，工具未返回结果。" : "运行已停止，工具未返回结果。";
+  for (const message of db.markStreamingConversationMessagesInterrupted(runtimeId, managed.runtime.projectId, reasonText)) {
+    broadcast({ type: "conversation.message", message });
+  }
   liveState.deleteRuntime(runtimeId);
   events.publishRuntimeStatus(managed.runtime);
   runtimes.delete(runtimeId);

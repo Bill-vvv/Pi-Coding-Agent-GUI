@@ -1,6 +1,12 @@
 import { isServiceTier, type ServiceTier } from "@pi-gui/shared";
 import { readFileSync } from "node:fs";
 
+// Temporary provider shim injected by Pi GUI at runtime. It adapts GUI
+// responseMode metadata into provider request payloads without storing
+// credentials or mutating Pi/provider configuration files.
+// Temporary provider shim owned by Pi GUI until Pi/provider layers expose a
+// first-class response-mode/service-tier contract. It reads only a runtime-local
+// config file supplied via launch env and fails open when absent or invalid.
 function readServiceTier(): ServiceTier | undefined {
   const filePath = process.env.PI_GUI_SERVICE_TIER_FILE;
   if (!filePath) return undefined;
@@ -13,7 +19,11 @@ function readServiceTier(): ServiceTier | undefined {
   }
 }
 
+// Provider capability detection is intentionally a best-effort adapter hint;
+// Pi/provider layers remain the semantic owner of request support.
 function isOpenAIServiceTierPayload(payload: unknown, context: unknown): payload is Record<string, unknown> {
+  // Provider detection is an adapter heuristic for this shim only; it must not
+  // become GUI source-of-truth for model/provider capability validation.
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
 
   const model = contextModelFromContext(context);

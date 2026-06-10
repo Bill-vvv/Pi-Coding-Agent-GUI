@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { parseSshProjectCwd, remoteCdCommand, shellQuote } from "../services/sshProjectService.js";
 import { LfJsonlParser } from "./jsonlFraming.js";
+import { applyPiExtensionIntegrationEnv, remotePiExtensionIntegrationEnvExports } from "./piExtensionIntegrationEnv.js";
 
 type PiRpcClientEvents = {
   event: [payload: unknown];
@@ -35,7 +36,16 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
 
   constructor(
     private readonly cwd: string,
-    private readonly options: { model?: string; thinkingLevel?: string; serviceTierConfigFile?: string; session?: string; extensionPaths?: string[] } = {},
+    private readonly options: {
+      model?: string;
+      thinkingLevel?: string;
+      serviceTierConfigFile?: string;
+      session?: string;
+      extensionPaths?: string[];
+      disableExtensionDiscovery?: boolean;
+      interactivePromptsEnabled?: boolean;
+      codexTransportMonitorEnabled?: boolean;
+    } = {},
   ) {
     super();
   }
@@ -64,6 +74,9 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
     if (this.options.thinkingLevel) {
       args.push("--thinking", this.options.thinkingLevel);
     }
+    if (this.options.disableExtensionDiscovery) {
+      args.push("--no-extensions");
+    }
     // Internal GUI extensions are local files. They cannot be passed to a remote
     // Pi runtime unless they are installed on that remote machine too.
     if (!remoteTarget) {
@@ -76,7 +89,11 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
     this.proc = spawn(launch.command, launch.args, {
       cwd: launch.cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: createPiRuntimeEnv(remoteTarget ? undefined : this.options.serviceTierConfigFile),
+      env: createPiRuntimeEnv({
+        serviceTierConfigFile: remoteTarget ? undefined : this.options.serviceTierConfigFile,
+        interactivePromptsEnabled: !remoteTarget && this.options.interactivePromptsEnabled,
+        codexTransportMonitorEnabled: !remoteTarget && this.options.codexTransportMonitorEnabled,
+      }),
     });
 
     this.proc.stdout.on("data", (chunk: Buffer) => this.handleStdout(chunk));
@@ -189,13 +206,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export function createPiRuntimeEnv(serviceTierConfigFile?: string): NodeJS.ProcessEnv {
+export function createPiRuntimeEnv(options: Parameters<typeof applyPiExtensionIntegrationEnv>[1] = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of SESSION_CONTEXT_ENV_KEYS) delete env[key];
-  env.PI_GUI_CODEX_TRANSPORT_MONITOR ??= "1";
-  env.PI_GUI_ASK_BATCH_DIALOG = "1";
-  if (serviceTierConfigFile) env.PI_GUI_SERVICE_TIER_FILE = serviceTierConfigFile;
-  return env;
+  return applyPiExtensionIntegrationEnv(env, options);
 }
 
 function normalizeServiceTier(serviceTier: unknown): ServiceTier | undefined {
@@ -210,7 +224,7 @@ function remotePiRpcLaunch(target: RemoteLaunchTarget, piArgs: string[]): { comm
   const script = [
     "set -e",
     remoteCdCommand(target.remoteCwd),
-    "export PI_GUI_ASK_BATCH_DIALOG=1",
+    ...remotePiExtensionIntegrationEnvExports(),
     "command -v pi >/dev/null 2>&1 || { echo 'pi-gui: remote command not found: pi' >&2; exit 127; }",
     `exec pi ${piArgs.map(shellQuote).join(" ")}`,
   ].join("\n");
