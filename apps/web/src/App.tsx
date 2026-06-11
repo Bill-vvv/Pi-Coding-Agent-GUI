@@ -11,7 +11,6 @@ import { ScopedModelsPanel } from "./components/ScopedModelsPanel";
 import { SessionTreeForkPanel } from "./components/SessionTreeForkPanel";
 import { RewindPanel } from "./components/RewindPanel";
 import { RuntimeRecoveryPanel } from "./components/RuntimeRecoveryPanel";
-import { WorkbenchContextStrip } from "./components/WorkbenchContextStrip";
 import { WorkbenchHome } from "./components/WorkbenchHome";
 
 import { useActiveRuntimeView } from "./hooks/useActiveRuntimeView";
@@ -670,15 +669,6 @@ export function App() {
       ) : null}
 
       <section ref={mainChatRef} className={`main-chat ${settingsOpen ? "settings-mode" : ""}`}>
-        <WorkbenchContextStrip
-          connection={workbenchConnection}
-          executionHost={executionHost}
-          backendEndpoint={runtimeConfig.apiBaseUrl}
-          selectedProject={selectedProject}
-          activeRuntime={activeRuntime}
-          activeRuntimeIsBusy={activeRuntimeIsBusy}
-          waitingForInput={Boolean(activeRuntime && extensionUiDialog?.runtimeId === activeRuntime.id)}
-        />
         {settingsOpen ? (
           <Suspense fallback={<MainSurfaceFallback />}>
             <SettingsPanel

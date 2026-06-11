@@ -29,11 +29,11 @@ For side-by-side development, use isolated stable/dev instances:
 # Stable dogfood instance: 8787 + 5173, data .pi-gui
 npm run dev:stable
 
-# Feature sandbox instance: 8877 + 5273, data .pi-gui-dev
-npm run dev:sandbox
+# Dev instance: 8877 + 5273, data .pi-gui-dev
+npm run dev:dev
 ```
 
-Background restart/status helpers are also available: `npm run dev:stable:restart`, `npm run dev:sandbox:restart`, `npm run dev:stable:status`, and `npm run dev:sandbox:status`.
+Background restart/status helpers are also available: `npm run dev:stable:restart`, `npm run dev:dev:restart`, `npm run dev:stable:status`, and `npm run dev:dev:status`.
 
 Desktop GUI development mirrors the same split on Windows + WSL:
 
