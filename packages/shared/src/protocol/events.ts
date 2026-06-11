@@ -6,6 +6,7 @@ import type {
   ExtensionUiRequest,
   GuiEvent,
   GuiSession,
+  GitRepositoryStatus,
   Project,
   RewindCheckpointOperation,
   RewindCheckpointPreview,
@@ -24,6 +25,8 @@ import type { CommandResultEvent } from "./diagnostics.js";
 import type { ReplayServerEvent } from "./replay.js";
 
 export type ProjectServerEvent = { type: "project.list"; projects: Project[] } | { type: "project.created"; project: Project };
+
+export type GitServerEvent = { type: "git.status"; status: GitRepositoryStatus };
 
 export type SessionServerEvent =
   | { type: "session.list"; sessions: GuiSession[]; projectId?: string; hasMore?: boolean; nextCursor?: string; cursor?: string }
@@ -69,6 +72,7 @@ export type ServerEvent =
   | ReplayServerEvent
   | CommandResultEvent
   | ProjectServerEvent
+  | GitServerEvent
   | SessionServerEvent
   | { type: "settings.updated"; settings: AppSettings }
   | RuntimeServerEvent

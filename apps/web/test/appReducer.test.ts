@@ -185,6 +185,25 @@ test("checkpoint events update checkpoint reducer state", () => {
   assert.match(finalState.notice ?? "", /已清理 Rewind 存储/);
 });
 
+test("git.status updates reducer state by project", () => {
+  const state = appReducer(initialAppState, {
+    type: "server.event",
+    event: {
+      type: "git.status",
+      status: {
+        projectId: "project-1",
+        available: true,
+        branch: "feat/branch-visibility",
+        defaultBranch: "main",
+        changedFiles: 2,
+      },
+    },
+  });
+
+  assert.equal(state.gitStatusByProject["project-1"]?.branch, "feat/branch-visibility");
+  assert.equal(state.gitStatusByProject["project-1"]?.defaultBranch, "main");
+});
+
 test("event replay gap surfaces partial recovery and resync state", () => {
   const state = appReducer(initialAppState, {
     type: "server.event",

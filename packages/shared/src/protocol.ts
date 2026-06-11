@@ -5,6 +5,7 @@ export type {
   CheckpointServerEvent,
   ConversationServerEvent,
   ExtensionUiServerEvent,
+  GitServerEvent,
   ProjectServerEvent,
   RuntimeServerEvent,
   ServerEvent,

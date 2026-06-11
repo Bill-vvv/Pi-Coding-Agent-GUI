@@ -4,6 +4,7 @@ import type {
   ConversationDelta,
   ConversationMessage,
   ExecutionHostRef,
+  GitRepositoryStatus,
   GuiEvent,
   GuiSession,
   RewindCheckpointOperation,
@@ -51,6 +52,7 @@ export type AppState = {
   busyByRuntime: Record<string, boolean>;
   queueByRuntime: Record<string, RuntimeQueue>;
   commandsByRuntime: Record<string, SlashCommand[]>;
+  gitStatusByProject: Record<string, GitRepositoryStatus>;
   extensionUiByRuntime: ExtensionUiChromeByRuntime;
   guiEvents: GuiEvent[];
   sessions: GuiSession[];
@@ -89,6 +91,7 @@ export const initialAppState: AppState = {
   busyByRuntime: {},
   queueByRuntime: {},
   commandsByRuntime: {},
+  gitStatusByProject: {},
   extensionUiByRuntime: {},
   guiEvents: [],
   sessions: [],
@@ -281,6 +284,7 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
       return {
         ...state,
         projects: event.projects,
+        gitStatusByProject: mergeGitStatusFromProjects(state.gitStatusByProject, event.projects),
         selectedProjectId: nextProjectId,
         selectedRuntimeId: nextRuntimeId,
         selectedRuntimeIdByProject: seedSelectedRuntimeMap(nextRuntimeMap, nextProjectId, nextRuntimeId),
@@ -291,8 +295,17 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
         ...state,
         projectCwd: state.projectCwd.trim() === event.project.cwd ? "" : state.projectCwd,
         projects: upsertById(state.projects, event.project),
+        gitStatusByProject: mergeGitStatusFromProjects(state.gitStatusByProject, [event.project]),
         selectedProjectId: event.project.id,
         selectedRuntimeId: undefined,
+      };
+    case "git.status":
+      return {
+        ...state,
+        gitStatusByProject: {
+          ...state.gitStatusByProject,
+          [event.status.projectId]: event.status,
+        },
       };
     case "session.list":
       return { ...state, sessions: mergeSessionList(state.sessions, event.sessions, event.projectId, event.cursor), replayRecovery: undefined };
@@ -477,6 +490,7 @@ function applyProjectsAndRuntimesSnapshot(state: AppState, projects: Project[], 
     ...state,
     projects,
     runtimes,
+    gitStatusByProject: mergeGitStatusFromProjects(state.gitStatusByProject, projects),
     executionHost: executionHost ?? state.executionHost,
     selectedProjectId: nextProjectId,
     selectedRuntimeId: nextRuntimeId,
@@ -494,11 +508,43 @@ function applyProjectsSnapshot(state: AppState, projects: Project[], executionHo
   return {
     ...state,
     projects,
+    gitStatusByProject: mergeGitStatusFromProjects(state.gitStatusByProject, projects),
     executionHost: executionHost ?? state.executionHost,
     selectedProjectId: nextProjectId,
     selectedRuntimeId: nextRuntimeId,
     selectedRuntimeIdByProject: seedSelectedRuntimeMap(nextRuntimeMap, nextProjectId, nextRuntimeId),
   };
+}
+
+function gitStatusFromProject(project: Project): GitRepositoryStatus | undefined {
+  if (!project.git) return undefined;
+  return {
+    projectId: project.id,
+    available: project.git.available,
+    root: project.git.root,
+    branch: project.git.branch,
+    head: project.git.head,
+    dirty: project.git.dirty,
+    detached: project.git.detached,
+    upstream: project.git.upstream,
+    ahead: project.git.ahead,
+    behind: project.git.behind,
+    changedFiles: project.git.changedFiles,
+    defaultBranch: project.git.defaultBranch,
+    isDefaultBranch: project.git.isDefaultBranch,
+    error: project.git.error,
+  };
+}
+
+function mergeGitStatusFromProjects(current: Record<string, GitRepositoryStatus>, projects: Project[]): Record<string, GitRepositoryStatus> {
+  let next = current;
+  for (const project of projects) {
+    const status = gitStatusFromProject(project);
+    if (!status) continue;
+    if (next === current) next = { ...current };
+    next[project.id] = status;
+  }
+  return next;
 }
 
 function applyRuntimesSnapshot(state: AppState, runtimes: Runtime[]): AppState {

@@ -19,6 +19,47 @@ export type ExecutionHostRef = {
   label?: string;
 };
 
+export type ProjectGitSummary = {
+  available: boolean;
+  root?: string;
+  branch?: string;
+  head?: string;
+  dirty?: boolean;
+  detached?: boolean;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+  changedFiles?: number;
+  defaultBranch?: string;
+  isDefaultBranch?: boolean;
+  error?: string;
+};
+
+export type GitBranchSummary = {
+  name: string;
+  current: boolean;
+  default?: boolean;
+  mergedIntoDefault?: boolean;
+};
+
+export type GitRepositoryStatus = {
+  projectId: string;
+  available: boolean;
+  root?: string;
+  branch?: string;
+  head?: string;
+  dirty?: boolean;
+  detached?: boolean;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+  changedFiles?: number;
+  defaultBranch?: string;
+  isDefaultBranch?: boolean;
+  branches?: GitBranchSummary[];
+  error?: string;
+};
+
 export type Project = {
   id: string;
   name: string;
@@ -27,6 +68,7 @@ export type Project = {
   defaultModel?: string;
   defaultRuntimeProfileId?: RuntimeProfileId;
   host?: ExecutionHostRef;
+  git?: ProjectGitSummary;
 };
 
 export type ResolvedPathSource = "linux" | "windows-drive" | "wsl-unc" | "ssh";

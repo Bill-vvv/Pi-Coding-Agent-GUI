@@ -12,6 +12,10 @@ import {
   parseConversationPage,
   parseEventReplay,
   parseExtensionUiRespond,
+  parseGitBranchCreate,
+  parseGitBranchDelete,
+  parseGitBranchSwitch,
+  parseGitStatus,
   parseProjectConfigure,
   parseProjectCreate,
   parseProjectList,
@@ -48,6 +52,14 @@ export function parseClientCommand(value: unknown): ClientCommand {
       return parseProjectCreate(value);
     case "project.configure":
       return parseProjectConfigure(value);
+    case "git.status":
+      return parseGitStatus(value);
+    case "git.branch.create":
+      return parseGitBranchCreate(value);
+    case "git.branch.switch":
+      return parseGitBranchSwitch(value);
+    case "git.branch.delete":
+      return parseGitBranchDelete(value);
     case "session.list":
       return parseSessionList(value);
     case "session.resume":
