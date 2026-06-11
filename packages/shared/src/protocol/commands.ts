@@ -7,6 +7,10 @@ export type ClientCommand =
   | { type: "project.list"; requestId?: string }
   | { type: "project.create"; requestId?: string; name?: string; cwd: string; defaultModel?: string; defaultRuntimeProfileId?: RuntimeProfileId }
   | { type: "project.configure"; requestId?: string; projectId: string; defaultRuntimeProfileId?: RuntimeProfileId | null }
+  | { type: "git.status"; requestId?: string; projectId: string }
+  | { type: "git.branch.create"; requestId?: string; projectId: string; name: string }
+  | { type: "git.branch.switch"; requestId?: string; projectId: string; branch: string }
+  | { type: "git.branch.delete"; requestId?: string; projectId: string; branch: string }
   | { type: "session.list"; requestId?: string; projectId?: string; limit?: number; cursor?: string }
   | { type: "session.resume"; requestId?: string; sessionId: string; model?: string; thinkingLevel?: ThinkingLevel; responseMode?: ResponseMode; runtimeProfileId?: RuntimeProfileId }
   | { type: "settings.get"; requestId?: string }

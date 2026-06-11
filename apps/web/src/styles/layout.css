@@ -79,3 +79,203 @@
   position: relative;
   border-radius: 18px;
 }
+
+.selected-project-context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  min-width: 0;
+  padding: 0.95rem var(--chat-frame-side-space) 0.3rem;
+  color: var(--color-text-muted);
+}
+
+.selected-project-context-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.selected-project-context-main strong,
+.selected-project-context-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-project-context-main strong {
+  color: var(--color-text-primary);
+  font-size: var(--text-body);
+  line-height: 1.2;
+}
+
+.selected-project-context-main small {
+  font-size: var(--text-meta);
+}
+
+.selected-project-branch-chip {
+  flex: none;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  padding: 0.2rem 0.55rem;
+  color: var(--color-text-muted);
+  background: rgb(255 255 255 / 0.03);
+  font: inherit;
+  font-size: var(--text-meta);
+  line-height: 1.2;
+}
+
+button.selected-project-branch-chip {
+  appearance: none;
+}
+
+.selected-project-branch-chip.tone-default {
+  color: var(--color-text-primary);
+}
+
+.selected-project-branch-chip.tone-working {
+  color: var(--color-status-success);
+  border-color: color-mix(in srgb, var(--color-status-success) 32%, var(--color-border-subtle));
+}
+
+.selected-project-branch-chip.tone-warning {
+  color: var(--color-status-warning);
+  border-color: color-mix(in srgb, var(--color-status-warning) 32%, var(--color-border-subtle));
+}
+
+.selected-project-branch-chip.tone-neutral {
+  color: var(--color-text-muted);
+}
+
+button.selected-project-branch-chip.is-clickable {
+  cursor: pointer;
+}
+
+button.selected-project-branch-chip.is-clickable:hover,
+button.selected-project-branch-chip.is-clickable:focus-visible {
+  background: var(--color-hover-subtle);
+  border-color: var(--color-border-strong);
+}
+
+.branch-guard-dialog {
+  width: min(30rem, calc(100vw - 2rem));
+}
+
+.branch-guard-type-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.9rem;
+}
+
+.branch-guard-type {
+  border-radius: var(--radius-pill);
+}
+
+.branch-guard-type.selected {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
+}
+
+.branch-guard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.85rem;
+}
+
+.branch-guard-field small,
+.branch-guard-error {
+  color: var(--color-text-muted);
+  font-size: var(--text-meta);
+}
+
+.branch-guard-error {
+  color: var(--color-status-error);
+}
+
+.branch-workflow-panel {
+  min-width: 0;
+  overflow: auto;
+  padding: 1.2rem var(--chat-frame-side-space) 1.4rem;
+}
+
+.branch-workflow-header,
+.branch-workflow-summary,
+.branch-workflow-branch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.branch-workflow-header {
+  margin-bottom: 1rem;
+}
+
+.branch-workflow-header h2,
+.branch-workflow-header p,
+.branch-workflow-card h3,
+.branch-workflow-card p,
+.branch-workflow-card small {
+  margin: 0;
+}
+
+.branch-workflow-header p,
+.branch-workflow-summary,
+.branch-workflow-card small,
+.branch-workflow-branch-row small,
+.branch-workflow-empty {
+  color: var(--color-text-muted);
+}
+
+.branch-workflow-header-actions,
+.branch-workflow-branch-actions {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.branch-workflow-summary {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  margin-bottom: 1rem;
+  font-size: var(--text-control);
+}
+
+.branch-workflow-summary span,
+.branch-workflow-branch-row small {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  padding: 0.16rem 0.42rem;
+}
+
+.branch-workflow-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.95rem 1rem;
+  margin-bottom: 0.9rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-panel);
+  background: rgb(255 255 255 / 0.03);
+}
+
+.branch-workflow-branch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.branch-workflow-branch-row {
+  align-items: flex-start;
+}
+
+.branch-workflow-branch-row > div:first-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+}

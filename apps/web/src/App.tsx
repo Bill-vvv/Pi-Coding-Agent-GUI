@@ -1,8 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { AppSettings } from "@pi-gui/shared";
+import type { AppSettings, ServerEvent } from "@pi-gui/shared";
 import { AppModals } from "./components/AppModals";
+import { BranchWorkflowPanel } from "./components/BranchWorkflowPanel";
 import { ChatView } from "./components/ChatView";
 import { Composer } from "./components/Composer";
+import { DefaultBranchGuardDialog } from "./components/DefaultBranchGuardDialog";
 import { DesktopWindowChrome } from "./components/DesktopWindowChrome";
 import { isExtensionUiDialogRequest } from "./components/ExtensionUiDialog";
 import { Sidebar } from "./components/Sidebar";
@@ -11,6 +13,7 @@ import { ScopedModelsPanel } from "./components/ScopedModelsPanel";
 import { SessionTreeForkPanel } from "./components/SessionTreeForkPanel";
 import { RewindPanel } from "./components/RewindPanel";
 import { RuntimeRecoveryPanel } from "./components/RuntimeRecoveryPanel";
+import { SelectedProjectBranchChip } from "./components/SelectedProjectBranchChip";
 import { WorkbenchHome } from "./components/WorkbenchHome";
 
 import { useActiveRuntimeView } from "./hooks/useActiveRuntimeView";
@@ -37,10 +40,14 @@ import { useSessionRestoreActions } from "./hooks/useSessionRestoreActions";
 import { useSessionTreeForkControls } from "./hooks/useSessionTreeForkControls";
 import { useSubagentDrawer } from "./hooks/useSubagentDrawer";
 import { useUiPreferences } from "./hooks/useUiPreferences";
+import type { BranchType } from "./domain/branchNaming";
+import { generateBranchName } from "./domain/branchNaming";
 import { shouldAutoArchiveBlankRuntime } from "./domain/blankRuntimeCleanup";
 import { isConnectionReady } from "./domain/connection";
 import { desktopShellBridge } from "./domain/desktopShell";
 import { latestVisiblePendingCommandForTarget } from "./domain/pendingCommands";
+import { projectGitChipModel } from "./domain/projectGitDisplay";
+import { createRequestId } from "./domain/requestId";
 import { piGuiRuntimeConfig } from "./domain/runtimeConfig";
 import { isRecoverableRuntimeInterruption } from "./domain/runtimeRecovery";
 import { performanceFixtureEvents } from "./domain/performanceFixtures";
@@ -67,6 +74,8 @@ type LastUserMessageScrollRequest = {
 
 type LastUserMessageScrollAction = { type: "request"; runtimeId: string } | { type: "clear" } | { type: "handled"; sequence: number };
 
+type BranchLifecycleAction = { kind: "startRuntime"; projectId: string } | { kind: "submitPrompt"; streamingBehavior?: "steer" | "followUp" };
+
 function lastUserMessageScrollRequestReducer(current: LastUserMessageScrollRequest, action: LastUserMessageScrollAction): LastUserMessageScrollRequest {
   if (action.type === "clear") return current.runtimeId ? { sequence: current.sequence } : current;
   if (action.type === "handled") return current.runtimeId && current.sequence === action.sequence ? { sequence: current.sequence } : current;
@@ -89,6 +98,16 @@ export function App() {
   const [providerAuthAction, setProviderAuthAction] = useState<"login" | "logout" | undefined>();
   const [scopedModelsOpen, setScopedModelsOpen] = useState(false);
   const [rewindOpen, setRewindOpen] = useState(false);
+  const [branchPanelOpen, setBranchPanelOpen] = useState(false);
+  const [branchPanelLoading, setBranchPanelLoading] = useState(false);
+  const [branchPanelMutating, setBranchPanelMutating] = useState(false);
+  const [defaultBranchGuardAction, setDefaultBranchGuardAction] = useState<BranchLifecycleAction | undefined>();
+  const [defaultBranchType, setDefaultBranchType] = useState<BranchType>("feat");
+  const [defaultBranchTitle, setDefaultBranchTitle] = useState("");
+  const [defaultBranchName, setDefaultBranchName] = useState("");
+  const [defaultBranchNameEdited, setDefaultBranchNameEdited] = useState(false);
+  const [defaultBranchError, setDefaultBranchError] = useState<string | undefined>();
+  const [creatingGuardBranch, setCreatingGuardBranch] = useState(false);
   const scopedModels = useMemo(() => modelsInGuiScope(models, uiPreferences.guiScopedModels), [models, uiPreferences.guiScopedModels]);
   const {
     compactSidebarExpanded,
@@ -151,6 +170,7 @@ export function App() {
     checkpointJumpsByProject,
     checkpointHealthByProject,
     checkpointGcResultsByProject,
+    gitStatusByProject,
     replayRecovery,
   } = state;
 
@@ -207,6 +227,21 @@ export function App() {
     activeRuntimeCommands,
     activeRuntimeIsBusy,
   } = useActiveRuntimeView(state, models);
+  const pendingBranchGuardRequestRef = useRef<{ requestId: string; action: BranchLifecycleAction } | undefined>(undefined);
+  const currentGitStatus = selectedProject ? gitStatusByProject[selectedProject.id] : undefined;
+  const selectedProjectWithLatestGit = useMemo(() => {
+    if (!selectedProject || !currentGitStatus) return selectedProject;
+    const { projectId: _projectId, branches: _branches, ...git } = currentGitStatus;
+    return { ...selectedProject, git };
+  }, [currentGitStatus, selectedProject]);
+  const currentProjectBranchLabel = selectedProjectWithLatestGit ? projectGitChipModel(selectedProjectWithLatestGit).label : "default branch";
+  const generatedBranchName = generateBranchName(defaultBranchType, defaultBranchTitle);
+
+  useEffect(() => {
+    if (!defaultBranchGuardAction || defaultBranchNameEdited) return;
+    setDefaultBranchName(generatedBranchName);
+  }, [defaultBranchGuardAction, defaultBranchNameEdited, generatedBranchName]);
+
   const workbenchConnection = connection === "ready" && replayRecovery ? "degraded" : connection;
   const composerPendingCommand = latestVisiblePendingCommandForTarget(pendingCommands, { runtimeId: activeRuntime?.id, projectId: selectedProject?.id });
   const { markRuntimeConversationStale } = useConversationPrefetch({
@@ -376,6 +411,105 @@ export function App() {
   );
   const activeRuntimeExtensionUi = activeRuntime ? extensionUiByRuntime[activeRuntime.id] : undefined;
   const activeRuntimeEvents = useMemo(() => (activeRuntime ? guiEvents.filter((event) => event.runtimeId === activeRuntime.id) : []), [activeRuntime, guiEvents]);
+  const shouldGuardSelectedProject = useCallback(() => {
+    if (!selectedProject) return false;
+    const available = currentGitStatus?.available ?? selectedProject.git?.available;
+    const isDefaultBranch = currentGitStatus?.isDefaultBranch ?? selectedProject.git?.isDefaultBranch;
+    return available === true && isDefaultBranch === true;
+  }, [currentGitStatus?.available, currentGitStatus?.isDefaultBranch, selectedProject]);
+  const closeDefaultBranchGuard = useCallback(() => {
+    pendingBranchGuardRequestRef.current = undefined;
+    setDefaultBranchGuardAction(undefined);
+    setDefaultBranchType("feat");
+    setDefaultBranchTitle("");
+    setDefaultBranchName("");
+    setDefaultBranchNameEdited(false);
+    setDefaultBranchError(undefined);
+    setCreatingGuardBranch(false);
+  }, []);
+  const openDefaultBranchGuard = useCallback((action: BranchLifecycleAction) => {
+    const suggestedTitle = action.kind === "submitPrompt" ? prompt.trim().slice(0, 72) : "";
+    setDefaultBranchGuardAction(action);
+    setDefaultBranchType("feat");
+    setDefaultBranchTitle(suggestedTitle);
+    setDefaultBranchName(generateBranchName("feat", suggestedTitle));
+    setDefaultBranchNameEdited(false);
+    setDefaultBranchError(undefined);
+    setCreatingGuardBranch(false);
+  }, [prompt]);
+  const refreshCurrentProjectGitStatus = useCallback(() => {
+    if (!selectedProject) return;
+    setBranchPanelLoading(true);
+    send({ type: "git.status", projectId: selectedProject.id });
+  }, [selectedProject, send]);
+  const executeBranchLifecycleAction = useCallback((action: BranchLifecycleAction, options?: { bypassGuard?: boolean }) => {
+    if (!options?.bypassGuard && shouldGuardSelectedProject()) {
+      openDefaultBranchGuard(action);
+      return;
+    }
+    if (action.kind === "submitPrompt") {
+      if (prompt.trim()) requestConversationScrollToBottom();
+      submitPrompt(action.streamingBehavior);
+      return;
+    }
+    updateLastUserMessageScrollRequest({ type: "clear" });
+    closeSurfaces({ closeSettings, closeSessionHistory });
+    setBranchPanelOpen(false);
+    startRuntimeForSidebarProject(action.projectId);
+    requestComposerFocus();
+  }, [closeSessionHistory, closeSettings, closeSurfaces, openDefaultBranchGuard, prompt, requestComposerFocus, requestConversationScrollToBottom, shouldGuardSelectedProject, startRuntimeForSidebarProject, submitPrompt]);
+  const createGuardBranchAndContinue = useCallback(() => {
+    if (!selectedProject || !defaultBranchGuardAction) return;
+    const requestId = createRequestId();
+    const branchName = defaultBranchName.trim() || generatedBranchName;
+    pendingBranchGuardRequestRef.current = { requestId, action: defaultBranchGuardAction };
+    setCreatingGuardBranch(true);
+    setDefaultBranchError(undefined);
+    if (!send({ type: "git.branch.create", requestId, projectId: selectedProject.id, name: branchName })) {
+      pendingBranchGuardRequestRef.current = undefined;
+      setCreatingGuardBranch(false);
+      setDefaultBranchError("Unable to send branch creation command");
+    }
+  }, [defaultBranchGuardAction, defaultBranchName, generatedBranchName, selectedProject, send]);
+  const switchSelectedProjectBranch = useCallback((branch: string) => {
+    if (!selectedProject) return;
+    setBranchPanelMutating(true);
+    send({ type: "git.branch.switch", requestId: createRequestId(), projectId: selectedProject.id, branch });
+  }, [selectedProject, send]);
+  const deleteSelectedProjectBranch = useCallback((branch: string) => {
+    if (!selectedProject) return;
+    const confirmed = window.confirm(`Delete local merged branch "${branch}"? This will not delete any remote branch.`);
+    if (!confirmed) return;
+    setBranchPanelMutating(true);
+    send({ type: "git.branch.delete", requestId: createRequestId(), projectId: selectedProject.id, branch });
+  }, [selectedProject, send]);
+  const handleBranchLifecycleServerEvent = useCallback((event: ServerEvent) => {
+    if (event.type === "git.status") {
+      if (selectedProject && event.status.projectId === selectedProject.id) {
+        setBranchPanelLoading(false);
+        setBranchPanelMutating(false);
+      }
+      return;
+    }
+    if (event.type !== "command.result") return;
+    if (event.command === "git.status") setBranchPanelLoading(false);
+    if (event.command === "git.branch.switch" || event.command === "git.branch.delete") setBranchPanelMutating(false);
+    const pending = pendingBranchGuardRequestRef.current;
+    if (!pending || event.requestId !== pending.requestId) return;
+    if (!event.success) {
+      pendingBranchGuardRequestRef.current = undefined;
+      setCreatingGuardBranch(false);
+      setDefaultBranchError(event.error ?? "Failed to create branch");
+      return;
+    }
+    pendingBranchGuardRequestRef.current = undefined;
+    closeDefaultBranchGuard();
+    executeBranchLifecycleAction(pending.action, { bypassGuard: true });
+  }, [closeDefaultBranchGuard, executeBranchLifecycleAction, selectedProject]);
+  const handlePendingAndBranchServerEvent = useCallback((event: ServerEvent) => {
+    handlePendingCommandServerEvent(event);
+    handleBranchLifecycleServerEvent(event);
+  }, [handleBranchLifecycleServerEvent, handlePendingCommandServerEvent]);
   const modalExtensionUiRequest = isExtensionUiDialogRequest(extensionUiDialog?.request) ? extensionUiDialog.request : undefined;
   const {
     selectedSubagentRun,
@@ -438,9 +572,11 @@ export function App() {
     setProviderAuthAction(undefined);
     setScopedModelsOpen(false);
     setRewindOpen(false);
+    setBranchPanelOpen(false);
+    closeDefaultBranchGuard();
     pathPicker.closePicker();
     if (extensionUiDialog) sendExtensionUiResponse({ cancelled: true });
-  }, [closeModelPicker, closeRuntimeLogs, closeSessionHistory, closeSettings, closeSessionTreeForkControls, closeSubagentDrawer, closeSurfaces, extensionUiDialog, pathPicker, sendExtensionUiResponse]);
+  }, [closeDefaultBranchGuard, closeModelPicker, closeRuntimeLogs, closeSessionHistory, closeSettings, closeSessionTreeForkControls, closeSubagentDrawer, closeSurfaces, extensionUiDialog, pathPicker, sendExtensionUiResponse]);
   const openSettingsShortcut = useCallback(() => {
     setSettingsFocusTab("ui");
     setSettingsFocusCapabilityId(undefined);
@@ -453,7 +589,7 @@ export function App() {
   }, [setSettingsOpen]);
   const commandMenuOpenSignal = useCommandMenuHotkey({ onOpenCommandMenu: openCommandMenuShortcut, onOpenSettings: openSettingsShortcut, keybindings: uiPreferences.keybindings });
 
-  const composerSurfaceVisible = !settingsOpen && !sessionHistoryProjectId && !usageOverviewOpen && !sessionTreeForkState.open && !providerAuthAction && !scopedModelsOpen && !rewindOpen && Boolean(activeRuntime);
+  const composerSurfaceVisible = !settingsOpen && !sessionHistoryProjectId && !usageOverviewOpen && !sessionTreeForkState.open && !providerAuthAction && !scopedModelsOpen && !rewindOpen && !branchPanelOpen && Boolean(activeRuntime);
 
   const closeEscapeSurface = useCallback((): boolean => {
     if (compactSidebarExpanded) {
@@ -500,6 +636,14 @@ export function App() {
       setRewindOpen(false);
       return true;
     }
+    if (defaultBranchGuardAction) {
+      closeDefaultBranchGuard();
+      return true;
+    }
+    if (branchPanelOpen) {
+      setBranchPanelOpen(false);
+      return true;
+    }
     if (usageOverviewOpen) {
       closeUsageOverview();
       return true;
@@ -534,6 +678,9 @@ export function App() {
     sessionTreeForkState.open,
     settingsOpen,
     usageOverviewOpen,
+    branchPanelOpen,
+    defaultBranchGuardAction,
+    closeDefaultBranchGuard,
   ]);
 
   const escapeAbortRuntimeId = activeRuntime && (activeRuntime.status === "running" || activeRuntime.status === "starting") && !activeRuntime.archivedAt ? activeRuntime.id : undefined;
@@ -566,7 +713,7 @@ export function App() {
     handleExtensionUiServerEvent,
     handleComposerCommandServerEvent,
     handleCheckpointServerEvent,
-    handlePendingCommandServerEvent,
+    handlePendingCommandServerEvent: handlePendingAndBranchServerEvent,
   });
 
   useComposerBottomClearance({
@@ -575,6 +722,11 @@ export function App() {
     enabled: composerSurfaceVisible,
     onClearanceChange: requestComposerClearanceFollow,
   });
+
+  useEffect(() => {
+    if (!branchPanelOpen || !selectedProject) return;
+    refreshCurrentProjectGitStatus();
+  }, [branchPanelOpen, refreshCurrentProjectGitStatus, selectedProject]);
 
   const firstActiveConversationMessageId = conversationMessages[0]?.id;
   const loadOlderActiveConversationMessages = useCallback(() => {
@@ -586,9 +738,8 @@ export function App() {
   const dismissOperationError = useCallback((expectedError?: string) => dispatch({ type: "clear.operationError", error: expectedError }), []);
   const dismissNotice = useCallback((expectedNotice?: string) => dispatch({ type: "clear.notice", notice: expectedNotice }), []);
   const submitPromptAndFollowConversation = useCallback((streamingBehavior?: "steer" | "followUp") => {
-    if (prompt.trim()) requestConversationScrollToBottom();
-    submitPrompt(streamingBehavior);
-  }, [prompt, requestConversationScrollToBottom, submitPrompt]);
+    executeBranchLifecycleAction({ kind: "submitPrompt", streamingBehavior });
+  }, [executeBranchLifecycleAction]);
 
   function openUsageOverview() {
     openMainUsageOverview({ closeSettings, closeSessionHistory });
@@ -608,10 +759,7 @@ export function App() {
   }
 
   function startNewRuntimeForProject(projectId: string) {
-    updateLastUserMessageScrollRequest({ type: "clear" });
-    closeSurfaces({ closeSettings, closeSessionHistory });
-    startRuntimeForSidebarProject(projectId);
-    requestComposerFocus();
+    executeBranchLifecycleAction({ kind: "startRuntime", projectId });
   }
 
   function selectRuntimeFromSessionClick(projectId: string, runtimeId: string) {
@@ -670,6 +818,15 @@ export function App() {
       ) : null}
 
       <section ref={mainChatRef} className={`main-chat ${settingsOpen ? "settings-mode" : ""}`}>
+        {selectedProject ? (
+          <div className="selected-project-context-bar">
+            <div className="selected-project-context-main">
+              <strong title={selectedProject.name}>{selectedProject.name}</strong>
+              <small title={selectedProject.cwd}>{selectedProject.cwd}</small>
+            </div>
+            <SelectedProjectBranchChip project={selectedProjectWithLatestGit ?? selectedProject} onClick={() => setBranchPanelOpen(true)} />
+          </div>
+        ) : null}
         {settingsOpen ? (
           <Suspense fallback={<MainSurfaceFallback />}>
             <SettingsPanel
@@ -743,6 +900,17 @@ export function App() {
             onClose={closeSessionTreeForkControls}
             onRefresh={() => openSessionTreeForkControls(sessionTreeForkState.mode)}
             onFork={forkFromMessage}
+          />
+        ) : branchPanelOpen && selectedProject ? (
+          <BranchWorkflowPanel
+            project={selectedProjectWithLatestGit ?? selectedProject}
+            status={currentGitStatus}
+            loading={branchPanelLoading}
+            mutating={branchPanelMutating}
+            onRefresh={refreshCurrentProjectGitStatus}
+            onSwitchBranch={switchSelectedProjectBranch}
+            onDeleteBranch={deleteSelectedProjectBranch}
+            onClose={() => setBranchPanelOpen(false)}
           />
         ) : providerAuthAction ? (
           <ProviderAuthPanel action={providerAuthAction} onClose={() => setProviderAuthAction(undefined)} />
@@ -903,6 +1071,37 @@ export function App() {
           />
         </Suspense>
       ) : null}
+
+      <DefaultBranchGuardDialog
+        open={Boolean(defaultBranchGuardAction && selectedProject)}
+        currentBranchLabel={currentProjectBranchLabel}
+        type={defaultBranchType}
+        title={defaultBranchTitle}
+        branchName={defaultBranchName}
+        generatedBranchName={generatedBranchName}
+        canCreate={Boolean(defaultBranchName.trim() || generatedBranchName.trim())}
+        creating={creatingGuardBranch}
+        error={defaultBranchError}
+        onChangeType={(type) => {
+          setDefaultBranchType(type);
+          if (!defaultBranchNameEdited) setDefaultBranchName(generateBranchName(type, defaultBranchTitle));
+        }}
+        onChangeTitle={(title) => {
+          setDefaultBranchTitle(title);
+          if (!defaultBranchNameEdited) setDefaultBranchName(generateBranchName(defaultBranchType, title));
+        }}
+        onChangeBranchName={(name) => {
+          setDefaultBranchNameEdited(true);
+          setDefaultBranchName(name);
+        }}
+        onContinueOnDefault={() => {
+          const action = defaultBranchGuardAction;
+          closeDefaultBranchGuard();
+          if (action) executeBranchLifecycleAction(action, { bypassGuard: true });
+        }}
+        onCreateAndContinue={createGuardBranchAndContinue}
+        onClose={closeDefaultBranchGuard}
+      />
 
       <AppModals
         extensionUiRequest={modalExtensionUiRequest}

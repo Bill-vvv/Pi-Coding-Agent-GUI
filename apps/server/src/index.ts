@@ -15,6 +15,7 @@ import { runtimeConversationBusyEvents } from "./runtime/runtimeConversationView
 import { RuntimeSupervisor } from "./runtime/runtimeSupervisor.js";
 import { isWebSocketRequestAuthorized, redactTokenInUrl, registerApiAuth } from "./services/authService.js";
 import { listPiModels } from "./services/modelService.js";
+import { decorateProjectsWithGitSummary } from "./services/projectGitSummary.js";
 import { readPersistedRemoteAccessConfig, remoteAccessAuthToken, RemoteAccessService } from "./services/remoteAccessService.js";
 import { readServerRuntimeConfig } from "./services/serverConfig.js";
 import { indexKnownPiSessions } from "./services/sessionIndexService.js";
@@ -95,7 +96,7 @@ fastify.get("/api/desktop/ready", async () => ({
   time: Date.now(),
 }));
 
-fastify.get("/api/projects", async () => ({ projects: db.listProjects() }));
+fastify.get("/api/projects", async () => ({ projects: decorateProjectsWithGitSummary(db.listProjects()) }));
 
 fastify.get("/api/models", async () => ({ models: await listPiModels() }));
 
@@ -223,7 +224,7 @@ function buildConnectionBootstrap() {
   const runtimes = supervisor.listRuntimes();
   const childSessionFiles = db.listChildSessionFiles();
   return {
-    projects: db.listProjects(),
+    projects: decorateProjectsWithGitSummary(db.listProjects()),
     runtimes,
     settings: db.getSettings(),
     executionHost: db.getExecutionHost(),

@@ -2,6 +2,7 @@ import type { ClientCommand } from "@pi-gui/shared";
 import type { WsClient } from "../wsHub.js";
 import { handleCheckpointCapture, handleCheckpointGc, handleCheckpointHealth, handleCheckpointJumps, handleCheckpointList, handleCheckpointPreview, handleCheckpointRestore } from "./checkpointCommands.js";
 import { handleConversationOpen, handleConversationPage, handleEventReplay, handleSubagentDetailOpen } from "./conversationCommands.js";
+import { handleGitBranchCreate, handleGitBranchDelete, handleGitBranchSwitch, handleGitStatus } from "./gitCommands.js";
 import { handleProjectConfigure, handleProjectCreate, handleProjectList, handleSessionList, handleSessionResume, handleSettingsGet, handleSettingsUpdate } from "./projectSessionSettingsCommands.js";
 import {
   handleExtensionUiRespond,
@@ -32,6 +33,18 @@ export async function dispatchClientCommand(context: CommandHandlerContext, sock
       break;
     case "project.configure":
       await handleProjectConfigure(context, socket, command);
+      break;
+    case "git.status":
+      await handleGitStatus(context, socket, command);
+      break;
+    case "git.branch.create":
+      await handleGitBranchCreate(context, socket, command);
+      break;
+    case "git.branch.switch":
+      await handleGitBranchSwitch(context, socket, command);
+      break;
+    case "git.branch.delete":
+      await handleGitBranchDelete(context, socket, command);
       break;
     case "session.list":
       await handleSessionList(context, socket, command);

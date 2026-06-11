@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { ClientCommand, ExecutionHostRef, GuiSession } from "@pi-gui/shared";
+import { decorateProjectWithGitSummary, decorateProjectsWithGitSummary } from "../../services/projectGitSummary.js";
 import { indexKnownPiSessions } from "../../services/sessionIndexService.js";
 import type { WsClient } from "../wsHub.js";
 import { sendCommandResult, type CommandHandlerContext } from "./types.js";
@@ -8,7 +9,7 @@ import { sendCommandResult, type CommandHandlerContext } from "./types.js";
 type CommandOf<TType extends ClientCommand["type"]> = Extract<ClientCommand, { type: TType }>;
 
 export async function handleProjectList(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"project.list">): Promise<void> {
-  const projects = context.db.listProjects();
+  const projects = decorateProjectsWithGitSummary(context.db.listProjects());
   context.send(socket, { type: "project.list", projects });
   sendCommandResult(context, socket, command, true, { projects });
 }
@@ -25,16 +26,18 @@ export async function handleProjectCreate(context: CommandHandlerContext, socket
     defaultRuntimeProfileId: command.defaultRuntimeProfileId,
     lastOpenedAt: Date.now(),
   });
-  context.broadcast({ type: "project.created", project });
-  context.broadcast({ type: "project.list", projects: context.db.listProjects() });
-  sendCommandResult(context, socket, command, true, { project });
+  const decoratedProject = decorateProjectWithGitSummary(project);
+  context.broadcast({ type: "project.created", project: decoratedProject });
+  context.broadcast({ type: "project.list", projects: decorateProjectsWithGitSummary(context.db.listProjects()) });
+  sendCommandResult(context, socket, command, true, { project: decoratedProject });
 }
 
 export async function handleProjectConfigure(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"project.configure">): Promise<void> {
   const project = context.db.updateProjectRuntimeProfile(command.projectId, command.defaultRuntimeProfileId ?? null);
   if (!project) throw new Error(`Project not found: ${command.projectId}`);
-  context.broadcast({ type: "project.list", projects: context.db.listProjects() });
-  sendCommandResult(context, socket, command, true, { project });
+  const decoratedProject = decorateProjectWithGitSummary(project);
+  context.broadcast({ type: "project.list", projects: decorateProjectsWithGitSummary(context.db.listProjects()) });
+  sendCommandResult(context, socket, command, true, { project: decoratedProject });
 }
 
 export async function handleSessionList(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"session.list">): Promise<void> {
