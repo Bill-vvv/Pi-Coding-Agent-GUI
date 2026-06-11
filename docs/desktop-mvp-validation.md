@@ -121,7 +121,7 @@ For isolated desktop GUI development, mirror the web stable/dev split. When usin
 ```bash
 npm run sync:desktop-mirror
 
-# stable: ongoing development, backend 8787, web 5173, data apps/server/.pi-gui-stable
+# stable: ongoing development, backend 8787, web 5173, data apps/server/.pi-gui
 npm run dev:desktop:stable
 
 # dev: observe revision effects, backend 8877, web 5273, data apps/server/.pi-gui-dev

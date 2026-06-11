@@ -49,10 +49,14 @@ test("desktop backend host selection supports WSL by default and explicit Window
   });
 });
 
-test("desktop data dir defaults to a stable server-package path for each host", () => {
+test("desktop data dir defaults to the main database unless dev profile overrides it", () => {
   assert.equal(resolveDesktopDataDir({ kind: "windows", cwd: "C:/repo/pi-gui" }, {}), win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui"));
+  assert.equal(resolveDesktopDataDir({ kind: "windows", cwd: "C:/repo/pi-gui" }, { PI_GUI_DESKTOP_PROFILE: "stable" }), win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui"));
+  assert.equal(resolveDesktopDataDir({ kind: "windows", cwd: "C:/repo/pi-gui" }, { PI_GUI_DESKTOP_PROFILE: "dev" }), win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui-dev"));
   assert.equal(resolveDesktopDataDir({ kind: "windows", cwd: "C:/repo/pi-gui" }, { PI_GUI_DESKTOP_DATA_DIR: ".pi-gui-dev" }), win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui-dev"));
   assert.equal(resolveDesktopDataDir({ kind: "wsl", cwd: "/home/user/pi-gui" }, {}), "/home/user/pi-gui/apps/server/.pi-gui");
+  assert.equal(resolveDesktopDataDir({ kind: "wsl", cwd: "/home/user/pi-gui" }, { PI_GUI_DESKTOP_PROFILE: "stable" }), "/home/user/pi-gui/apps/server/.pi-gui");
+  assert.equal(resolveDesktopDataDir({ kind: "wsl", cwd: "/home/user/pi-gui" }, { PI_GUI_DESKTOP_PROFILE: "dev" }), "/home/user/pi-gui/apps/server/.pi-gui-dev");
   assert.equal(resolveDesktopDataDir({ kind: "wsl", cwd: "/home/user/pi-gui" }, { PI_GUI_DESKTOP_DATA_DIR: ".pi-gui-dev" }), "/home/user/pi-gui/apps/server/.pi-gui-dev");
 });
 
@@ -112,6 +116,7 @@ test("desktop dev profile injects a visible renderer instance tag", async () => 
   });
 
   assert.equal(config.rendererConfig.instanceTag, "DEV");
+  assert.equal(config.dataDir, win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui-dev"));
 });
 
 test("backend env uses desktop mode, loopback host, controlled port, token, and optional data dir", () => {

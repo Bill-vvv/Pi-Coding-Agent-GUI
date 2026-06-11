@@ -68,7 +68,7 @@ function applyDesktopProfile(profileName) {
       label: "stable development instance",
       backendPort: "8787",
       webPort: "5173",
-      dataDir: ".pi-gui-stable",
+      dataDir: ".pi-gui",
     },
     dev: {
       label: "dev revision instance",

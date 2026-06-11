@@ -10,7 +10,7 @@ const profiles = {
     label: "stable dogfood instance",
     backendPort: "8787",
     webPort: "5173",
-    dataDir: ".pi-gui-stable",
+    dataDir: ".pi-gui",
     tmuxSession: "pi-gui-stable",
   },
   sandbox: {
@@ -106,7 +106,7 @@ function printHelp() {
 Runs Pi GUI with isolated ports, database, restart state, and tmux session.
 
 Profiles:
-  stable   backend 8787, web 5173, data apps/server/.pi-gui-stable
+  stable   backend 8787, web 5173, data apps/server/.pi-gui
   sandbox  backend 8877, web 5273, data apps/server/.pi-gui-dev
 
 Default action: run npm run dev:watch in the foreground with the selected profile.

@@ -26,7 +26,7 @@ npm run dev:restart
 For side-by-side development, use isolated stable/dev instances:
 
 ```bash
-# Stable dogfood instance: 8787 + 5173, data .pi-gui-stable
+# Stable dogfood instance: 8787 + 5173, data .pi-gui
 npm run dev:stable
 
 # Feature sandbox instance: 8877 + 5273, data .pi-gui-dev
@@ -41,7 +41,7 @@ Desktop GUI development mirrors the same split on Windows + WSL:
 # Sync WSL changes into the Windows Electron mirror and rebuild desktop
 npm run sync:desktop-mirror
 
-# Stable instance for ongoing development: 8787 + 5173, data .pi-gui-stable
+# Stable instance for ongoing development: 8787 + 5173, data .pi-gui
 npm run dev:desktop:stable
 
 # Dev instance for observing revision effects: 8877 + 5273, data .pi-gui-dev

@@ -26,7 +26,7 @@ npm run dev:restart
 并行开发建议使用隔离的 stable/dev 实例：
 
 ```bash
-# 稳定 dogfood 实例：8787 + 5173，数据 .pi-gui-stable
+# 稳定 dogfood 实例：8787 + 5173，数据 .pi-gui
 npm run dev:stable
 
 # 新功能沙箱实例：8877 + 5273，数据 .pi-gui-dev
@@ -41,7 +41,7 @@ npm run dev:sandbox
 # 同步 WSL 改动到 Windows Electron mirror，并重建 desktop
 npm run sync:desktop-mirror
 
-# stable：用于日常开发，8787 + 5173，数据 .pi-gui-stable
+# stable：用于日常开发，8787 + 5173，数据 .pi-gui
 npm run dev:desktop:stable
 
 # dev：用于观察修订效果，8877 + 5273，数据 .pi-gui-dev

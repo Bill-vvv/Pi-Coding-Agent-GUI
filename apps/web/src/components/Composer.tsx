@@ -119,7 +119,7 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
   const showAbortAction = runtimeCanReceiveAbort && (activeRuntimeIsBusy || activeRuntime?.status === "starting");
   const sendTitle = activeRuntimeIsBusy ? "Steer up（回车）" : "发送（回车）";
   const queuedPromptItems = runtimeQueueOrderItems(activeRuntimeQueue);
-  const inlinePromptPendingNotice = pendingCommand?.command === "runtime.prompt" && pendingCommand.status === "sent" ? "Pi正在接收你的信息。" : undefined;
+  const inlinePromptPendingNotice = pendingCommand?.command === "runtime.prompt" && pendingCommand.status === "sent" ? "Pi正在接收你的信息" : undefined;
   const pendingCommandNotice = inlinePromptPendingNotice ? undefined : composerPendingCommandNotice(pendingCommand);
   const commandOptions = useMemo(() => buildCommandOptions(slashCommands), [slashCommands]);
   const commandCompletion = useMemo(
