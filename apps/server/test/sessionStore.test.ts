@@ -123,13 +123,13 @@ test("AppDatabase persists runtime profile and enabled capability metadata", () 
     cwd: process.cwd(),
     status: "running",
     runtimeProfileId: "pi-gui-enhanced",
-    enabledCapabilityIds: ["interactive-prompts", "pi-ready-notifications"],
+    enabledCapabilityIds: ["pi-ready-notifications"],
   });
 
   const runtime = db.getRuntime("runtime-1");
   assert.equal(runtime?.runtimeProfileId, "pi-gui-enhanced");
-  assert.deepEqual(runtime?.enabledCapabilityIds, ["interactive-prompts", "pi-ready-notifications"]);
-  assert.deepEqual(db.listRuntimes()[0]?.enabledCapabilityIds, ["interactive-prompts", "pi-ready-notifications"]);
+  assert.deepEqual(runtime?.enabledCapabilityIds, ["pi-ready-notifications"]);
+  assert.deepEqual(db.listRuntimes()[0]?.enabledCapabilityIds, ["pi-ready-notifications"]);
   db.close();
 });
 

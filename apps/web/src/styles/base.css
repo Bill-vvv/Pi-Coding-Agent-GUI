@@ -117,27 +117,28 @@
   --shadow-composer: none;
   --shadow-popover: none;
 
+  font-size: var(--text-root);
   font-family: var(--font-ui);
   background: var(--color-bg-app);
   color: var(--color-text-primary);
 }
 
-html[data-ui-font-size="small"] { --text-root: 14px; }
+html[data-ui-font-size="small"] { --text-root: 12px; }
 html[data-ui-font-size="medium"] { --text-root: 15px; }
-html[data-ui-font-size="large"] { --text-root: 16px; }
+html[data-ui-font-size="large"] { --text-root: 18px; }
 
 html[data-chat-font-size="small"] {
-  --chat-text-body: 0.94rem;
+  --chat-text-body: 12px;
   --chat-line-body: 1.68;
 }
 
 html[data-chat-font-size="medium"] {
-  --chat-text-body: var(--text-body);
+  --chat-text-body: 15px;
   --chat-line-body: 1.75;
 }
 
 html[data-chat-font-size="large"] {
-  --chat-text-body: 1.08rem;
+  --chat-text-body: 18px;
   --chat-line-body: 1.82;
 }
 

@@ -74,7 +74,7 @@ export async function dequeueQueuedPrompts(managed: ManagedRuntime): Promise<Run
   const response = await managed.client.request({ id: `gui-${randomUUID()}`, type: "clear_queue" }, CLEAR_QUEUE_RPC_TIMEOUT_MS);
   if (response.success !== true) {
     const error = typeof response.error === "string" ? response.error : "Failed to restore queued messages";
-    throw new Error(/Unknown command/i.test(error) ? "当前 Pi RPC 不支持队列撤回，请升级 Pi 到支持 clear_queue 的版本" : error);
+    throw new Error(/Unknown command/i.test(error) ? "当前 Pi RPC 未暴露队列撤回/排序接口（clear_queue）；需要 Pi RPC 支持该命令后才能使用" : error);
   }
   return runtimeQueueFromPiPayload(isRecord(response.data) ? response.data : {});
 }

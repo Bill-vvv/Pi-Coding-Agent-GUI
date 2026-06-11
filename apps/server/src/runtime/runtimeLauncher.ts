@@ -30,15 +30,31 @@ export class RuntimeLauncher {
       runtimeProfileId: config.runtimeProfileId,
       savedRuntimeProfileId: resume?.runtime?.runtimeProfileId,
       defaultRuntimeProfileId: plan.project.defaultRuntimeProfileId ?? settings.defaultRuntimeProfileId,
+      customRuntimeCapabilityIds: settings.customRuntimeCapabilityIds,
       confirmedProjectExtensionIds: settings.confirmedProjectExtensionIds,
     });
     runtime = { ...runtime, runtimeProfileId: capabilityPlan.runtimeProfileId, enabledCapabilityIds: capabilityPlan.enabledCapabilityIds };
 
     events.publishRuntimeStatus(runtime);
     const getRuntime = () => runtimes.get(runtime.id)?.runtime ?? runtime;
-    const projection = new ConversationProjection(db, getRuntime, broadcast);
+    let managed: ManagedRuntime;
+    const projection = new ConversationProjection(db, getRuntime, broadcast, (message) => {
+      const pending = managed.pendingRewindPromptCheckpoint;
+      if (!pending || message.role !== "user") return;
+      if (normalizePromptText(message.text) !== normalizePromptText(pending.promptText)) return;
+      db.upsertRewindCheckpointConversationLink({
+        projectId: pending.projectId,
+        snapshotId: pending.snapshotId,
+        runtimeId: runtime.id,
+        sessionId: pending.sessionId ?? managed.runtime.sessionId,
+        targetEntryId: message.id,
+        captureSource: "prompt",
+        createdAt: pending.createdAt,
+      });
+      managed.pendingRewindPromptCheckpoint = undefined;
+    });
     const subagents = new SubagentRunProjection(db, getRuntime, broadcast);
-    const managed: ManagedRuntime = { runtime, client, serviceTierConfigFile, enabledCapabilityIds: capabilityPlan.enabledCapabilityIds, pendingNativeRpcCommands: new Map(), configRevision: 0, projection, subagents };
+    managed = { runtime, client, serviceTierConfigFile, enabledCapabilityIds: capabilityPlan.enabledCapabilityIds, pendingNativeRpcCommands: new Map(), configRevision: 0, projection, subagents };
     runtimes.set(runtime.id, managed);
     attachRuntimeClientEventHandlers(this.options, runtime.id, managed);
 
@@ -74,4 +90,8 @@ export class RuntimeLauncher {
   handlePiPayload(runtimeId: string, payload: unknown): void {
     handleRuntimeClientPayload(this.options, runtimeId, payload);
   }
+}
+
+function normalizePromptText(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
 }

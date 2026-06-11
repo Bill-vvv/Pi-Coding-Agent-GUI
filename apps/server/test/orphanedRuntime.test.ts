@@ -18,11 +18,11 @@ test("AppDatabase marks running runtimes from a previous server as crashed on st
   firstDb.upsertRuntime({ id: "runtime-stopped", projectId: "project-1", cwd: process.cwd(), status: "stopped", sessionId: "session-2", startedAt: 12 });
   firstDb.setConversationBusy("runtime-running", "project-1", true, 20);
   firstDb.upsertConversationMessage({
-    id: "tool-ask-batch",
+    id: "tool-batch-clarify",
     runtimeId: "runtime-running",
     projectId: "project-1",
     role: "tool",
-    title: "ask_batch 运行中",
+    title: "batch-clarify 运行中",
     text: "",
     timestamp: 21,
     updatedAt: 21,
@@ -44,9 +44,9 @@ test("AppDatabase marks running runtimes from a previous server as crashed on st
   assert.equal(stopped?.status, "stopped");
   assert.equal(stopped?.sessionId, "session-2");
   assert.equal(restartedDb.getConversationBusy("runtime-running"), false);
-  const interruptedTool = restartedDb.getConversationMessage("runtime-running", "tool-ask-batch");
+  const interruptedTool = restartedDb.getConversationMessage("runtime-running", "tool-batch-clarify");
   assert.equal(interruptedTool?.isStreaming, false);
-  assert.equal(interruptedTool?.title, "ask_batch 失败");
+  assert.equal(interruptedTool?.title, "batch-clarify 失败");
   assert.equal(interruptedTool?.text, "GUI 服务重启，工具未返回结果。");
 
   const events = restartedDb.listEvents(0, 20);

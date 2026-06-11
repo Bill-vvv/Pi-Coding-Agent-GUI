@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import Fastify from "fastify";
-import { registerFsRoutes } from "../src/routes/fsRoutes.js";
+import { registerFsRoutes, resetFileSearchCacheForTest } from "../src/routes/fsRoutes.js";
 
 test("fs resolve route resolves existing Linux directories", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "pi-gui-fs-route-"));
@@ -73,6 +73,25 @@ test("fs search route returns bounded file and directory matches", async (t) => 
   const body = response.json() as { root?: unknown; entries?: Array<{ relativePath?: unknown; type?: unknown }> };
   assert.equal(body.root, dir);
   assert.deepEqual(body.entries, [{ name: "App.tsx", path: join(dir, "src", "App.tsx"), relativePath: "src/App.tsx", type: "file" }]);
+});
+
+test("fs search route cache invalidates when root directory changes", async (t) => {
+  resetFileSearchCacheForTest();
+  const dir = await mkdtemp(join(tmpdir(), "pi-gui-fs-route-cache-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => resetFileSearchCacheForTest());
+  const fastify = Fastify({ logger: false });
+  await registerFsRoutes(fastify);
+  t.after(() => fastify.close());
+
+  const before = await fastify.inject({ method: "GET", url: `/api/fs/search?root=${encodeURIComponent(dir)}&q=new&limit=5` });
+  assert.equal(before.statusCode, 200);
+  assert.deepEqual((before.json() as { entries?: unknown[] }).entries, []);
+
+  await writeFile(join(dir, "new-file.txt"), "x");
+  const after = await fastify.inject({ method: "GET", url: `/api/fs/search?root=${encodeURIComponent(dir)}&q=new&limit=5` });
+  assert.equal(after.statusCode, 200);
+  assert.deepEqual((after.json() as { entries?: Array<{ relativePath?: unknown }> }).entries?.map((entry) => entry.relativePath), ["new-file.txt"]);
 });
 
 test("fs search route clamps oversized result limits", async (t) => {

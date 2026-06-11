@@ -4,6 +4,7 @@ import { basename, join, resolve } from "node:path";
 import type { GuiSession, Project } from "@pi-gui/shared";
 import { isRecord, stripSerializedToolCallsFromText } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
+import type { SessionFileSummaryCacheEntry } from "../db/sessionFileSummaryCache.js";
 
 const SESSION_FILE_SUFFIX = ".jsonl";
 const MAX_SCAN_FILES = 2_000;
@@ -11,6 +12,14 @@ const SUMMARY_WINDOW_BYTES = 512 * 1024;
 const FULL_SUMMARY_MAX_BYTES = SUMMARY_WINDOW_BYTES * 2;
 const TITLE_MAX_LENGTH = 80;
 const DETAIL_MAX_LENGTH = 96;
+const SESSION_FILE_SUMMARY_CACHE_PARSER_VERSION = 1;
+
+type SessionFileSummary = {
+  metadata: { id?: string; cwd?: string; timestamp?: string; title?: string };
+  conversation?: PiSessionConversationSummary;
+};
+
+type SessionFileStats = { mtimeMs: number; size: number };
 
 export type PiSessionConversationSummary = {
   title?: string;
@@ -25,7 +34,7 @@ export function indexKnownPiSessions(db: AppDatabase): GuiSession[] {
   if (projects.length === 0) return [];
 
   const indexed: GuiSession[] = [];
-  for (const discovered of discoverPiSessions(projects)) {
+  for (const discovered of discoverPiSessions(projects, db)) {
     indexed.push(db.upsertSession(discovered));
   }
   return indexed;
@@ -53,19 +62,22 @@ export function findPiSessionFileById(sessionId: string, cwd?: string): string |
   return undefined;
 }
 
-function discoverPiSessions(projects: Project[]): GuiSession[] {
+function discoverPiSessions(projects: Project[], db: AppDatabase): GuiSession[] {
   const projectByCwd = new Map(projects.map((project) => [resolve(project.cwd), project]));
   const root = piSessionRoot();
   if (!existsSync(root)) return [];
 
   const files = listSessionFiles(root)
-    .map((filePath) => ({ filePath, mtimeMs: safeMtimeMs(filePath) }))
-    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .flatMap((filePath) => {
+      const stats = safeFileStat(filePath);
+      return stats ? [{ filePath, stats }] : [];
+    })
+    .sort((left, right) => right.stats.mtimeMs - left.stats.mtimeMs)
     .slice(0, MAX_SCAN_FILES);
 
   const sessions: GuiSession[] = [];
-  for (const { filePath, mtimeMs } of files) {
-    const metadata = readSessionMetadata(filePath);
+  for (const { filePath, stats } of files) {
+    const metadata = readSessionMetadata(filePath, db, stats);
     if (!metadata?.id || !metadata.cwd || !metadata.title) continue;
 
     const project = projectByCwd.get(resolve(metadata.cwd));
@@ -78,32 +90,77 @@ function discoverPiSessions(projects: Project[]): GuiSession[] {
       piSessionFile: filePath,
       host: project.host,
       title: metadata.title,
-      createdAt: Number.isFinite(createdAt) ? createdAt : Math.trunc(mtimeMs || Date.now()),
-      updatedAt: Math.trunc(mtimeMs || Date.now()),
+      createdAt: Number.isFinite(createdAt) ? createdAt : Math.trunc(stats.mtimeMs || Date.now()),
+      updatedAt: Math.trunc(stats.mtimeMs || Date.now()),
     });
   }
 
   return sessions;
 }
 
-function readSessionMetadata(filePath: string): { id?: string; cwd?: string; timestamp?: string; title?: string } | undefined {
+function readSessionMetadata(filePath: string, db?: AppDatabase, stats?: SessionFileStats): { id?: string; cwd?: string; timestamp?: string; title?: string } | undefined {
+  return readSessionFileSummary(filePath, db, stats)?.metadata;
+}
+
+export function readPiSessionConversationSummary(filePath: string, db?: AppDatabase): PiSessionConversationSummary | undefined {
+  return readSessionFileSummary(filePath, db)?.conversation;
+}
+
+function readSessionFileSummary(filePath: string, db?: AppDatabase, knownStats?: SessionFileStats): SessionFileSummary | undefined {
+  const stats = knownStats ?? safeFileStat(filePath);
+  if (!stats) return undefined;
+  const context = { parserVersion: SESSION_FILE_SUMMARY_CACHE_PARSER_VERSION };
+  const cached = db?.getSessionFileSummaryCache(filePath, context);
+  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) return sessionFileSummaryFromCache(cached);
+
+  const parsed = parseSessionFileSummary(filePath);
+  if (!parsed) {
+    db?.deleteSessionFileSummaryCache(filePath);
+    return undefined;
+  }
+  db?.upsertSessionFileSummaryCache({
+    ...context,
+    filePath,
+    mtimeMs: stats.mtimeMs,
+    size: stats.size,
+    sessionId: parsed.metadata.id,
+    cwd: parsed.metadata.cwd,
+    timestamp: parsed.metadata.timestamp,
+    title: parsed.metadata.title,
+    detail: parsed.conversation?.detail,
+    summaryUpdatedAt: parsed.conversation?.updatedAt,
+    messageCount: parsed.conversation?.messageCount ?? 0,
+    latestAssistantCompletedAt: parsed.conversation?.latestAssistantCompletedAt,
+    cacheUpdatedAt: Date.now(),
+  });
+  return parsed;
+}
+
+function parseSessionFileSummary(filePath: string): SessionFileSummary | undefined {
   const content = readSessionSummaryContent(filePath);
   if (!content) return undefined;
 
   const firstRecord = parseJsonRecord(content.prefix.split("\n", 1)[0] ?? "");
   if (!firstRecord || firstRecord.type !== "session") return undefined;
 
+  const conversation = piSessionConversationSummaryFromContent(content);
   const id = typeof firstRecord.id === "string" ? firstRecord.id : sessionIdFromFilePath(filePath);
   const cwd = typeof firstRecord.cwd === "string" ? firstRecord.cwd : undefined;
   const timestamp = typeof firstRecord.timestamp === "string" ? firstRecord.timestamp : undefined;
-  const title = piSessionConversationSummaryFromContent(content)?.title;
-
-  return { id, cwd, timestamp, title };
+  return { metadata: { id, cwd, timestamp, title: conversation?.title }, conversation };
 }
 
-export function readPiSessionConversationSummary(filePath: string): PiSessionConversationSummary | undefined {
-  const content = readSessionSummaryContent(filePath);
-  return content ? piSessionConversationSummaryFromContent(content) : undefined;
+function sessionFileSummaryFromCache(cached: SessionFileSummaryCacheEntry): SessionFileSummary {
+  const conversation = cached.title || cached.detail
+    ? {
+        title: cached.title,
+        detail: cached.detail,
+        updatedAt: cached.summaryUpdatedAt,
+        messageCount: cached.messageCount,
+        latestAssistantCompletedAt: cached.latestAssistantCompletedAt,
+      }
+    : undefined;
+  return { metadata: { id: cached.sessionId, cwd: cached.cwd, timestamp: cached.timestamp, title: cached.title }, conversation };
 }
 
 function piSessionConversationSummaryFromContent(content: SessionSummaryContent): PiSessionConversationSummary | undefined {
@@ -272,11 +329,12 @@ function safeIsDirectory(path: string): boolean {
   }
 }
 
-function safeMtimeMs(path: string): number {
+function safeFileStat(path: string): SessionFileStats | undefined {
   try {
-    return statSync(path).mtimeMs;
+    const stats = statSync(path);
+    return { mtimeMs: stats.mtimeMs, size: stats.size };
   } catch {
-    return 0;
+    return undefined;
   }
 }
 

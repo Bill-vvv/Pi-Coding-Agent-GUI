@@ -11,6 +11,7 @@ export function replayGapEventForReconnect(options: {
   replayedEventCount: number;
   lastReplayedEventId?: number;
   replayLimit?: number;
+  truncated?: boolean;
 }): ReplayGapEvent | undefined {
   const replayLimit = options.replayLimit ?? RECONNECT_REPLAY_LIMIT;
   if (options.requestedSinceEventId > options.lastEventId) {
@@ -36,7 +37,7 @@ export function replayGapEventForReconnect(options: {
   }
 
   if (
-    options.replayedEventCount >= replayLimit &&
+    (options.truncated || options.replayedEventCount >= replayLimit) &&
     options.lastReplayedEventId !== undefined &&
     options.lastReplayedEventId < options.lastEventId
   ) {

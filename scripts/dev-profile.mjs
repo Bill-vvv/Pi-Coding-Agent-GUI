@@ -67,8 +67,11 @@ function profileEnv(profile) {
 
   env.PI_GUI_BACKEND_PORT = backendPort;
   env.PORT = backendPort;
+  env.PI_GUI_BACKEND_ORIGIN = `http://127.0.0.1:${backendPort}`;
   env.PI_GUI_WEB_PORT = webPort;
   env.VITE_PORT = webPort;
+  env.VITE_API_URL = env.PI_GUI_BACKEND_ORIGIN;
+  env.VITE_WS_URL = `ws://127.0.0.1:${backendPort}/ws`;
   env.PI_GUI_DATA_DIR = dataDir;
   env.PI_GUI_DEV_STATE_DIR = firstNonBlank(env.PI_GUI_DEV_PROFILE_STATE_DIR, `${dataDir}/dev-state`);
   env.PI_GUI_DEV_TMUX_SESSION = firstNonBlank(env.PI_GUI_DEV_PROFILE_TMUX_SESSION, profile.tmuxSession);
@@ -123,6 +126,9 @@ function printProfileEnv(profileName, profile, env) {
     "PI_GUI_DEV_STATE_DIR",
     "PI_GUI_DEV_TMUX_SESSION",
     "PI_GUI_DEV_NPM_SCRIPT",
+    "PI_GUI_BACKEND_ORIGIN",
+    "VITE_API_URL",
+    "VITE_WS_URL",
   ]) {
     console.log(`${key}=${env[key] ?? ""}`);
   }

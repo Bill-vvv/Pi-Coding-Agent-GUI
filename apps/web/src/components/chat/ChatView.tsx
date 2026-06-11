@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { Runtime, RuntimeConversationSummary, SubagentRun } from "@pi-gui/shared";
+import { DEFAULT_RUNTIME_PROFILE_ID, runtimeProfileById, type Runtime, type RuntimeConversationSummary, type SubagentRun } from "@pi-gui/shared";
 import type { ConversationMessage } from "../../types";
 import { isTransportConnectionError } from "../../domain/connection";
-import { buildConversationDisplayBlocks, type ConversationDisplayMode } from "../../domain/conversationDisplay";
+import { buildConversationDisplayBlocksCached, type ConversationDisplayBuildCache, type ConversationDisplayMode } from "../../domain/conversationDisplay";
 import type { RuntimeExtensionUiChrome } from "../../domain/extensionUiChrome";
 import { prependScrollTop } from "../../domain/virtualList";
 import { ExtensionUiStatusStrip } from "../ExtensionUiChrome";
@@ -31,6 +31,8 @@ type ChatViewProps = {
   onLoadOlderMessages?: () => void;
   onOpenSubagentRun?: (runId: string) => void;
   onCopySubagentOutput?: (run: SubagentRun) => void;
+  onOpenRuntimeProfileSettings?: () => void;
+  onOpenRewind?: () => void;
   onDismissOperationError?: (expectedError?: string) => void;
   onDismissNotice?: (expectedNotice?: string) => void;
 };
@@ -54,6 +56,8 @@ export const ChatView = memo(function ChatView({
   onLoadOlderMessages,
   onOpenSubagentRun,
   onCopySubagentOutput,
+  onOpenRuntimeProfileSettings,
+  onOpenRewind,
   onDismissOperationError,
   onDismissNotice,
 }: ChatViewProps) {
@@ -68,7 +72,12 @@ export const ChatView = memo(function ChatView({
   const observedScrollToBottomSignalRef = useRef<number | undefined>(undefined);
   const observedBottomClearanceSignalRef = useRef<number | undefined>(undefined);
   const handledLastUserMessageScrollRequestRef = useRef(0);
-  const blocks = useMemo(() => buildConversationDisplayBlocks(messages, displayMode, { activeRuntimeIsBusy, subagentRuns }), [activeRuntimeIsBusy, displayMode, messages, subagentRuns]);
+  const conversationDisplayCacheRef = useRef<ConversationDisplayBuildCache | undefined>(undefined);
+  const blocks = useMemo(() => {
+    const display = buildConversationDisplayBlocksCached(messages, displayMode, { activeRuntimeIsBusy, subagentRuns }, conversationDisplayCacheRef.current);
+    conversationDisplayCacheRef.current = display;
+    return display.blocks;
+  }, [activeRuntimeIsBusy, displayMode, messages, subagentRuns]);
   const historicalCapabilityNotice = historicalCapabilityNoticeForRuntime(activeRuntime, subagentRuns);
   const transportError = isTransportConnectionError(operationError) ? operationError : undefined;
   const visibleOperationError = transportError ? undefined : operationError;
@@ -281,8 +290,10 @@ export const ChatView = memo(function ChatView({
                 {conversationSummary?.detail ? <small className="conversation-header-detail">{conversationSummary.detail}</small> : null}
                 {activeRuntime.sessionId ? <small className="conversation-header-session">Session {activeRuntime.sessionId.slice(0, 8)}</small> : null}
                 {activeRuntime.archivedAt ? <small>已归档</small> : null}
+                <RuntimeProfileIndicator runtime={activeRuntime} onOpenSettings={onOpenRuntimeProfileSettings} />
                 {historicalCapabilityNotice ? <small className="conversation-header-capability-note">{historicalCapabilityNotice}</small> : null}
                 <ExtensionUiStatusStrip chrome={extensionUi} />
+                {onOpenRewind ? <button className="conversation-header-profile" type="button" onClick={onOpenRewind} title="打开 Rewind checkpoints">Rewind</button> : null}
               </>
             ) : null}
             {connectionStatusMessage ? <small className="connection-status-warning">{connectionStatusMessage}</small> : null}
@@ -290,7 +301,7 @@ export const ChatView = memo(function ChatView({
         ) : null}
 
         <div
-          className={`conversation-surface stealth-scroll${conversationScrollbar.isVisible ? " is-scrolling" : ""}`}
+          className={`conversation-surface stealth-scroll mode-${displayMode}${conversationScrollbar.isVisible ? " is-scrolling" : ""}`}
           ref={surfaceRef}
           tabIndex={0}
           onKeyDown={handleConversationKeyDown}
@@ -328,6 +339,23 @@ export const ChatView = memo(function ChatView({
     </>
   );
 });
+
+function RuntimeProfileIndicator({ runtime, onOpenSettings }: { runtime: Runtime; onOpenSettings?: () => void }) {
+  const profile = runtimeProfileById(runtime.runtimeProfileId ?? DEFAULT_RUNTIME_PROFILE_ID);
+  const capabilityCount = runtime.enabledCapabilityIds?.length ?? 0;
+  const label = profile.label;
+  const detail = `${label} · ${capabilityCount} enabled capabilities`;
+
+  if (!onOpenSettings) {
+    return <small className="conversation-header-profile" title={detail}>{label}</small>;
+  }
+
+  return (
+    <button className="conversation-header-profile" type="button" title={`${detail} · 跳转到拓展设置`} onClick={onOpenSettings}>
+      {label}
+    </button>
+  );
+}
 
 function DismissibleBanner({ className, message, onDismiss }: { className: string; message: string; onDismiss?: () => void }) {
   return (

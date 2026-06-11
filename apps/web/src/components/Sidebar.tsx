@@ -64,6 +64,14 @@ export function Sidebar({
   const mobileSidebarInteractions = isCompactViewport || isCoarsePointer;
   const sidebarScrollHideTimerRef = useRef<number | undefined>(undefined);
   const sessionById = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
+  const visibleRuntimesByProject = useMemo(
+    () => groupVisibleRuntimesByProject(runtimes, sessionById, conversationSummaries, messagesByRuntime),
+    [conversationSummaries, messagesByRuntime, runtimes, sessionById],
+  );
+  const recoverableInterruptionByRuntimeId = useMemo(
+    () => new Map(runtimes.map((runtime) => [runtime.id, isRecoverableRuntimeInterruption(runtime, guiEvents)])),
+    [guiEvents, runtimes],
+  );
   const {
     collapsedProjectIds,
     orderedProjects,
@@ -148,19 +156,7 @@ export function Sidebar({
           {orderedProjects.map((project) => {
             const collapsed = collapsedProjectIds.has(project.id);
             const selected = project.id === selectedProject?.id;
-            const projectRuntimes = orderedRuntimesForProject(
-              project.id,
-              runtimes.filter((runtime) => {
-                if (runtime.projectId !== project.id || runtime.archivedAt) return false;
-                if (runtime.status === "running" || runtime.status === "starting" || runtime.status === "crashed") return true;
-                return runtimeHasVisibleConversationContent({
-                  runtime,
-                  session: runtime.sessionId ? sessionById.get(runtime.sessionId) : undefined,
-                  summary: conversationSummaries[runtime.id],
-                  messages: messagesByRuntime[runtime.id],
-                });
-              }),
-            );
+            const projectRuntimes = orderedRuntimesForProject(project.id, visibleRuntimesByProject.get(project.id) ?? EMPTY_RUNTIMES);
             const canExpandProject = projectRuntimes.length > 0;
             const projectExpanded = canExpandProject && !collapsed;
             const projectSelectTitle = mobileSidebarInteractions
@@ -233,7 +229,7 @@ export function Sidebar({
                       const detail = sidebarSessionDetail(runtime, summary, linkedSession);
                       const completedAt = completedAssistantReplyAt(summary, messagesByRuntime[runtime.id]);
                       const hasUnreadReply = Boolean(completedAt && completedAt > (readTimestampsByRuntime[runtime.id] ?? 0));
-                      const recoverableInterruption = isRecoverableRuntimeInterruption(runtime, guiEvents);
+                      const recoverableInterruption = recoverableInterruptionByRuntimeId.get(runtime.id) ?? false;
                       const dotState = sessionDotState(runtime, busyByRuntime[runtime.id] ?? false, hasUnreadReply, recoverableInterruption);
                       return (
                         <div
@@ -310,6 +306,31 @@ export function Sidebar({
       </div>
     </aside>
   );
+}
+
+const EMPTY_RUNTIMES: Runtime[] = [];
+
+function groupVisibleRuntimesByProject(
+  runtimes: Runtime[],
+  sessionById: Map<string, GuiSession>,
+  conversationSummaries: Record<string, RuntimeConversationSummary>,
+  messagesByRuntime: Record<string, ConversationMessage[]>,
+): Map<string, Runtime[]> {
+  const grouped = new Map<string, Runtime[]>();
+  for (const runtime of runtimes) {
+    if (runtime.archivedAt) continue;
+    const visible = runtime.status === "running" || runtime.status === "starting" || runtime.status === "crashed" || runtimeHasVisibleConversationContent({
+      runtime,
+      session: runtime.sessionId ? sessionById.get(runtime.sessionId) : undefined,
+      summary: conversationSummaries[runtime.id],
+      messages: messagesByRuntime[runtime.id],
+    });
+    if (!visible) continue;
+    const items = grouped.get(runtime.projectId) ?? [];
+    items.push(runtime);
+    grouped.set(runtime.projectId, items);
+  }
+  return grouped;
 }
 
 function useCompactSidebarViewport(): boolean {

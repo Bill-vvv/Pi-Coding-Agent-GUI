@@ -58,6 +58,28 @@ test("replayGapEventForReconnect reports truncated replay gaps", () => {
   );
 });
 
+test("replayGapEventForReconnect reports byte-budget truncated replay gaps", () => {
+  assert.deepEqual(
+    replayGapEventForReconnect({
+      requestedSinceEventId: 10,
+      firstEventId: 1,
+      lastEventId: 1200,
+      replayedEventCount: 25,
+      lastReplayedEventId: 35,
+      replayLimit: 1000,
+      truncated: true,
+    }),
+    {
+      type: "event.replay.gap",
+      requestedSinceEventId: 10,
+      firstAvailableEventId: 1,
+      lastEventId: 1200,
+      replayedEvents: 25,
+      reason: "truncated",
+    },
+  );
+});
+
 test("replayGapEventForReconnect reports stale cursors beyond the current log", () => {
   assert.deepEqual(
     replayGapEventForReconnect({

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { AppDatabase } from "../src/db.js";
 import { normalizePiPayload } from "../src/runtime/conversation/piPayloadNormalizer.js";
 
 test("normalizePiPayload turns lifecycle events into busy changes", () => {
@@ -130,6 +131,36 @@ test("normalizePiPayload falls back to session file usage when stats omit token 
   if (usageEvent?.type === "context.usage") {
     assert.deepEqual(usageEvent.usage.sessionTokens, { input: 17, output: 8, cacheRead: 24, cacheWrite: 3, total: 52, cost: 0.01 });
   }
+});
+
+test("normalizePiPayload caches session file token usage and invalidates when the file changes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-gui-current-usage-cache-"));
+  const dbPath = join(dir, "pi-gui.sqlite");
+  const sessionFile = join(dir, "session.jsonl");
+  writeFileSync(
+    sessionFile,
+    [
+      { type: "session", id: "session-1", cwd: dir },
+      { type: "message", message: { role: "assistant", usage: { input: 3, output: 2, totalTokens: 5 } } },
+    ].map((record) => JSON.stringify(record)).join("\n") + "\n",
+  );
+
+  const firstDb = new AppDatabase(dbPath);
+  const [firstEvent] = normalizePiPayload({ type: "response", command: "get_session_stats", success: true, data: { contextUsage: { tokens: 10 }, sessionFile } }, { db: firstDb });
+  assert.equal(firstEvent?.type, "context.usage");
+  if (firstEvent?.type === "context.usage") assert.equal(firstEvent.usage.sessionTokens?.total, 5);
+  firstDb.close();
+
+  const secondDb = new AppDatabase(dbPath);
+  const [cachedEvent] = normalizePiPayload({ type: "response", command: "get_session_stats", success: true, data: { contextUsage: { tokens: 10 }, sessionFile } }, { db: secondDb });
+  assert.equal(cachedEvent?.type, "context.usage");
+  if (cachedEvent?.type === "context.usage") assert.equal(cachedEvent.usage.sessionTokens?.total, 5);
+
+  appendFileSync(sessionFile, `${JSON.stringify({ type: "message", message: { role: "assistant", usage: { input: 4, output: 1, totalTokens: 5 } } })}\n`);
+  const [updatedEvent] = normalizePiPayload({ type: "response", command: "get_session_stats", success: true, data: { contextUsage: { tokens: 20 }, sessionFile } }, { db: secondDb });
+  assert.equal(updatedEvent?.type, "context.usage");
+  if (updatedEvent?.type === "context.usage") assert.equal(updatedEvent.usage.sessionTokens?.total, 10);
+  secondDb.close();
 });
 
 test("normalizePiPayload converts failed prompt responses into visible errors and clears busy", () => {

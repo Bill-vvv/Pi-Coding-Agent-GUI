@@ -4,18 +4,18 @@ import { capabilityDisplayModel, confirmProjectExtension, projectExtensionDispla
 
 test("capability display model exposes risks, surfaces, profiles, and compatibility", () => {
   const model = capabilityDisplayModel({
-    id: "interactive-prompts",
-    label: "Interactive Prompts",
-    summary: "Clarification forms",
+    id: "trellis-subagent",
+    label: "Trellis Sub-agent Workflow",
+    summary: "Run bounded subagents",
     origin: "builtin",
     integrationLevel: 3,
     implementationHost: "pi-extension",
-    risks: ["ui-only"],
+    risks: ["process", "filesystem"],
     releaseStance: "default-off",
     mutatesPiEnvironment: false,
     changesAgentBehavior: true,
-    startsProcesses: false,
-    extensionUiMethods: ["askBatch"],
+    startsProcesses: true,
+    providedTools: ["trellis_subagent"],
     supportsLocalRuntime: true,
     supportsRemoteRuntime: false,
   });
@@ -24,16 +24,16 @@ test("capability display model exposes risks, surfaces, profiles, and compatibil
   assert.equal(model.integrationLevelLabel, "L3");
   assert.equal(model.implementationHostLabel, "Pi extension");
   assert.equal(model.releaseStanceLabel, "默认关闭");
-  assert.deepEqual(model.riskLabels, ["UI-only"]);
+  assert.deepEqual(model.riskLabels, ["Process", "Filesystem"]);
   assert.equal(model.compatibilityLabel, "Local only");
-  assert.deepEqual(model.surfaceLabels, ["UI: askBatch"]);
+  assert.deepEqual(model.surfaceLabels, ["Tool: trellis_subagent"]);
   assert.deepEqual(model.behaviorLabels, ["改 Agent 行为"]);
-  assert.ok(model.profileLabels.includes("Pi GUI Enhanced"));
+  assert.ok(!model.profileLabels.includes("Pi GUI Enhanced"));
   assert.ok(model.profileLabels.includes("Trellis Workflow"));
 });
 
-test("runtime profile selection confirms first enable of inherited user extensions", () => {
-  assert.equal(requiresUnknownExtensionConfirmation("pi-user-extensions", "vanilla-pi"), true);
+test("runtime profile selection no longer confirms inherited user extensions", () => {
+  assert.equal(requiresUnknownExtensionConfirmation("pi-user-extensions", "vanilla-pi"), false);
   assert.equal(requiresUnknownExtensionConfirmation("pi-user-extensions", "pi-user-extensions"), false);
   assert.equal(requiresUnknownExtensionConfirmation("vanilla-pi", "pi-user-extensions"), false);
 });
@@ -43,9 +43,9 @@ test("unknown user extension placeholder labels low-trust first-enable behavior"
 
   assert.equal(model.integrationLevelLabel, "L0");
   assert.equal(model.originLabel, "User");
-  assert.ok(model.profileLabels.includes("Pi + User Extensions"));
-  assert.ok(model.behaviorLabels.includes("Not inherited by Vanilla Pi"));
-  assert.ok(model.behaviorLabels.includes("First enable requires confirmation"));
+  assert.ok(model.profileLabels.includes("默认 Pi"));
+  assert.ok(model.behaviorLabels.includes("Not inherited by Safe Mode"));
+  assert.ok(!model.behaviorLabels.includes("First enable requires confirmation"));
 });
 
 test("project extension display models track confirmation and matching capabilities", () => {

@@ -33,7 +33,14 @@ export function parseProjectConfigure(value: CommandRecord): CommandOf<"project.
 
 export function parseSessionList(value: CommandRecord): CommandOf<"session.list"> {
   if (value.projectId !== undefined && typeof value.projectId !== "string") throw new Error("session.list projectId must be a string");
-  return { type: "session.list", requestId: stringOrUndefined(value.requestId), projectId: stringOrUndefined(value.projectId) };
+  if (value.cursor !== undefined && typeof value.cursor !== "string") throw new Error("session.list cursor must be a string");
+  return {
+    type: "session.list",
+    requestId: stringOrUndefined(value.requestId),
+    projectId: stringOrUndefined(value.projectId),
+    limit: typeof value.limit === "number" && Number.isFinite(value.limit) ? value.limit : undefined,
+    cursor: stringOrUndefined(value.cursor),
+  };
 }
 
 export function parseSessionResume(value: CommandRecord): CommandOf<"session.resume"> {
@@ -63,6 +70,7 @@ export function parseSettingsUpdate(value: CommandRecord): CommandOf<"settings.u
       defaultThinkingLevel: thinkingLevelOrUndefined(value.settings.defaultThinkingLevel),
       responseMode: value.settings.responseMode === "fast" ? "fast" : value.settings.responseMode === "normal" ? "normal" : undefined,
       defaultRuntimeProfileId: runtimeProfileIdOrUndefined(value.settings.defaultRuntimeProfileId),
+      customRuntimeCapabilityIds: stringArrayOrUndefined(value.settings.customRuntimeCapabilityIds, "settings.customRuntimeCapabilityIds"),
       confirmedProjectExtensionIds: stringArrayOrUndefined(value.settings.confirmedProjectExtensionIds, "settings.confirmedProjectExtensionIds"),
     },
   };

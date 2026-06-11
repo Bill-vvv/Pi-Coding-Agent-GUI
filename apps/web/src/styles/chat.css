@@ -159,9 +159,47 @@
 }
 
 .conversation-header-session,
+.conversation-header-profile,
 .conversation-header-capability-note,
 .connection-status-warning {
   flex: none;
+}
+
+.conversation-header-profile {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: default;
+  font: inherit;
+  font-size: smaller;
+  padding: 0;
+  transition: color 140ms ease, transform 140ms ease;
+}
+
+button.conversation-header-profile {
+  cursor: pointer;
+}
+
+button.conversation-header-profile:hover,
+button.conversation-header-profile:focus,
+button.conversation-header-profile:focus-visible,
+button.conversation-header-profile:active {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+button.conversation-header-profile:hover,
+button.conversation-header-profile:focus-visible {
+  color: var(--color-text-primary);
+  transform: translateY(-1px);
+}
+
+button.conversation-header-profile:focus-visible {
+  outline: 0;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
 }
 
 .conversation-header-capability-note {
@@ -192,6 +230,14 @@
   box-sizing: border-box;
   min-width: 0;
   padding-bottom: var(--conversation-block-gap);
+}
+
+.conversation-surface.mode-tui .message-list {
+  --conversation-block-gap: 0.62rem;
+}
+
+.conversation-surface.mode-tui .conversation-virtual-row {
+  padding-left: 0;
 }
 
 .conversation-load-older {
@@ -526,6 +572,28 @@ body.reply-navigator-dragging * {
   padding: 0.75rem 0.9rem;
 }
 
+.conversation-surface.mode-tui .chat-message.user,
+.conversation-surface.mode-tui .chat-message.tool,
+.conversation-surface.mode-tui .chat-message.error,
+.conversation-surface.mode-tui .chat-message.log {
+  align-items: stretch;
+}
+
+.conversation-surface.mode-tui .chat-message.user .markdown-message {
+  max-width: 100%;
+  border-color: color-mix(in srgb, var(--color-accent-primary) 26%, var(--color-border-subtle));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-accent-primary) 7%, var(--color-hover-muted));
+  padding: 0.58rem 0.72rem;
+}
+
+.conversation-surface.mode-tui .chat-message.assistant .markdown-message {
+  border-left-color: var(--color-border-subtle);
+  border-left-width: 1px;
+  border-radius: 0;
+  padding: 0.18rem 0 0.18rem 0.72rem;
+}
+
 .chat-message.error > pre,
 .chat-message.log > pre {
   border-color: var(--color-error-border);
@@ -613,6 +681,100 @@ body.reply-navigator-dragging * {
   min-height: 3.7rem;
   gap: 0.65rem;
   padding: 0.72rem 0.9rem;
+}
+
+.tui-process {
+  align-items: stretch;
+}
+
+.tui-process-details {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-surface-inset) 74%, transparent);
+  color: var(--color-text-soft);
+  font-family: var(--font-mono);
+}
+
+.tui-process-details summary {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.48rem;
+  cursor: pointer;
+  list-style: none;
+  padding: 0.42rem 0.58rem;
+  user-select: none;
+}
+
+.tui-process-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.tui-process-glyph {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.tui-process-details.running .tui-process-glyph {
+  color: var(--color-accent-primary);
+}
+
+.tui-process-details.completed .tui-process-glyph {
+  color: var(--color-status-success);
+}
+
+.tui-process-details.failed {
+  border-color: var(--color-error-border-subtle);
+}
+
+.tui-process-details.failed .tui-process-glyph {
+  color: var(--color-error-text);
+}
+
+.tui-process-title {
+  color: var(--color-text-primary);
+  font-size: var(--text-control);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.tui-process-status {
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  white-space: nowrap;
+}
+
+.tui-process-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tui-process-spinner {
+  align-self: center;
+}
+
+.tui-process-detail {
+  border-top: 1px solid var(--color-border-subtle);
+  padding: 0.62rem 0.68rem 0.7rem;
+}
+
+.tui-process-detail > .tool-group-detail.subagent-process-detail {
+  border-top: 0;
+  padding: 0;
+}
+
+.tui-thinking-content {
+  max-height: 42vh;
+  color: var(--color-text-soft);
 }
 
 .tool-group-details summary::-webkit-details-marker,

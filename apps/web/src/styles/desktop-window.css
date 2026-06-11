@@ -175,3 +175,16 @@
   grid-column: 2;
   grid-row: 1;
 }
+
+.app-shell.desktop-shell.settings-open {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell.desktop-shell.settings-open .left-sidebar {
+  display: none;
+}
+
+.app-shell.desktop-shell.settings-open .main-chat {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}

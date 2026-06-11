@@ -6,6 +6,13 @@ import type {
   ExecutionHostRef,
   GuiEvent,
   GuiSession,
+  RewindCheckpointOperation,
+  RewindCheckpointPreview,
+  RewindCheckpointRestoreResult,
+  RewindCheckpointSummary,
+  RewindGarbageCollectResult,
+  RewindJumpHistoryEntry,
+  RewindStorageHealth,
   ResponseMode,
   Runtime,
   RuntimeConversationSummary,
@@ -38,6 +45,13 @@ export type AppState = {
   extensionUiByRuntime: ExtensionUiChromeByRuntime;
   guiEvents: GuiEvent[];
   sessions: GuiSession[];
+  checkpointsByProject: Record<string, RewindCheckpointSummary[]>;
+  checkpointPreviewsBySnapshot: Record<string, RewindCheckpointPreview>;
+  checkpointRestoreResultsBySnapshot: Record<string, RewindCheckpointRestoreResult>;
+  checkpointOperations: RewindCheckpointOperation[];
+  checkpointJumpsByProject: Record<string, RewindJumpHistoryEntry[]>;
+  checkpointHealthByProject: Record<string, RewindStorageHealth>;
+  checkpointGcResultsByProject: Record<string, RewindGarbageCollectResult>;
   subagentRuns: Record<string, SubagentRun>;
   subagentDetails: Record<string, { childRunId: string; messages: ConversationMessage[]; readAt: number; error?: string }>;
   executionHost?: ExecutionHostRef;
@@ -67,6 +81,13 @@ export const initialAppState: AppState = {
   extensionUiByRuntime: {},
   guiEvents: [],
   sessions: [],
+  checkpointsByProject: {},
+  checkpointPreviewsBySnapshot: {},
+  checkpointRestoreResultsBySnapshot: {},
+  checkpointOperations: [],
+  checkpointJumpsByProject: {},
+  checkpointHealthByProject: {},
+  checkpointGcResultsByProject: {},
   subagentRuns: {},
   subagentDetails: {},
   selectedRuntimeIdByProject: {},
@@ -207,6 +228,8 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
           // frontend must not re-derive hidden provider child sessions from
           // optional subagent run internals.
           sessions: event.sessions ?? state.sessions,
+          checkpointOperations: mergeCheckpointOperations(state.checkpointOperations, event.checkpointOperations ?? []),
+          checkpointJumpsByProject: mergeCheckpointJumpsByProject(state.checkpointJumpsByProject, event.checkpointJumps ?? []),
           subagentRuns: nextSubagentRuns,
           executionHost: event.executionHost,
           selectedProjectId: nextProjectId,
@@ -241,7 +264,7 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
         selectedRuntimeId: undefined,
       };
     case "session.list":
-      return { ...state, sessions: mergeSessionList(state.sessions, event.sessions, event.projectId) };
+      return { ...state, sessions: mergeSessionList(state.sessions, event.sessions, event.projectId, event.cursor) };
     case "session.updated":
       return { ...state, sessions: upsertById(state.sessions, event.session) };
     case "settings.updated":
@@ -301,6 +324,52 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
         ...state,
         busyByRuntime: { ...state.busyByRuntime, [event.runtimeId]: event.busy },
       };
+    case "checkpoint.list":
+      return {
+        ...state,
+        checkpointsByProject: { ...state.checkpointsByProject, [event.projectId]: event.checkpoints },
+      };
+    case "checkpoint.captured":
+      return {
+        ...state,
+        checkpointsByProject: {
+          ...state.checkpointsByProject,
+          [event.projectId]: upsertCheckpointSummary(state.checkpointsByProject[event.projectId] ?? [], event.checkpoint),
+        },
+      };
+    case "checkpoint.preview":
+      return {
+        ...state,
+        checkpointPreviewsBySnapshot: { ...state.checkpointPreviewsBySnapshot, [event.preview.snapshotId]: event.preview },
+      };
+    case "checkpoint.restored":
+      return {
+        ...state,
+        checkpointRestoreResultsBySnapshot: { ...state.checkpointRestoreResultsBySnapshot, [event.result.snapshotId]: event.result },
+        notice: checkpointRestoreNotice(event.result),
+      };
+    case "checkpoint.operation":
+      return {
+        ...state,
+        checkpointOperations: mergeCheckpointOperations(state.checkpointOperations, [event.operation]),
+      };
+    case "checkpoint.jumps":
+      return {
+        ...state,
+        checkpointJumpsByProject: { ...state.checkpointJumpsByProject, [event.projectId]: event.jumps },
+      };
+    case "checkpoint.health":
+      return {
+        ...state,
+        checkpointHealthByProject: { ...state.checkpointHealthByProject, [event.projectId]: event.health },
+      };
+    case "checkpoint.gc":
+      return {
+        ...state,
+        checkpointGcResultsByProject: { ...state.checkpointGcResultsByProject, [event.projectId]: event.result },
+        checkpointHealthByProject: { ...state.checkpointHealthByProject, [event.projectId]: event.result },
+        notice: event.result.dryRun ? "已完成 Rewind 存储清理预览" : "已清理 Rewind 存储",
+      };
     case "runtime.queue":
       return {
         ...state,
@@ -354,13 +423,44 @@ function replayGapNotice(event: Extract<ServerEvent, { type: "event.replay.gap" 
   return `${reason}；界面已使用最新快照恢复，并回放最近 ${event.replayedEvents} 条事件。`;
 }
 
-function mergeSessionList(currentSessions: GuiSession[], nextSessions: GuiSession[], projectId?: string): GuiSession[] {
-  const retainedSessions = projectId ? currentSessions.filter((session) => session.projectId !== projectId) : [];
-  return [...retainedSessions, ...nextSessions].sort((left, right) => right.updatedAt - left.updatedAt);
+function mergeSessionList(currentSessions: GuiSession[], nextSessions: GuiSession[], projectId?: string, cursor?: string): GuiSession[] {
+  const retainedSessions = cursor ? currentSessions : projectId ? currentSessions.filter((session) => session.projectId !== projectId) : [];
+  const byId = new Map(retainedSessions.map((session) => [session.id, session]));
+  for (const session of nextSessions) byId.set(session.id, session);
+  return [...byId.values()].sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id));
 }
 
 function indexSubagentRuns(runs: SubagentRun[]): Record<string, SubagentRun> {
   return Object.fromEntries(runs.map((run) => [run.id, run]));
+}
+
+function upsertCheckpointSummary(current: RewindCheckpointSummary[], checkpoint: RewindCheckpointSummary): RewindCheckpointSummary[] {
+  const byId = new Map(current.map((item) => [item.id, item]));
+  byId.set(checkpoint.id, checkpoint);
+  return [...byId.values()].sort((left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id));
+}
+
+function mergeCheckpointOperations(current: RewindCheckpointOperation[], operations: RewindCheckpointOperation[]): RewindCheckpointOperation[] {
+  if (operations.length === 0) return current;
+  const byId = new Map(current.map((operation) => [operation.id, operation]));
+  for (const operation of operations) byId.set(operation.id, operation);
+  return [...byId.values()].sort((left, right) => left.id - right.id).slice(-50);
+}
+
+function mergeCheckpointJumpsByProject(current: Record<string, RewindJumpHistoryEntry[]>, jumps: RewindJumpHistoryEntry[]): Record<string, RewindJumpHistoryEntry[]> {
+  if (jumps.length === 0) return current;
+  const next = { ...current };
+  for (const jump of jumps) {
+    const byId = new Map((next[jump.projectId] ?? []).map((item) => [item.id, item]));
+    byId.set(jump.id, jump);
+    next[jump.projectId] = [...byId.values()].sort((left, right) => left.id - right.id).slice(-50);
+  }
+  return next;
+}
+
+function checkpointRestoreNotice(result: RewindCheckpointRestoreResult): string {
+  if (result.ok) return "已恢复 checkpoint";
+  return result.error ? `Checkpoint 恢复失败：${result.error}` : "Checkpoint 恢复失败";
 }
 
 function mergeSubagentRuns(current: Record<string, SubagentRun>, runs: SubagentRun[]): Record<string, SubagentRun> {
@@ -384,6 +484,9 @@ function applyGuiEvent(state: AppState, event: GuiEvent): AppState {
 }
 
 function upsertGuiEvent(events: GuiEvent[], event: GuiEvent): GuiEvent[] {
+  const latest = events.at(-1);
+  if (!latest || event.id > latest.id) return [...events, event].slice(-500);
+
   const existingIndex = events.findIndex((item) => item.id === event.id);
   const next = existingIndex >= 0 ? events.map((item) => (item.id === event.id ? event : item)) : [...events, event];
   next.sort((left, right) => left.id - right.id);

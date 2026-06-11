@@ -49,6 +49,21 @@ test("chronological tool calls reuse the collapsed process group renderer", () =
   assert.doesNotMatch(html, /<details[^>]*open/);
 });
 
+test("TUI process events render through the dedicated transcript row", () => {
+  const blocks = buildConversationDisplayBlocks(
+    [message({ id: "tool-read", role: "tool", title: "read 完成", text: "very long tool output", timestamp: 2, updatedAt: 2 })],
+    "tui",
+  );
+  const block = blocks.find((item) => item.type === "tui_process");
+  assert.ok(block);
+
+  const html = renderToStaticMarkup(createElement(() => renderBlock(block)));
+
+  assert.match(html, /tui-process-details completed/);
+  assert.match(html, /read/);
+  assert.doesNotMatch(html, /<details[^>]*open/);
+});
+
 test("compact process groups also stay collapsed until the user expands them", () => {
   const blocks = buildConversationDisplayBlocks(
     [message({ id: "assistant-thinking", role: "assistant", text: "", thinking: "仍在思考", isStreaming: true })],

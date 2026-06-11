@@ -1,38 +1,43 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AppSettings, DiscoveredPiExtensionDescriptor, Project } from "@pi-gui/shared";
-import { capabilityCounts, PI_GUI_CAPABILITIES } from "@pi-gui/shared";
+import { DEFAULT_RUNTIME_PROFILE_ID, PI_GUI_CAPABILITIES, runtimeProfileById } from "@pi-gui/shared";
 import { apiUrl } from "../../domain/apiUrl";
-import { capabilityDisplayModels, confirmProjectExtension, type CapabilityDisplayModel, projectExtensionConfirmationMessage, projectExtensionDisplayModels, type ProjectExtensionDisplayModel, userExtensionPlaceholderModel } from "../../domain/capabilities";
+import { capabilityDisplayModels, confirmProjectExtension, type CapabilityDisplayModel, projectExtensionConfirmationMessage, projectExtensionDisplayModels, type ProjectExtensionDisplayModel } from "../../domain/capabilities";
 import { authHeaders } from "../../domain/runtimeConfig";
-import type { UiPreferences } from "../../types";
 
 type CapabilityPanelProps = {
-  preferences: UiPreferences;
   settings: AppSettings;
   selectedProject?: Project;
-  onChangePreferences: (preferences: UiPreferences) => void;
   onChangeSettings: (settings: Partial<AppSettings>) => boolean;
   focusCapabilityId?: string;
-  desktopPetAvailable?: boolean;
 };
 
-export function CapabilityPanel({ preferences, settings, selectedProject, onChangePreferences, onChangeSettings, focusCapabilityId, desktopPetAvailable }: CapabilityPanelProps) {
-  const builtin = capabilityDisplayModels(PI_GUI_CAPABILITIES.filter((capability) => capability.origin === "builtin"));
-  const counts = capabilityCounts();
-  const [capabilitiesOpen, setCapabilitiesOpen] = useState(Boolean(focusCapabilityId));
-  const projectExtensions = useProjectExtensions(selectedProject?.id, capabilitiesOpen);
+const CUSTOM_RUNTIME_CAPABILITY_IDS = new Set([
+  "pi-ready-notifications",
+  "trellis-subagent",
+  "provider-models",
+  "codex-transport-monitor",
+]);
+
+export function CapabilityPanel({ settings, selectedProject, onChangeSettings, focusCapabilityId }: CapabilityPanelProps) {
+  const configurableCapabilities = useMemo(
+    () => capabilityDisplayModels(PI_GUI_CAPABILITIES.filter((capability) => capability.origin === "builtin" && CUSTOM_RUNTIME_CAPABILITY_IDS.has(capability.id))),
+    [],
+  );
+  const effectiveProfileId = selectedProject?.defaultRuntimeProfileId ?? settings.defaultRuntimeProfileId ?? DEFAULT_RUNTIME_PROFILE_ID;
+  const effectiveProfile = runtimeProfileById(effectiveProfileId);
+  const customCapabilityIds = settings.customRuntimeCapabilityIds ?? [];
+  const customCapabilitySet = new Set(customCapabilityIds);
+  const enabledCapabilityIds = new Set(effectiveProfileId === "custom" ? customCapabilityIds : effectiveProfile.defaultCapabilityIds);
+  const editable = effectiveProfileId === "custom";
+  const projectExtensions = useProjectExtensions(selectedProject?.id, true);
   const projectExtensionModels = useMemo(() => projectExtensionDisplayModels(projectExtensions.extensions, settings), [projectExtensions.extensions, settings]);
 
-  useEffect(() => {
-    if (focusCapabilityId) setCapabilitiesOpen(true);
-  }, [focusCapabilityId]);
-
-  function updatePetEnabled(enabled: boolean) {
-    onChangePreferences({ ...preferences, petEnabled: enabled, petCollapsed: false, desktopPetEnabled: enabled ? preferences.desktopPetEnabled : false });
-  }
-
-  function updateDesktopPetEnabled(enabled: boolean) {
-    onChangePreferences({ ...preferences, petEnabled: true, petCollapsed: false, desktopPetEnabled: enabled });
+  function setCustomCapability(capabilityId: string, enabled: boolean) {
+    const next = new Set(customCapabilityIds);
+    if (enabled) next.add(capabilityId);
+    else next.delete(capabilityId);
+    onChangeSettings({ customRuntimeCapabilityIds: [...next].sort() });
   }
 
   function confirmExtension(extension: ProjectExtensionDisplayModel) {
@@ -41,148 +46,121 @@ export function CapabilityPanel({ preferences, settings, selectedProject, onChan
   }
 
   return (
-    <details className="settings-shim-dropdown" open={capabilitiesOpen} onToggle={(event) => setCapabilitiesOpen(event.currentTarget.open)}>
-      <summary>
-        <span className="settings-diagnostics-summary-main">
-          <span>Capabilities</span>
-          <small>{counts.total} 个能力 · {counts.changesAgentBehavior} 个改 Agent 行为 · {counts.explicitSetup} 个需要显式设置</small>
-        </span>
-        <span className="settings-diagnostics-pill ready">L3</span>
-      </summary>
+    <div className="settings-custom-pi-panel">
+      <div className="settings-capability-group-heading settings-capability-group-heading-block">
+        <span>自定义 Pi 拓展</span>
+      </div>
 
-      <div className="settings-shim-body">
-        <div className="settings-capability-group-heading">
-          <span>Built-in capabilities</span>
-          <small>Pi GUI 维护的能力，不等同于 Pi Agent 核心。</small>
+      <section className="settings-custom-section" aria-label="GUI 拓展">
+        <div className="settings-custom-section-heading">
+          <span>GUI 拓展</span>
         </div>
-        <div className="settings-shim-list">
-          {builtin.map((capability) => (
-            <CapabilityRow capability={capability} key={capability.id} petEnabled={preferences.petEnabled} desktopPetEnabled={preferences.desktopPetEnabled} desktopPetAvailable={desktopPetAvailable} focused={capability.id === focusCapabilityId} onPetEnabledChange={updatePetEnabled} onDesktopPetEnabledChange={updateDesktopPetEnabled} />
+        <div className="settings-capability-card-grid">
+          {configurableCapabilities.map((capability) => (
+            <CustomCapabilityCard
+              capability={capability}
+              checked={customCapabilitySet.has(capability.id)}
+              active={enabledCapabilityIds.has(capability.id)}
+              editable={editable}
+              focused={capability.id === focusCapabilityId}
+              key={capability.id}
+              onChange={(enabled) => setCustomCapability(capability.id, enabled)}
+            />
           ))}
         </div>
+      </section>
 
-        <div className="settings-capability-group-heading">
-          <span>User extensions</span>
-          <small>现阶段以 profile 隔离、项目扩展发现和低信任提示为主。</small>
-        </div>
-        <div className="settings-shim-list">
-          <CapabilityRow capability={userExtensionPlaceholderModel()} focused={false} />
-        </div>
-
-        <ProjectExtensionsList
-          projectName={selectedProject?.name}
-          loading={projectExtensions.loading}
-          error={projectExtensions.error}
-          extensions={projectExtensionModels}
-          onConfirmExtension={confirmExtension}
-        />
-
-        <p className="settings-shim-note">Vanilla Pi profile 不注入 GUI runtime 增强，也不会继承用户扩展；隔离 profile 只会显式注入已确认且匹配 capability 的项目扩展。</p>
-      </div>
-    </details>
+      <ProjectExtensionsList
+        loading={projectExtensions.loading}
+        error={projectExtensions.error}
+        extensions={projectExtensionModels}
+        onConfirmExtension={confirmExtension}
+      />
+    </div>
   );
 }
 
+function CustomCapabilityCard({ capability, checked, active, editable, focused, onChange }: { capability: CapabilityDisplayModel; checked: boolean; active: boolean; editable: boolean; focused: boolean; onChange: (enabled: boolean) => void }) {
+  const tags = capabilityTags(capability, active);
+  return (
+    <article className={`settings-capability-card ${focused ? "focused" : ""} ${!editable ? "readonly" : ""}`} id={`capability-${capability.id}`} aria-current={focused ? "true" : undefined}>
+      <header className="settings-capability-card-header">
+        <span>{capability.label}</span>
+        <label className={`settings-toggle-control settings-capability-toggle ${editable ? "" : "disabled"}`} title={editable ? "启用 GUI 拓展" : "选择自定义 Pi 后可编辑"}>
+          <input type="checkbox" aria-label={`${capability.label} capability`} checked={checked} disabled={!editable} onChange={(event) => onChange(event.target.checked)} />
+          <span className="settings-toggle-track" />
+        </label>
+      </header>
+      <p>{capability.summary}</p>
+      {capability.surfaceLabels.length > 0 ? <small className="settings-capability-surfaces">{capability.surfaceLabels.join(" · ")}</small> : null}
+      {tags.length > 0 ? (
+        <span className="settings-capability-card-tags">
+          {tags.map((tag) => <span className={tag.tone === "warning" ? "warning" : undefined} key={tag.label}>{tag.label}</span>)}
+        </span>
+      ) : null}
+    </article>
+  );
+}
+
+function capabilityTags(capability: CapabilityDisplayModel, active: boolean): Array<{ label: string; tone?: "warning" }> {
+  const tags: Array<{ label: string; tone?: "warning" }> = [];
+  if (active) tags.push({ label: "当前启用" });
+  for (const label of capability.behaviorLabels.slice(0, 2)) tags.push({ label, tone: "warning" });
+  for (const label of capability.riskLabels.filter((risk) => risk !== "UI-only").slice(0, 2)) tags.push({ label, tone: "warning" });
+  if (capability.compatibilityLabel !== "Local only") tags.push({ label: capability.compatibilityLabel });
+  return tags;
+}
+
 function ProjectExtensionsList({
-  projectName,
   loading,
   error,
   extensions,
   onConfirmExtension,
 }: {
-  projectName?: string;
   loading: boolean;
   error?: string;
   extensions: ProjectExtensionDisplayModel[];
   onConfirmExtension: (extension: ProjectExtensionDisplayModel) => void;
 }) {
   return (
-    <>
-      <div className="settings-capability-group-heading">
-        <span>Project extensions</span>
-        <small>{projectName ? `${projectName} · .pi/extensions` : "选择项目后显示"}</small>
+    <section className="settings-custom-section" aria-label="项目拓展">
+      <div className="settings-custom-section-heading">
+        <span>项目拓展</span>
       </div>
-      <div className="settings-shim-list">
-        {loading ? <div className="settings-shim-row"><span className="settings-shim-main"><span>扫描项目扩展…</span></span></div> : null}
-        {error ? <div className="settings-shim-row"><span className="settings-shim-main"><span>项目扩展扫描失败</span><small>{error}</small></span></div> : null}
-        {!loading && !error && extensions.length === 0 ? <div className="settings-shim-row"><span className="settings-shim-main"><span>未发现项目扩展</span><small>当前项目没有可管理的 .pi/extensions 或 .pi/settings.json extension 条目。</small></span></div> : null}
-        {extensions.map((extension) => <ProjectExtensionRow extension={extension} key={extension.id} onConfirm={() => onConfirmExtension(extension)} />)}
+      <div className="settings-project-extension-grid">
+        {loading ? <ProjectExtensionState title="扫描项目拓展…" /> : null}
+        {error ? <ProjectExtensionState title="项目拓展扫描失败" detail={error} tone="warning" /> : null}
+        {!loading && !error && extensions.length === 0 ? <ProjectExtensionState title="未发现项目拓展" detail="当前项目没有可管理的 .pi/extensions 或 .pi/settings.json extension 条目。" /> : null}
+        {extensions.map((extension) => <ProjectExtensionCard extension={extension} key={extension.id} onConfirm={() => onConfirmExtension(extension)} />)}
       </div>
-    </>
+    </section>
   );
 }
 
-function ProjectExtensionRow({ extension, onConfirm }: { extension: ProjectExtensionDisplayModel; onConfirm: () => void }) {
+function ProjectExtensionState({ title, detail, tone }: { title: string; detail?: string; tone?: "warning" }) {
   return (
-    <div className="settings-shim-row settings-capability-row">
-      <span className="settings-shim-main">
+    <div className={`settings-project-extension-card ${tone ?? ""}`}>
+      <span>{title}</span>
+      {detail ? <small>{detail}</small> : null}
+    </div>
+  );
+}
+
+function ProjectExtensionCard({ extension, onConfirm }: { extension: ProjectExtensionDisplayModel; onConfirm: () => void }) {
+  return (
+    <article className="settings-project-extension-card">
+      <header>
         <span>{extension.label}</span>
-        <small>{extension.relativePath}</small>
-        <small className="settings-capability-surfaces">{extension.summary}</small>
+        <span className={`settings-status-chip ${extension.confirmed ? "" : "warning"}`}>{extension.confirmed ? "已确认" : "未确认"}</span>
+      </header>
+      <small>{extension.relativePath}</small>
+      <p>{extension.summary}</p>
+      <span className="settings-capability-card-tags">
+        {extension.capabilityLabels.slice(0, 3).map((label) => <span key={`capability-${label}`}>{label}</span>)}
+        {extension.warningLabels.slice(0, 2).map((warning) => <span className="warning" key={`warning-${warning}`}>{warning}</span>)}
       </span>
-      <span className="settings-shim-tags settings-capability-tags">
-        <span>{extension.integrationLevelLabel}</span>
-        <span>{extension.sourceLabel}</span>
-        {extension.capabilityLabels.map((label) => <span key={`capability-${label}`}>{label}</span>)}
-        {extension.warningLabels.map((warning) => <span className="warning" key={`warning-${warning}`}>{warning}</span>)}
-        {extension.confirmed ? <span>已确认</span> : <span className="warning">未确认</span>}
-        {!extension.confirmed && extension.injectable ? (
-          <button className="settings-inline-action" type="button" onClick={onConfirm}>确认启用</button>
-        ) : null}
-      </span>
-    </div>
-  );
-}
-
-function CapabilityRow({
-  capability,
-  petEnabled,
-  desktopPetEnabled,
-  desktopPetAvailable,
-  focused,
-  onPetEnabledChange,
-  onDesktopPetEnabledChange,
-}: {
-  capability: CapabilityDisplayModel;
-  petEnabled?: boolean;
-  desktopPetEnabled?: boolean;
-  desktopPetAvailable?: boolean;
-  focused: boolean;
-  onPetEnabledChange?: (enabled: boolean) => void;
-  onDesktopPetEnabledChange?: (enabled: boolean) => void;
-}) {
-  const isPet = capability.id === "pi-pet-companion";
-  return (
-    <div className={`settings-shim-row settings-capability-row ${focused ? "focused" : ""}`} aria-current={focused ? "true" : undefined} id={`capability-${capability.id}`}>
-      <span className="settings-shim-main">
-        <span>{capability.label}</span>
-        <small>{capability.summary}</small>
-        {capability.surfaceLabels.length > 0 ? <small className="settings-capability-surfaces">{capability.surfaceLabels.join(" · ")}</small> : null}
-      </span>
-      <span className="settings-shim-tags settings-capability-tags">
-        <span>{capability.integrationLevelLabel}</span>
-        <span>{capability.originLabel}</span>
-        <span>{capability.implementationHostLabel}</span>
-        <span>{capability.releaseStanceLabel}</span>
-        <span>{capability.compatibilityLabel}</span>
-        {capability.profileLabels.map((profile) => <span key={`profile-${profile}`}>{profile}</span>)}
-        {capability.riskLabels.map((risk) => <span className={risk === "UI-only" ? undefined : "warning"} key={`risk-${risk}`}>{risk}</span>)}
-        {capability.behaviorLabels.map((label) => <span className="warning" key={`behavior-${label}`}>{label}</span>)}
-        {capability.docsLabel ? <span>{capability.docsLabel}</span> : null}
-        {isPet && onPetEnabledChange ? (
-          <label className="settings-toggle-control settings-capability-toggle" title="GUI 内 PET">
-            <input type="checkbox" aria-label="Pi PET capability" checked={Boolean(petEnabled)} onChange={(event) => onPetEnabledChange(event.target.checked)} />
-            <span className="settings-toggle-track" />
-          </label>
-        ) : null}
-        {isPet && desktopPetAvailable && onDesktopPetEnabledChange ? (
-          <label className="settings-toggle-control settings-capability-toggle" title="系统级桌宠">
-            <input type="checkbox" aria-label="Pi PET desktop companion" checked={Boolean(desktopPetEnabled)} onChange={(event) => onDesktopPetEnabledChange(event.target.checked)} />
-            <span className="settings-toggle-track" />
-          </label>
-        ) : null}
-      </span>
-    </div>
+      {!extension.confirmed && extension.injectable ? <button className="settings-inline-action" type="button" onClick={onConfirm}>确认启用</button> : null}
+    </article>
   );
 }
 

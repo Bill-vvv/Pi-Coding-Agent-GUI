@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { RendererRuntimeConfig } from "./desktopConfig.js";
-import { desktopHostChannels, desktopPetChannels, rendererConfigChannels, windowControlChannels, type DesktopPetDisplayPayload, type WindowStatePayload } from "./windowControls.js";
+import { desktopHostChannels, desktopPetChannels, rendererConfigChannels, windowControlChannels, type DesktopPetDisplayPayload, type DesktopPetListPayload, type WindowStatePayload } from "./windowControls.js";
 
 const transparentWindow = process.argv.includes("--pi-gui-transparent-window=1");
 if (transparentWindow) {
@@ -26,8 +26,12 @@ contextBridge.exposeInMainWorld("__PI_GUI_DESKTOP__", {
   selectBackendHost: (kind: "wsl" | "windows") => ipcRenderer.invoke(desktopHostChannels.select, kind),
   setDesktopPetVisible: (visible: boolean) => ipcRenderer.invoke(desktopPetChannels.setVisible, visible),
   updateDesktopPet: (display: DesktopPetDisplayPayload) => ipcRenderer.invoke(desktopPetChannels.update, display),
-  onDesktopPetDisplay: (callback: (display: DesktopPetDisplayPayload) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: DesktopPetDisplayPayload) => callback(payload);
+  listDesktopPets: () => ipcRenderer.invoke(desktopPetChannels.list) as Promise<DesktopPetListPayload>,
+  setDesktopPetSelection: (petId: string) => ipcRenderer.invoke(desktopPetChannels.select, petId),
+  setDesktopPetScale: (scale: number) => ipcRenderer.invoke(desktopPetChannels.setScale, scale),
+  resetDesktopPetPosition: () => ipcRenderer.invoke(desktopPetChannels.resetPosition),
+  onDesktopPetDisplay: (callback: (display: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload);
     ipcRenderer.on(desktopPetChannels.updated, listener);
     return () => ipcRenderer.removeListener(desktopPetChannels.updated, listener);
   },

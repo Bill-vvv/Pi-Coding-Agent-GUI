@@ -10,8 +10,13 @@ export type UseTokenUsageOverviewResult = {
   refresh: () => void;
 };
 
+const TOKEN_USAGE_CACHE_TTL_MS = 60_000;
+const tokenUsageCache = new Map<string, { usage: TokenUsageOverview; expiresAt: number }>();
+const tokenUsageInFlight = new Map<string, Promise<TokenUsageOverview>>();
+
 export function useTokenUsageOverview(range: TokenUsageRange, projectId?: string): UseTokenUsageOverviewResult {
-  const [usage, setUsage] = useState<TokenUsageOverview | undefined>();
+  const cacheKey = tokenUsageCacheKey(range, projectId);
+  const [usage, setUsage] = useState<TokenUsageOverview | undefined>(() => tokenUsageCache.get(cacheKey)?.usage);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [refreshIndex, setRefreshIndex] = useState(0);
@@ -23,22 +28,36 @@ export function useTokenUsageOverview(range: TokenUsageRange, projectId?: string
   }, [range, projectId]);
 
   useEffect(() => {
+    const cached = tokenUsageCache.get(cacheKey);
+    if (cached) setUsage(cached.usage);
+    if (cached && cached.expiresAt > Date.now() && refreshIndex === 0) return;
+
     const controller = new AbortController();
-    setLoading(true);
+    setLoading(!cached);
     setError(undefined);
-    void fetchTokenUsageOverview(urls, controller.signal)
-      .then((usage) => setUsage(usage))
+    const inFlight = tokenUsageInFlight.get(cacheKey) ?? fetchTokenUsageOverview(urls, controller.signal);
+    tokenUsageInFlight.set(cacheKey, inFlight);
+    void inFlight
+      .then((usage) => {
+        tokenUsageCache.set(cacheKey, { usage, expiresAt: Date.now() + TOKEN_USAGE_CACHE_TTL_MS });
+        setUsage(usage);
+      })
       .catch((caught: unknown) => {
         if (controller.signal.aborted) return;
         setError(caught instanceof Error ? caught.message : "读取用量失败");
       })
       .finally(() => {
+        if (tokenUsageInFlight.get(cacheKey) === inFlight) tokenUsageInFlight.delete(cacheKey);
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [urls, refreshIndex]);
+  }, [cacheKey, refreshIndex, urls]);
 
   return { usage, loading, error, refresh: () => setRefreshIndex((value) => value + 1) };
+}
+
+function tokenUsageCacheKey(range: TokenUsageRange, projectId: string | undefined): string {
+  return `${range}\0${projectId ?? ""}`;
 }
 
 async function fetchTokenUsageOverview(urls: string[], signal: AbortSignal): Promise<TokenUsageOverview> {

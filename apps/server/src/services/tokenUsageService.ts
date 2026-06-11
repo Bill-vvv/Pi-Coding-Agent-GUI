@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
-import type { Project, TokenUsageOverview, TokenUsageRange } from "@pi-gui/shared";
+import type { Project, TokenUsageDay, TokenUsageOverview, TokenUsageRange } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
+import type { TokenUsageCacheContext } from "../db/tokenUsageCache.js";
 import {
   addDailyUsage,
   addModelUsage,
@@ -32,6 +33,8 @@ import {
   type TokenUsageServiceOptions,
 } from "./tokenUsage/index.js";
 
+const TOKEN_USAGE_CACHE_PARSER_VERSION = 1;
+
 export type { TokenUsageServiceOptions } from "./tokenUsage/index.js";
 export { emptyTokenUsageOverview } from "./tokenUsage/index.js";
 
@@ -51,6 +54,12 @@ export class TokenUsageService {
     const range = normalizeTokenUsageRange(input.range);
     const projects = db.listProjects();
     const projectByCwd = new Map(projects.map((project) => [resolve(project.cwd), project]));
+    const projectFingerprint = tokenUsageProjectFingerprint(projects);
+    const cacheContext = {
+      parserVersion: TOKEN_USAGE_CACHE_PARSER_VERSION,
+      maxLineBytes: this.maxLineBytes,
+      projectFingerprint,
+    };
     const knownProjectIds = new Set(projects.map((project) => project.id));
 
     if (input.projectId && !knownProjectIds.has(input.projectId)) {
@@ -74,7 +83,7 @@ export class TokenUsageService {
     combined.coverage.scanLimited = scanLimited;
 
     for (const { filePath } of files) {
-      const contribution = this.parseFile(filePath, projectByCwd);
+      const contribution = this.parseFile(filePath, projectByCwd, db, cacheContext);
       if (!contribution.projectId) continue;
       if (input.projectId && contribution.projectId !== input.projectId) continue;
       mergeContribution(combined, contribution);
@@ -83,7 +92,7 @@ export class TokenUsageService {
     return overviewFromContribution(combined, range, input.projectId, this.now());
   }
 
-  private parseFile(filePath: string, projectByCwd: Map<string, Project>): FileContribution {
+  private parseFile(filePath: string, projectByCwd: Map<string, Project>, db: AppDatabase, cacheContext: TokenUsageCacheContext): FileContribution {
     const stats = safeStat(filePath);
     const cached = stats ? this.cache.get(filePath) : undefined;
     if (cached && cached.mtimeMs === stats?.mtimeMs && cached.size === stats.size) {
@@ -91,6 +100,9 @@ export class TokenUsageService {
       contribution.coverage.cachedFiles += 1;
       return contribution;
     }
+
+    const persisted = stats ? this.readPersistentCache(db, filePath, stats, cacheContext) : undefined;
+    if (persisted) return persisted;
 
     const contribution = createEmptyContribution();
     contribution.coverage.scannedFiles = 1;
@@ -149,13 +161,121 @@ export class TokenUsageService {
     });
 
     if (!readOk) return contribution;
-    if (stats) this.cache.set(filePath, { mtimeMs: stats.mtimeMs, size: stats.size, contribution: cloneContribution(contribution) });
+    if (stats) {
+      this.cache.set(filePath, { mtimeMs: stats.mtimeMs, size: stats.size, contribution: cloneContribution(contribution) });
+      this.writePersistentCache(db, filePath, stats, contribution, cacheContext);
+    }
     return contribution;
+  }
+
+  private readPersistentCache(db: AppDatabase, filePath: string, stats: { mtimeMs: number; size: number }, cacheContext: TokenUsageCacheContext): FileContribution | undefined {
+    const cached = db.getTokenUsageFileCache(filePath, cacheContext);
+    if (!cached || cached.mtimeMs !== stats.mtimeMs || cached.size !== stats.size) return undefined;
+    const contribution = deserializeFileContribution(cached.contributionJson);
+    if (!contribution) {
+      db.deleteTokenUsageFileCache(filePath);
+      return undefined;
+    }
+    this.cache.set(filePath, { mtimeMs: stats.mtimeMs, size: stats.size, contribution: cloneContribution(contribution) });
+    const result = cloneContribution(contribution);
+    result.coverage.cachedFiles += 1;
+    return result;
+  }
+
+  private writePersistentCache(db: AppDatabase, filePath: string, stats: { mtimeMs: number; size: number }, contribution: FileContribution, cacheContext: TokenUsageCacheContext): void {
+    db.upsertTokenUsageFileCache({
+      ...cacheContext,
+      filePath,
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+      contributionJson: serializeFileContribution(contribution),
+      updatedAt: this.now(),
+    });
   }
 }
 
+type SerializedFileContribution = {
+  projectId?: string;
+  sessionId?: string;
+  sessionStartedAt?: number;
+  days: TokenUsageDay[];
+  coverage: FileContribution["coverage"];
+  models: Array<{ key: string; provider?: string; model: string; totalTokens: number; messages: number; activeDays: string[] }>;
+  peakHours: Array<[number, number]>;
+};
+
+function serializeFileContribution(contribution: FileContribution): string {
+  const serialized: SerializedFileContribution = {
+    projectId: contribution.projectId,
+    sessionId: contribution.sessionId,
+    sessionStartedAt: contribution.sessionStartedAt,
+    days: [...contribution.days.values()],
+    coverage: contribution.coverage,
+    models: [...contribution.models.entries()].map(([key, model]) => ({
+      key,
+      provider: model.provider,
+      model: model.model,
+      totalTokens: model.totalTokens,
+      messages: model.messages,
+      activeDays: [...model.activeDays],
+    })),
+    peakHours: [...contribution.peakHours.entries()],
+  };
+  return JSON.stringify(serialized);
+}
+
+function deserializeFileContribution(value: string): FileContribution | undefined {
+  try {
+    const parsed = JSON.parse(value) as Partial<SerializedFileContribution>;
+    if (!parsed || !Array.isArray(parsed.days) || !parsed.coverage || !Array.isArray(parsed.models) || !Array.isArray(parsed.peakHours)) return undefined;
+    return {
+      projectId: typeof parsed.projectId === "string" ? parsed.projectId : undefined,
+      sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : undefined,
+      sessionStartedAt: typeof parsed.sessionStartedAt === "number" ? parsed.sessionStartedAt : undefined,
+      days: new Map(parsed.days.filter(isSerializedDay).map((day) => [day.day, { ...day, tokens: { ...day.tokens }, models: day.models.map((model) => ({ ...model })) }])),
+      coverage: parsed.coverage,
+      models: new Map(
+        parsed.models.filter(isSerializedModel).map((model) => [
+          model.key,
+          {
+            provider: model.provider,
+            model: model.model,
+            totalTokens: model.totalTokens,
+            messages: model.messages,
+            activeDays: new Set(model.activeDays),
+          },
+        ]),
+      ),
+      peakHours: new Map(parsed.peakHours.filter(isSerializedPeakHour)),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function isSerializedDay(value: unknown): value is TokenUsageDay {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Partial<TokenUsageDay>;
+  const tokens = record.tokens;
+  return typeof record.day === "string" && Boolean(tokens) && typeof tokens?.total === "number" && Array.isArray(record.models);
+}
+
+function isSerializedModel(value: unknown): value is SerializedFileContribution["models"][number] {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Partial<SerializedFileContribution["models"][number]>;
+  return typeof record.key === "string" && typeof record.model === "string" && typeof record.totalTokens === "number" && typeof record.messages === "number" && Array.isArray(record.activeDays);
+}
+
+function isSerializedPeakHour(value: unknown): value is [number, number] {
+  return Array.isArray(value) && value.length === 2 && typeof value[0] === "number" && typeof value[1] === "number";
+}
+
+function tokenUsageProjectFingerprint(projects: Project[]): string {
+  return JSON.stringify(projects.map((project) => [project.id, resolve(project.cwd)]).sort(([left], [right]) => left.localeCompare(right)));
+}
+
 export function normalizeTokenUsageRange(value: unknown): TokenUsageRange {
-  return value === "all" || value === "7d" || value === "30d" ? value : "30d";
+  return value === "all" || value === "365d" || value === "7d" || value === "30d" ? value : "30d";
 }
 
 function emptyOverview(range: TokenUsageRange, projectId: string | undefined, generatedAt: number): TokenUsageOverview {

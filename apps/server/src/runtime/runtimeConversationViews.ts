@@ -48,7 +48,7 @@ export function buildRuntimeConversationSummaries({
 
     const session = db.getSession(runtime.sessionId);
     if (!session) continue;
-    const fileSummary = readPiSessionConversationSummary(session.piSessionFile);
+    const fileSummary = readPiSessionConversationSummary(session.piSessionFile, db);
     if (!fileSummary && !session.title) continue;
 
     summaries.set(runtime.id, {

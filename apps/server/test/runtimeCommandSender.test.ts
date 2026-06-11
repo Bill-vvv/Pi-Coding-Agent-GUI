@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RuntimeQueue } from "@pi-gui/shared";
-import { replaceQueuedPrompts } from "../src/runtime/runtimeCommandSender.js";
+import { dequeueQueuedPrompts, replaceQueuedPrompts } from "../src/runtime/runtimeCommandSender.js";
 import type { ManagedRuntime } from "../src/runtime/managedRuntime.js";
 
 function createManagedRuntime(currentQueue: RuntimeQueue) {
@@ -18,6 +18,16 @@ function createManagedRuntime(currentQueue: RuntimeQueue) {
   } as unknown as ManagedRuntime;
   return { managed, sent, requests };
 }
+
+test("dequeueQueuedPrompts reports unsupported clear_queue without timing out", async () => {
+  const { managed } = createManagedRuntime({ steering: [], followUp: [] });
+  managed.client.request = async () => ({ type: "response", command: "clear_queue", success: false, error: "Unknown command: clear_queue" });
+
+  await assert.rejects(
+    () => dequeueQueuedPrompts(managed),
+    /当前 Pi RPC 未暴露队列撤回\/排序接口（clear_queue）/,
+  );
+});
 
 test("replaceQueuedPrompts clears and re-enqueues the requested queue order", async () => {
   const { managed, sent, requests } = createManagedRuntime({ steering: ["first", "second"], followUp: ["next", "later"] });

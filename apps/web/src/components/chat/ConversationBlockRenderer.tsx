@@ -4,11 +4,13 @@ import type { ConversationMessage } from "../../types";
 import { MarkdownMessage } from "../MarkdownMessage";
 import { ScrollableContent, ScrollablePre } from "./ScrollableContent";
 import { ToolGroupBlock } from "./ToolGroupBlock";
+import { TuiProcessBlock } from "./TuiProcessBlock";
 import { ToolDiffView } from "./ToolDiffView";
 import type { ConversationBlockActions } from "./types";
 
 export function renderBlock(block: ConversationDisplayBlock, actions: ConversationBlockActions = {}) {
   if (block.type === "tool_group") return <ToolGroupBlock block={block} actions={actions} key={block.id} />;
+  if (block.type === "tui_process") return <TuiProcessBlock block={block} actions={actions} key={block.id} />;
 
   const message = block.message;
   const rendersInlineTool = block.displayKind === "plain" && isToolDisplayMessage(message);

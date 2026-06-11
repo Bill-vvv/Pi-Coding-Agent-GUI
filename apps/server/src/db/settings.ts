@@ -13,6 +13,7 @@ export class SettingsStore {
       if (row.key === "defaultThinkingLevel") settings.defaultThinkingLevel = parseThinkingLevel(row.value);
       if (row.key === "responseMode") settings.responseMode = row.value === "fast" ? "fast" : "normal";
       if (row.key === "defaultRuntimeProfileId" && isRuntimeProfileId(row.value)) settings.defaultRuntimeProfileId = row.value;
+      if (row.key === "customRuntimeCapabilityIds") settings.customRuntimeCapabilityIds = parseStringArray(row.value);
       if (row.key === "confirmedProjectExtensionIds") settings.confirmedProjectExtensionIds = parseStringArray(row.value);
     }
     return settings;
@@ -31,6 +32,9 @@ export class SettingsStore {
     }
     if (settings.defaultRuntimeProfileId !== undefined) {
       this.upsertSetting("defaultRuntimeProfileId", settings.defaultRuntimeProfileId, now);
+    }
+    if (settings.customRuntimeCapabilityIds !== undefined) {
+      this.upsertSetting("customRuntimeCapabilityIds", JSON.stringify([...new Set(settings.customRuntimeCapabilityIds)].sort()), now);
     }
     if (settings.confirmedProjectExtensionIds !== undefined) {
       this.upsertSetting("confirmedProjectExtensionIds", JSON.stringify([...new Set(settings.confirmedProjectExtensionIds)].sort()), now);

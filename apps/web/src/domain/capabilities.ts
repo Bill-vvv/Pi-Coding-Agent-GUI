@@ -1,5 +1,5 @@
 import type { AppSettings, CapabilityDescriptor, CapabilityImplementationHost, CapabilityOrigin, CapabilityReleaseStance, CapabilityRisk, DiscoveredPiExtensionDescriptor, RuntimeProfileDescriptor, RuntimeProfileId } from "@pi-gui/shared";
-import { PI_GUI_CAPABILITIES, RUNTIME_PROFILES } from "@pi-gui/shared";
+import { LEGACY_RUNTIME_PROFILES, PI_GUI_CAPABILITIES, RUNTIME_PROFILES } from "@pi-gui/shared";
 
 export type CapabilityDisplayModel = {
   id: string;
@@ -17,14 +17,16 @@ export type CapabilityDisplayModel = {
   docsLabel?: string;
 };
 
+const CAPABILITY_DISPLAY_PROFILES = [...RUNTIME_PROFILES, ...LEGACY_RUNTIME_PROFILES];
+
 export function capabilityDisplayModels(
   capabilities: readonly CapabilityDescriptor[] = PI_GUI_CAPABILITIES,
-  profiles: readonly RuntimeProfileDescriptor[] = RUNTIME_PROFILES,
+  profiles: readonly RuntimeProfileDescriptor[] = CAPABILITY_DISPLAY_PROFILES,
 ): CapabilityDisplayModel[] {
   return capabilities.map((capability) => capabilityDisplayModel(capability, profiles));
 }
 
-export function capabilityDisplayModel(capability: CapabilityDescriptor, profiles: readonly RuntimeProfileDescriptor[] = RUNTIME_PROFILES): CapabilityDisplayModel {
+export function capabilityDisplayModel(capability: CapabilityDescriptor, profiles: readonly RuntimeProfileDescriptor[] = CAPABILITY_DISPLAY_PROFILES): CapabilityDisplayModel {
   return {
     id: capability.id,
     label: capability.label,
@@ -42,10 +44,10 @@ export function capabilityDisplayModel(capability: CapabilityDescriptor, profile
   };
 }
 
-export const UNKNOWN_USER_EXTENSIONS_CONFIRMATION = "Pi + User Extensions 会继承现有用户 Pi extension 设置。无 manifest 的扩展权限和行为未声明，且不会被视为 Pi GUI 内建能力。确认启用这个默认 profile？";
+export const UNKNOWN_USER_EXTENSIONS_CONFIRMATION = "该运行模式会继承现有用户 Pi extension 设置。无 manifest 的扩展权限和行为未声明，且不会被视为 Pi GUI 内建能力。确认启用？";
 
-export function requiresUnknownExtensionConfirmation(nextProfileId: RuntimeProfileId, currentProfileId: RuntimeProfileId | undefined): boolean {
-  return nextProfileId === "pi-user-extensions" && currentProfileId !== "pi-user-extensions";
+export function requiresUnknownExtensionConfirmation(_nextProfileId: RuntimeProfileId, _currentProfileId: RuntimeProfileId | undefined): boolean {
+  return false;
 }
 
 export type ProjectExtensionDisplayModel = {
@@ -85,14 +87,14 @@ export function confirmProjectExtension(settings: AppSettings, extensionId: stri
 }
 
 export function projectExtensionConfirmationMessage(extension: ProjectExtensionDisplayModel): string {
-  return `确认允许 Pi GUI 在隔离 profile 中显式注入项目扩展 ${extension.relativePath}？无 manifest 的扩展权限和行为未声明，仅应启用你信任的项目扩展。`;
+  return `确认允许 Pi GUI 显式注入项目扩展 ${extension.relativePath}？无 manifest 的扩展权限和行为未声明，仅应启用你信任的项目扩展。`;
 }
 
 export function userExtensionPlaceholderModel(): CapabilityDisplayModel {
   return {
     id: "unknown-user-extension",
     label: "Unknown / no-manifest user extensions",
-    summary: "Pi + User Extensions profile can inherit existing user extension setup. Without a manifest, Pi GUI treats behavior and permissions as undeclared.",
+    summary: "Default Pi profile inherits existing user extension setup. Without a manifest, Pi GUI treats behavior and permissions as undeclared.",
     originLabel: "User",
     integrationLevelLabel: "L0",
     implementationHostLabel: "Pi extension",
@@ -100,14 +102,13 @@ export function userExtensionPlaceholderModel(): CapabilityDisplayModel {
     riskLabels: ["权限未声明"],
     compatibilityLabel: "取决于用户环境",
     surfaceLabels: ["Generic tools/logs only"],
-    behaviorLabels: ["Not inherited by Vanilla Pi", "First enable requires confirmation"],
-    profileLabels: ["Pi + User Extensions"],
+    behaviorLabels: ["Not inherited by Safe Mode"],
+    profileLabels: ["默认 Pi"],
   };
 }
 
 function extensionLabel(extension: DiscoveredPiExtensionDescriptor): string {
   if (extension.capabilityIds.includes("trellis-subagent")) return "Trellis project extension";
-  if (extension.capabilityIds.includes("interactive-prompts")) return "Interactive Prompts project extension";
   return "Unknown project extension";
 }
 
@@ -158,12 +159,12 @@ function implementationHostLabel(host: CapabilityImplementationHost): string {
 function riskLabel(risk: CapabilityRisk): string {
   switch (risk) {
     case "ui-only": return "UI-only";
-    case "filesystem": return "文件系统";
-    case "network": return "网络";
-    case "credential": return "凭据";
-    case "process": return "进程";
-    case "microphone": return "麦克风";
-    case "pi-environment-mutation": return "改 Pi 环境";
+    case "filesystem": return "Filesystem";
+    case "network": return "Network";
+    case "credential": return "Credential";
+    case "process": return "Process";
+    case "microphone": return "Microphone";
+    case "pi-environment-mutation": return "Pi environment mutation";
   }
 }
 
@@ -183,7 +184,6 @@ function surfaceLabels(capability: CapabilityDescriptor): string[] {
 function behaviorLabels(capability: CapabilityDescriptor): string[] {
   const labels: string[] = [];
   if (capability.changesAgentBehavior) labels.push("改 Agent 行为");
-  if (capability.startsProcesses) labels.push("启动进程");
   if (capability.mutatesPiEnvironment) labels.push("会修改环境");
   if (capability.requiresExplicitSetup) labels.push("需要显式设置");
   return labels;

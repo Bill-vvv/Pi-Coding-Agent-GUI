@@ -40,7 +40,6 @@ test("createPiRuntimeEnv strips outer session identity and injects GUI extension
     PI_SESSION_ID: process.env.PI_SESSION_ID,
     PI_SESSIONID: process.env.PI_SESSIONID,
     PI_GUI_CODEX_TRANSPORT_MONITOR: process.env.PI_GUI_CODEX_TRANSPORT_MONITOR,
-    PI_GUI_ASK_BATCH_DIALOG: process.env.PI_GUI_ASK_BATCH_DIALOG,
     PI_GUI_SERVICE_TIER_FILE: process.env.PI_GUI_SERVICE_TIER_FILE,
   };
 
@@ -49,7 +48,6 @@ test("createPiRuntimeEnv strips outer session identity and injects GUI extension
     process.env.PI_SESSION_ID = "outer-session";
     process.env.PI_SESSIONID = "outer-session-legacy";
     delete process.env.PI_GUI_CODEX_TRANSPORT_MONITOR;
-    delete process.env.PI_GUI_ASK_BATCH_DIALOG;
     delete process.env.PI_GUI_SERVICE_TIER_FILE;
 
     const env = createPiRuntimeEnv({ serviceTierConfigFile: "/tmp/pi-gui-service-tier.json" });
@@ -59,10 +57,8 @@ test("createPiRuntimeEnv strips outer session identity and injects GUI extension
     assert.equal(env.PI_SESSION_ID, undefined);
     assert.equal(env.PI_SESSIONID, undefined);
     assert.equal(env.PI_GUI_CODEX_TRANSPORT_MONITOR, "0");
-    assert.equal(env.PI_GUI_ASK_BATCH_DIALOG, "0");
     assert.equal(env.PI_GUI_SERVICE_TIER_FILE, "/tmp/pi-gui-service-tier.json");
 
-    assert.equal(createPiRuntimeEnv({ interactivePromptsEnabled: true }).PI_GUI_ASK_BATCH_DIALOG, "1");
     assert.equal(createPiRuntimeEnv({ codexTransportMonitorEnabled: true }).PI_GUI_CODEX_TRANSPORT_MONITOR, "1");
   } finally {
     restoreEnv(previous);
@@ -146,7 +142,7 @@ process.stdin.resume();
   });
 });
 
-test("createPiRuntimeClient launches Vanilla Pi with GUI extensions and user extension discovery disabled", async () => {
+test("createPiRuntimeClient defaults to Pi + User Extensions discovery", async () => {
   const fakeBin = createFakePiBin(`#!/usr/bin/env node
 process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2) }) + "\\n");
 process.stdin.resume();
@@ -165,10 +161,41 @@ process.stdin.resume();
         const started = (await startedPromise) as { argv: string[] };
         const extensionPaths = extensionArgsFromArgv(started.argv);
 
-        assert.deepEqual(started.argv, ["--mode", "rpc", "--model", "openai:gpt-5", "--thinking", "high", "--no-extensions"]);
+        assert.deepEqual(started.argv, ["--mode", "rpc", "--model", "openai:gpt-5", "--thinking", "high"]);
         assert.equal(extensionPaths.length, 0);
+        assert.equal(capabilityPlan.runtimeProfileId, "pi-user-extensions");
+        assert.equal(capabilityPlan.inheritUserExtensions, true);
         assert.ok(!capabilityPlan.enabledCapabilityIds.includes("provider-models"));
         assert.equal(existsSync(serviceTierConfigFile), false);
+      } finally {
+        client.stop();
+        await onceClientEvent(client, "exit");
+      }
+    }),
+  );
+});
+
+test("createPiRuntimeClient launches Safe Mode with user extension discovery disabled", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2) }) + "\\n");
+process.stdin.resume();
+`);
+  const cwd = mkdtempSync(join(tmpdir(), "pi-gui-safe-mode-cwd-"));
+
+  await withCwd(cwd, () =>
+    withPathPrefix(fakeBin, async () => {
+      const { client, capabilityPlan } = createPiRuntimeClient({ runtimeId: "runtime-safe", cwd, runtimeProfileId: "vanilla-pi" });
+      const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
+
+      try {
+        client.start();
+        const started = (await startedPromise) as { argv: string[] };
+        const extensionPaths = extensionArgsFromArgv(started.argv);
+
+        assert.deepEqual(started.argv, ["--mode", "rpc", "--no-extensions"]);
+        assert.equal(extensionPaths.length, 0);
+        assert.equal(capabilityPlan.runtimeProfileId, "vanilla-pi");
+        assert.equal(capabilityPlan.inheritUserExtensions, false);
       } finally {
         client.stop();
         await onceClientEvent(client, "exit");
@@ -207,27 +234,25 @@ process.stdin.resume();
 
 test("createPiRuntimeClient launches enhanced profile with selected GUI extensions", async () => {
   const fakeBin = createFakePiBin(`#!/usr/bin/env node
-process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2), env: { askBatch: process.env.PI_GUI_ASK_BATCH_DIALOG, codex: process.env.PI_GUI_CODEX_TRANSPORT_MONITOR } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "started", argv: process.argv.slice(2), env: { codex: process.env.PI_GUI_CODEX_TRANSPORT_MONITOR } }) + "\\n");
 process.stdin.resume();
 `);
   const cwd = mkdtempSync(join(tmpdir(), "pi-gui-enhanced-cwd-"));
 
   await withCwd(cwd, () =>
     withPathPrefix(fakeBin, async () => {
-      const { client, capabilityPlan } = createPiRuntimeClient({ runtimeId: "runtime-enhanced", cwd, runtimeProfileId: "pi-gui-enhanced" });
+      const { client } = createPiRuntimeClient({ runtimeId: "runtime-enhanced", cwd, runtimeProfileId: "pi-gui-enhanced" });
       const startedPromise = waitForPiEvent(client, (payload) => typeof payload === "object" && payload !== null && (payload as { type?: unknown }).type === "started");
 
       try {
         client.start();
-        const started = (await startedPromise) as { argv: string[]; env: { askBatch?: string; codex?: string } };
+        const started = (await startedPromise) as { argv: string[]; env: { codex?: string } };
         const extensionPaths = extensionArgsFromArgv(started.argv);
 
         assert.ok(started.argv.includes("--no-extensions"));
         assert.equal(extensionPaths.length, 1);
         assert.ok(extensionPaths.some((path) => /piReadyNotificationExtension\.(?:ts|js)$/.test(path)));
-        assert.equal(started.env.askBatch, "1");
         assert.equal(started.env.codex, "0");
-        assert.ok(capabilityPlan.enabledCapabilityIds.includes("interactive-prompts"));
       } finally {
         client.stop();
         await onceClientEvent(client, "exit");
@@ -352,6 +377,42 @@ process.stdin.resume();
 
     const payload = (await linePromise) as { line: string };
     assert.equal(payload.line, JSON.stringify({ id: "req-1", type: "prompt", message: "hello" }));
+
+    client.stop();
+    await onceClientEvent(client, "exit");
+  });
+});
+
+test("PiRpcClient resolves id-less unknown-command responses by command name", async () => {
+  const fakeBin = createFakePiBin(`#!/usr/bin/env node
+let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let index;
+  while ((index = buffer.indexOf("\\n")) !== -1) {
+    const line = buffer.slice(0, index);
+    buffer = buffer.slice(index + 1);
+    if (!line.trim()) continue;
+    const request = JSON.parse(line);
+    process.stdout.write(JSON.stringify({ type: "response", command: request.type, success: false, error: "Unknown command: " + request.type }) + "\\n");
+  }
+});
+process.stdin.resume();
+`);
+
+  await withPathPrefix(fakeBin, async () => {
+    const client = new PiRpcClient(process.cwd());
+
+    client.start();
+    const response = await client.request({ id: "req-clear", type: "clear_queue" }, 500);
+
+    assert.deepEqual(response, {
+      type: "response",
+      command: "clear_queue",
+      success: false,
+      error: "Unknown command: clear_queue",
+    });
 
     client.stop();
     await onceClientEvent(client, "exit");

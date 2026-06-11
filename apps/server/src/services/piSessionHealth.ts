@@ -1,4 +1,5 @@
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { isRecord } from "@pi-gui/shared";
 
 export type PiSessionHealthIssueCode = "embedded_image_context_too_large";
@@ -16,46 +17,97 @@ export type PiSessionHealthIssue = {
 
 const LARGE_SESSION_BYTES = 16 * 1024 * 1024;
 const LARGE_EMBEDDED_STRING_CHARS = 100_000;
+const INSPECTOR_VERSION = 1;
+const STREAM_CHUNK_BYTES = 64 * 1024;
+const healthCache = new Map<string, { inspectorVersion: number; mtimeMs: number; sizeBytes: number; issue?: PiSessionHealthIssue }>();
 
 export function inspectPiSessionFile(filePath: string): PiSessionHealthIssue | undefined {
-  const sizeBytes = statSync(filePath).size;
+  const stats = statSync(filePath);
+  const sizeBytes = stats.size;
   if (sizeBytes < LARGE_SESSION_BYTES) return undefined;
 
-  const content = readFileSync(filePath, "utf8");
-  return inspectPiSessionContent(filePath, content, sizeBytes);
+  const cached = healthCache.get(filePath);
+  if (cached && cached.inspectorVersion === INSPECTOR_VERSION && cached.mtimeMs === stats.mtimeMs && cached.sizeBytes === sizeBytes) return cached.issue;
+
+  const issue = inspectPiSessionFileStream(filePath, sizeBytes);
+  healthCache.set(filePath, { inspectorVersion: INSPECTOR_VERSION, mtimeMs: stats.mtimeMs, sizeBytes, issue });
+  return issue;
 }
 
 export function inspectPiSessionContent(filePath: string, content: string, sizeBytes = Buffer.byteLength(content)): PiSessionHealthIssue | undefined {
-  let embeddedImageParts = 0;
-  let largeDataStrings = 0;
-  let largeBinaryStrings = 0;
-  let maxRecordBytes = 0;
+  return inspectPiSessionLines(filePath, content.split("\n"), sizeBytes);
+}
 
-  for (const line of content.split("\n")) {
-    if (!line.trim()) continue;
-    maxRecordBytes = Math.max(maxRecordBytes, Buffer.byteLength(line));
-    try {
-      collectEmbeddedPayloadStats(JSON.parse(line), undefined, (kind) => {
-        if (kind === "image") embeddedImageParts += 1;
-        if (kind === "largeData") largeDataStrings += 1;
-        if (kind === "largeBinary") largeBinaryStrings += 1;
-      });
-    } catch {
-      if (looksBinary(line) || line.length > LARGE_EMBEDDED_STRING_CHARS) largeBinaryStrings += 1;
+function inspectPiSessionFileStream(filePath: string, sizeBytes: number): PiSessionHealthIssue | undefined {
+  const fd = openSync(filePath, "r");
+  const decoder = new StringDecoder("utf8");
+  const buffer = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+  let pending = "";
+  const stats = emptyInspectionStats();
+
+  try {
+    let bytesRead = 0;
+    while ((bytesRead = readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      pending += decoder.write(buffer.subarray(0, bytesRead));
+      let newlineIndex = pending.indexOf("\n");
+      while (newlineIndex >= 0) {
+        inspectPiSessionLine(stats, pending.slice(0, newlineIndex));
+        pending = pending.slice(newlineIndex + 1);
+        newlineIndex = pending.indexOf("\n");
+      }
     }
+    pending += decoder.end();
+    if (pending) inspectPiSessionLine(stats, pending);
+  } finally {
+    closeSync(fd);
   }
 
-  if (sizeBytes < LARGE_SESSION_BYTES || (embeddedImageParts === 0 && largeDataStrings === 0 && largeBinaryStrings === 0)) return undefined;
+  return inspectionIssueFromStats(filePath, stats, sizeBytes);
+}
+
+function inspectPiSessionLines(filePath: string, lines: Iterable<string>, sizeBytes: number): PiSessionHealthIssue | undefined {
+  const stats = emptyInspectionStats();
+  for (const line of lines) inspectPiSessionLine(stats, line);
+  return inspectionIssueFromStats(filePath, stats, sizeBytes);
+}
+
+type InspectionStats = {
+  embeddedImageParts: number;
+  largeDataStrings: number;
+  largeBinaryStrings: number;
+  maxRecordBytes: number;
+};
+
+function emptyInspectionStats(): InspectionStats {
+  return { embeddedImageParts: 0, largeDataStrings: 0, largeBinaryStrings: 0, maxRecordBytes: 0 };
+}
+
+function inspectPiSessionLine(stats: InspectionStats, line: string): void {
+  if (!line.trim()) return;
+  stats.maxRecordBytes = Math.max(stats.maxRecordBytes, Buffer.byteLength(line));
+  try {
+    collectEmbeddedPayloadStats(JSON.parse(line), undefined, (kind) => {
+      if (kind === "image") stats.embeddedImageParts += 1;
+      if (kind === "largeData") stats.largeDataStrings += 1;
+      if (kind === "largeBinary") stats.largeBinaryStrings += 1;
+    });
+  } catch {
+    if (looksBinary(line) || line.length > LARGE_EMBEDDED_STRING_CHARS) stats.largeBinaryStrings += 1;
+  }
+}
+
+function inspectionIssueFromStats(filePath: string, stats: InspectionStats, sizeBytes: number): PiSessionHealthIssue | undefined {
+  if (sizeBytes < LARGE_SESSION_BYTES || (stats.embeddedImageParts === 0 && stats.largeDataStrings === 0 && stats.largeBinaryStrings === 0)) return undefined;
 
   return {
     code: "embedded_image_context_too_large",
     filePath,
     sizeBytes,
-    embeddedImageParts,
-    largeDataStrings,
-    largeBinaryStrings,
-    maxRecordBytes,
-    message: buildIssueMessage(filePath, sizeBytes, embeddedImageParts, largeDataStrings, largeBinaryStrings, maxRecordBytes),
+    embeddedImageParts: stats.embeddedImageParts,
+    largeDataStrings: stats.largeDataStrings,
+    largeBinaryStrings: stats.largeBinaryStrings,
+    maxRecordBytes: stats.maxRecordBytes,
+    message: buildIssueMessage(filePath, sizeBytes, stats.embeddedImageParts, stats.largeDataStrings, stats.largeBinaryStrings, stats.maxRecordBytes),
   };
 }
 

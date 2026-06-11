@@ -21,7 +21,6 @@ export type ChatFontSize = "small" | "medium" | "large";
 export type ThemeMode = "dark" | "light" | "system";
 export type AccentColor = "amber" | "blue" | "green" | "rose";
 export type ThinkingToolDisplayMode = ConversationDisplayMode;
-
 export type UiPreferences = {
   uiFontSize: UiFontSize;
   chatFontSize: ChatFontSize;
@@ -29,8 +28,6 @@ export type UiPreferences = {
   accentColor: AccentColor;
   thinkingToolDisplayMode: ThinkingToolDisplayMode;
   desktopNotificationsEnabled: boolean;
-  petEnabled: boolean;
-  petCollapsed: boolean;
   desktopPetEnabled: boolean;
   guiScopedModels: GuiScopedModelsPreference;
   keybindings: GuiKeybindingMap;

@@ -30,6 +30,7 @@ export type PiRuntimeClientOptions = {
   runtimeProfileId?: RuntimeProfileId;
   savedRuntimeProfileId?: RuntimeProfileId;
   defaultRuntimeProfileId?: RuntimeProfileId;
+  customRuntimeCapabilityIds?: string[];
   confirmedProjectExtensionIds?: string[];
 };
 
@@ -45,6 +46,7 @@ export function createPiRuntimeClient(options: PiRuntimeClientOptions): PiRuntim
     requestedProfileId: options.runtimeProfileId,
     savedProfileId: options.savedRuntimeProfileId,
     defaultProfileId: options.defaultRuntimeProfileId,
+    customCapabilityIds: options.customRuntimeCapabilityIds,
     responseMode: options.responseMode,
   });
   const serviceTierConfigFile = serviceTierConfigPath(options.runtimeId);
@@ -59,7 +61,6 @@ export function createPiRuntimeClient(options: PiRuntimeClientOptions): PiRuntim
       serviceTierConfigFile: capabilityPlan.serviceTierExtensionEnabled ? serviceTierConfigFile : undefined,
       extensionPaths: extensionPathsForCapabilityPlan(options.cwd, capabilityPlan, options.confirmedProjectExtensionIds),
       disableExtensionDiscovery: capabilityPlan.disableExtensionDiscovery,
-      interactivePromptsEnabled: capabilityPlan.interactivePromptsEnabled,
       codexTransportMonitorEnabled: capabilityPlan.codexTransportMonitorEnabled,
     }),
   };

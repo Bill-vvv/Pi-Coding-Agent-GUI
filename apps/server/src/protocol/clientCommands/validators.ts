@@ -29,7 +29,7 @@ export function guiEventKindsOrUndefined(value: unknown): GuiEventKind[] | undef
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) throw new Error("runtime.logs kinds must be an array");
   const kinds = value.map((item) => {
-    if (item === "runtime_status" || item === "stderr" || item === "error" || item === "pi_event") return item;
+    if (item === "runtime_status" || item === "stderr" || item === "error" || item === "pi_event" || item === "checkpoint") return item;
     throw new Error("runtime.logs kinds contains an invalid event kind");
   });
   return [...new Set(kinds)];

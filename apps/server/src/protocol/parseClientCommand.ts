@@ -1,6 +1,13 @@
 import type { ClientCommand } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
 import {
+  parseCheckpointCapture,
+  parseCheckpointGc,
+  parseCheckpointHealth,
+  parseCheckpointJumps,
+  parseCheckpointList,
+  parseCheckpointPreview,
+  parseCheckpointRestore,
   parseConversationOpen,
   parseConversationPage,
   parseEventReplay,
@@ -83,6 +90,20 @@ export function parseClientCommand(value: unknown): ClientCommand {
       return parseConversationOpen(value);
     case "conversation.page":
       return parseConversationPage(value);
+    case "checkpoint.list":
+      return parseCheckpointList(value);
+    case "checkpoint.capture":
+      return parseCheckpointCapture(value);
+    case "checkpoint.preview":
+      return parseCheckpointPreview(value);
+    case "checkpoint.restore":
+      return parseCheckpointRestore(value);
+    case "checkpoint.jumps":
+      return parseCheckpointJumps(value);
+    case "checkpoint.health":
+      return parseCheckpointHealth(value);
+    case "checkpoint.gc":
+      return parseCheckpointGc(value);
     case "subagent.detail.open":
       return parseSubagentDetailOpen(value);
     case "event.replay":

@@ -1,10 +1,12 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { ModelSummary } from "@pi-gui/shared";
-import { mergeConversationSummaries } from "../domain/conversationSummary";
+import { mergeConversationSummariesCached, type ConversationSummaryMergeCache } from "../domain/conversationSummary";
 import { modelKey, modelSummaryFromKey, THINKING_LEVELS } from "../domain/models";
 import type { AppState } from "../state/appReducer";
+import type { ConversationMessage } from "../types";
 
 export function useActiveRuntimeView(state: AppState, models: ModelSummary[]) {
+  const conversationSummaryCacheRef = useRef<ConversationSummaryMergeCache | undefined>(undefined);
   const {
     projects,
     runtimes,
@@ -51,14 +53,12 @@ export function useActiveRuntimeView(state: AppState, models: ModelSummary[]) {
     () => (activeRuntime ? messagesByRuntime[activeRuntime.id] ?? [] : []),
     [activeRuntime, messagesByRuntime],
   );
-  const lastAssistantText = useMemo(
-    () => [...conversationMessages].reverse().find((message) => message.role === "assistant" && message.text.trim())?.text,
-    [conversationMessages],
-  );
-  const conversationSummaries = useMemo(
-    () => mergeConversationSummaries(persistedConversationSummaries, messagesByRuntime),
-    [persistedConversationSummaries, messagesByRuntime],
-  );
+  const lastAssistantText = useMemo(() => latestAssistantText(conversationMessages), [conversationMessages]);
+  const conversationSummaries = useMemo(() => {
+    const cache = mergeConversationSummariesCached(persistedConversationSummaries, messagesByRuntime, conversationSummaryCacheRef.current);
+    conversationSummaryCacheRef.current = cache;
+    return cache.summaries;
+  }, [persistedConversationSummaries, messagesByRuntime]);
   const activeRuntimeConversationSummary = activeRuntime ? conversationSummaries[activeRuntime.id] : undefined;
   const activeRuntimeContextUsage = activeRuntime ? contextUsageByRuntime[activeRuntime.id] : undefined;
   const activeRuntimeQueue = activeRuntime ? queueByRuntime[activeRuntime.id] : undefined;
@@ -84,4 +84,12 @@ export function useActiveRuntimeView(state: AppState, models: ModelSummary[]) {
     activeRuntimeCommands,
     activeRuntimeIsBusy,
   };
+}
+
+function latestAssistantText(messages: ConversationMessage[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "assistant" && message.text.trim()) return message.text;
+  }
+  return undefined;
 }

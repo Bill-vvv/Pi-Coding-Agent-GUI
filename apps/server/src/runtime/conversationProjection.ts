@@ -11,6 +11,7 @@ import { toolStatusLabel, type ToolStatus } from "./conversation/toolStatus.js";
 
 type Broadcast = (event: ServerEvent) => void;
 export type RuntimeProvider = () => Runtime | undefined;
+export type ConversationUserMessageObserver = (message: ConversationMessage) => void;
 
 const SYNTHETIC_USER_INPUT_DEDUPE_MS = 5000;
 
@@ -26,6 +27,7 @@ export class ConversationProjection {
     private readonly db: AppDatabase,
     private readonly getRuntime: RuntimeProvider,
     private readonly broadcast: Broadcast,
+    private readonly onUserMessage?: ConversationUserMessageObserver,
   ) {}
 
   snapshot(limit = 100): ServerEvent | undefined {
@@ -73,7 +75,7 @@ export class ConversationProjection {
   }
 
   handlePiPayload(payload: unknown): void {
-    const normalizedEvents = normalizePiPayload(payload, { currentContextWindow: this.currentContextWindow() });
+    const normalizedEvents = normalizePiPayload(payload, { currentContextWindow: this.currentContextWindow(), db: this.db });
     if (normalizedEvents.length > 0) {
       for (const event of normalizedEvents) this.handleNormalizedEvent(event);
       return;
@@ -185,7 +187,9 @@ export class ConversationProjection {
     if (message.role === "user") {
       const id = this.userMessageIdForPiMessage(message, this.currentUserMessageId);
       if (message.text || message.errorMessage) {
-        this.upsertMessage({ id, role: message.errorMessage ? "error" : "user", text: message.text || message.errorMessage || "", timestamp: message.timestamp, isStreaming: false });
+        const projected = { id, role: message.errorMessage ? "error" as const : "user" as const, text: message.text || message.errorMessage || "", timestamp: message.timestamp, isStreaming: false };
+        this.upsertMessage(projected);
+        if (!message.errorMessage) this.onUserMessage?.({ ...projected, runtimeId: this.requireRuntime().id, projectId: this.requireRuntime().projectId });
       }
       this.currentUserMessageId = undefined;
       return;

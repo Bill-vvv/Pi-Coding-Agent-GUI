@@ -1,6 +1,6 @@
 # Pi PET Companion
 
-Pi PET Companion is a built-in Pi GUI capability that turns Pi runtime activity into a small native status pet. It is a GUI capability, not a Pi Agent core feature.
+Pi PET Companion is a built-in Pi GUI capability that turns Pi runtime activity into a small Electron desktop status pet. It is a GUI capability, not a Pi Agent core feature.
 
 ## What it shows
 
@@ -14,12 +14,13 @@ The PET is derived from existing Pi GUI state and WebSocket events:
 
 ## Interaction model
 
-- The PET floats inside the main chat surface and stays above the composer reserved area.
-- It can be collapsed or hidden.
-- On the Electron desktop shell, it can also be opened as a system-level desktop companion window that stays outside the main GUI.
-- It is managed from Settings → Integrations / Temporary Shims → Capabilities → Pi PET Companion.
-- When relevant, it can open runtime logs, the active subagent detail view, the usage overview for high context pressure, or a background runtime that needs attention.
-- Screen-reader live announcements are limited to attention/danger states so normal thinking/tool animation does not become noisy.
+- The PET is a system-level Electron desktop companion window that stays outside the main GUI.
+- It is always-on-top, transparent, draggable, and closeable from its own window.
+- It supports selectable CodexPet bundles from bundled Pi GUI assets and `~/.codex/pets/<pet-id>/`.
+- It renders standard 8×9 CodexPet spritesheets with `idle`, `running-right`, `running-left`, `waving`, `jumping`, `failed`, `waiting`, `running`, and `review` animations.
+- It persists desktop-only PET preferences such as selected pet, scale, and window position under Electron user data.
+- It is managed from Settings → 功能设置 → Pi PET Companion.
+- The browser/web chat surface does not render a separate in-chat PET.
 
 ## Privacy and safety
 
@@ -30,9 +31,44 @@ The PET is intentionally UI-only:
 - does not start Pi/runtime processes;
 - does not expose raw thinking text, full file paths, tool arguments, or credentials.
 
-The system-level desktop companion uses an Electron always-on-top transparent window when the desktop shell is available. It mirrors the same privacy-safe PET display payload from the GUI; it does not inspect Pi Agent directly.
+The desktop companion uses an Electron always-on-top transparent window when the desktop shell is available. It mirrors a compact privacy-safe subset of the PET display payload from the GUI; it does not inspect Pi Agent directly.
 
-It shows compact, privacy-safe status summaries such as “工具运行中: read” or “上下文占用 91%”.
+It shows compact, privacy-safe status summaries such as “工具运行中: read” or “上下文占用 91%”. Runtime states map to CodexPet animations: busy work uses `running`, user attention uses `waiting`/`review`, failures use `failed`, and completion can play `waving` before returning to idle.
+
+## CodexPet bundle format
+
+Pi GUI discovers CodexPet bundles with this structure:
+
+```text
+~/.codex/pets/<pet-id>/
+├── pet.json
+└── spritesheet.webp
+```
+
+Manifest format:
+
+```json
+{
+  "id": "my-pet",
+  "displayName": "My Pet",
+  "description": "Optional short description.",
+  "spritesheetPath": "spritesheet.webp"
+}
+```
+
+The spritesheet should be an 8-column by 9-row atlas. Rows are interpreted as:
+
+| Row | Animation |
+| --- | --- |
+| 0 | `idle` |
+| 1 | `running-right` |
+| 2 | `running-left` |
+| 3 | `waving` |
+| 4 | `jumping` |
+| 5 | `failed` |
+| 6 | `waiting` |
+| 7 | `running` |
+| 8 | `review` |
 
 ## Capability classification
 
@@ -41,7 +77,7 @@ It shows compact, privacy-safe status summaries such as “工具运行中: read
 - origin: built-in;
 - implementation host: `pi-gui`;
 - risk: `ui-only`;
-- release stance: default-on in enhanced profiles;
+- release stance: default-off;
 - local runtime: supported;
 - remote runtime: supported.
 

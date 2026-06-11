@@ -1,12 +1,16 @@
 import type { ConversationContextUsage, ConversationTokenUsage } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
-import { DEFAULT_MAX_USAGE_LINE_BYTES, parseJsonRecord, processJsonlLines, usageFromRecord } from "../../services/tokenUsage/index.js";
+import type { AppDatabase } from "../../db.js";
+import { deserializeConversationTokenUsage, serializeConversationTokenUsage } from "../../db/sessionTokenUsageCache.js";
+import { DEFAULT_MAX_USAGE_LINE_BYTES, parseJsonRecord, processJsonlLines, safeStat, usageFromRecord } from "../../services/tokenUsage/index.js";
 
-export function contextUsageFromSessionStats(data: Record<string, unknown>, currentContextWindow?: number): ConversationContextUsage | undefined {
+const SESSION_TOKEN_USAGE_CACHE_PARSER_VERSION = 1;
+
+export function contextUsageFromSessionStats(data: Record<string, unknown>, currentContextWindow?: number, db?: AppDatabase): ConversationContextUsage | undefined {
   const contextUsage = isRecord(data.contextUsage) ? data.contextUsage : undefined;
   // Pi stats are derived from active state.messages, which can shrink after compaction.
   // Session files preserve historical assistant usage, so they are the preferred cumulative source.
-  const sessionTokens = sessionTokensFromSessionFile(data) ?? sessionTokensFromStats(data);
+  const sessionTokens = sessionTokensFromSessionFile(data, db) ?? sessionTokensFromStats(data);
   if (!contextUsage && !sessionTokens) return undefined;
 
   const tokens = contextUsage ? numberOrNullOrUndefined(contextUsage.tokens) : undefined;
@@ -35,9 +39,34 @@ function sessionTokensFromStats(data: Record<string, unknown>): ConversationToke
   return hasAnyUsageValue(usage) ? usage : undefined;
 }
 
-function sessionTokensFromSessionFile(data: Record<string, unknown>): ConversationTokenUsage | undefined {
+function sessionTokensFromSessionFile(data: Record<string, unknown>, db?: AppDatabase): ConversationTokenUsage | undefined {
   const sessionFile = typeof data.sessionFile === "string" && data.sessionFile.trim() ? data.sessionFile : undefined;
   if (!sessionFile) return undefined;
+  const stats = safeStat(sessionFile);
+  if (!stats) return undefined;
+
+  const context = { parserVersion: SESSION_TOKEN_USAGE_CACHE_PARSER_VERSION, maxLineBytes: DEFAULT_MAX_USAGE_LINE_BYTES };
+  const cached = db?.getSessionTokenUsageCache(sessionFile, context);
+  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+    const usage = deserializeConversationTokenUsage(cached.usageJson);
+    if (usage) return usage;
+    db?.deleteSessionTokenUsageCache(sessionFile);
+  }
+
+  const usage = parseSessionTokenUsage(sessionFile);
+  if (!usage) return undefined;
+  db?.upsertSessionTokenUsageCache({
+    ...context,
+    filePath: sessionFile,
+    mtimeMs: stats.mtimeMs,
+    size: stats.size,
+    usageJson: serializeConversationTokenUsage(usage),
+    updatedAt: Date.now(),
+  });
+  return usage;
+}
+
+function parseSessionTokenUsage(sessionFile: string): ConversationTokenUsage | undefined {
   const usage: ConversationTokenUsage = {};
   const readOk = processJsonlLines(sessionFile, DEFAULT_MAX_USAGE_LINE_BYTES, (line, truncated) => {
     if (truncated) return;

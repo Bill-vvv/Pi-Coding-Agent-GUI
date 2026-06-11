@@ -2,15 +2,12 @@ import { isRecord, type ServerEvent } from "@pi-gui/shared";
 import { randomUUID } from "node:crypto";
 import { isExtensionUiDialogRequest, isExtensionUiRequest } from "./extensionUiRequest.js";
 import type { ManagedRuntime } from "./managedRuntime.js";
-import { isAskBatchDialogEnabled } from "./piExtensionIntegrationEnv.js";
-import { runtimeHasCapability } from "./runtimeCapabilities.js";
 import type { RuntimeEventSink } from "./runtimeEventSink.js";
 import type { RuntimeLiveState } from "./runtimeLiveState.js";
 import { runtimeQueueFromPiPayload } from "./runtimePiPayload.js";
 import { handleRuntimeResponsePayload } from "./runtimeResponsePayloadHandler.js";
 import type { RuntimeSessionLinker } from "./runtimeSessionLinker.js";
 import { isProviderPayloadTooLargeErrorText, providerPayloadTooLargeUserMessage } from "./piCodexTransportMonitor.js";
-import { sendExtensionUiResponse } from "./runtimeCommandSender.js";
 import { requestSessionStats } from "./runtimeStateRequester.js";
 
 type Broadcast = (event: ServerEvent) => void;
@@ -45,12 +42,6 @@ export function handleRuntimePayload({
   }
 
   if (isExtensionUiRequest(maybeRecord)) {
-    if (maybeRecord.method === "askBatch" && !isAskBatchDialogEnabled({ interactivePromptsEnabled: runtimeHasCapability(managed.runtime, "interactive-prompts") })) {
-      sendExtensionUiResponse(managed, maybeRecord.id, { cancelled: true });
-      managed.projection.appendLog("log", "Interactive Prompts capability is disabled for this runtime; the request was automatically cancelled.", "extension UI");
-      events.publishGuiEvent(managed.runtime, "pi_event", payload);
-      return;
-    }
     if (isExtensionUiDialogRequest(maybeRecord)) managed.pendingExtensionUiRequest = maybeRecord;
     broadcast({ type: "extension.ui.request", runtimeId, projectId: managed.runtime.projectId, request: maybeRecord });
   }

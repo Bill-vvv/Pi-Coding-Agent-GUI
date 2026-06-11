@@ -52,7 +52,16 @@ const fastify = Fastify({
   },
 });
 indexKnownPiSessions(db);
-const wsHub = new WsHub();
+const socketIds = new WeakMap<WsClient, number>();
+let nextSocketId = 1;
+const wsHub = new WsHub({
+  onClientClosed: ({ socket, reason, bufferedAmount, mode }) => {
+    fastify.log.warn(
+      { socketId: socketIds.get(socket), reason, bufferedAmount, closeMode: mode, activeSockets: wsHub.clientCount() },
+      "WebSocket client closed by hub",
+    );
+  },
+});
 const supervisor = new RuntimeSupervisor(db, (event) => wsHub.broadcast(event));
 const handleSocketMessage = createSocketMessageHandler({
   db,
@@ -63,7 +72,13 @@ const handleSocketMessage = createSocketMessageHandler({
 
 await fastify.register(cors, { origin: allowedCorsOrigins });
 registerApiAuth(fastify, authProvider);
-await fastify.register(websocket);
+await fastify.register(websocket, {
+  options: {
+    perMessageDeflate: {
+      threshold: 1024,
+    },
+  },
+});
 await registerFsRoutes(fastify);
 await registerImportRoutes(fastify);
 await registerRemoteAccessRoutes(fastify, remoteAccessService, { restartServer: restartCurrentServer });
@@ -86,33 +101,47 @@ fastify.get("/api/models", async () => ({ models: await listPiModels() }));
 
 fastify.get("/ws", { websocket: true }, (socket: WsClient, request: FastifyRequest) => {
   if (!isWebSocketRequestAuthorized(request, authProvider)) {
+    fastify.log.warn({ remoteAddress: request.ip, remotePort: request.socket.remotePort }, "Rejected unauthorized WebSocket connection");
     closeUnauthorizedSocket(socket);
     return;
   }
 
+  const socketId = nextSocketId++;
+  const sinceEventId = parseSinceEventId(request);
+  socketIds.set(socket, socketId);
+  fastify.log.info(
+    { socketId, sinceEventId, activeSockets: wsHub.clientCount() + 1, remoteAddress: request.ip, remotePort: request.socket.remotePort },
+    "WebSocket connected",
+  );
+
   wsHub.add(socket);
+  const bootstrap = buildConnectionBootstrap();
   wsHub.send(socket, {
     type: "hello",
     serverTime: Date.now(),
     projects: db.listProjects(),
-    runtimes: supervisor.listRuntimes(),
+    runtimes: bootstrap.runtimes,
     settings: db.getSettings(),
     lastEventId: db.lastEventId(),
     executionHost: db.getExecutionHost(),
-    conversationSummaries: supervisor.listRuntimeConversationSummaries(),
-    sessions: db.listSessions(),
+    conversationSummaries: supervisor.listRuntimeConversationSummaries(100, bootstrap.runtimes),
+    sessions: bootstrap.sessions.sessions,
+    sessionsHasMore: bootstrap.sessions.hasMore,
+    sessionsNextCursor: bootstrap.sessions.nextCursor,
     // Keep the connection bootstrap lightweight: active sub-agent runs are
     // needed for refresh recovery, while historical per-runtime runs are sent
     // by `conversation.open`. Sending hundreds of historical runs can bloat the
     // initial `hello` enough to trip WebSocket backpressure before busy seeds
     // reach the client, making sidebar dots look idle until a conversation is opened.
     subagentRuns: supervisor.listActiveSubagentRuns(100),
+    checkpointOperations: db.listRecentRewindCheckpointOperations(20),
+    checkpointJumps: db.listRecentRewindJumpHistory(20),
   });
-  sendRuntimeBusyStates(socket);
+  sendRuntimeBusyStates(socket, bootstrap.runtimes);
   sendRuntimeQueues(socket);
   sendRuntimeCommands(socket);
   sendPendingExtensionUiRequests(socket);
-  replayEventsForConnection(socket, parseSinceEventId(request));
+  replayEventsForConnection(socket, sinceEventId);
 
   socket.on("message", (data) => {
     void handleSocketMessage(socket, data).catch((error) => {
@@ -126,8 +155,21 @@ fastify.get("/ws", { websocket: true }, (socket: WsClient, request: FastifyReque
     });
   });
 
-  socket.on("close", () => wsHub.remove(socket));
-  socket.on("error", () => wsHub.remove(socket));
+  const lifecycleSocket = socket as WsClient & {
+    on(event: "close", listener: (code: number, reason: Buffer) => void): void;
+    on(event: "error", listener: (error: Error) => void): void;
+  };
+  lifecycleSocket.on("close", (code: number, reason: Buffer) => {
+    wsHub.remove(socket);
+    fastify.log.info(
+      { socketId, code, reason: reason?.toString("utf8") || undefined, activeSockets: wsHub.clientCount() },
+      "WebSocket closed",
+    );
+  });
+  lifecycleSocket.on("error", (error: Error) => {
+    wsHub.remove(socket);
+    fastify.log.warn({ socketId, error, activeSockets: wsHub.clientCount() }, "WebSocket error");
+  });
 });
 
 await registerBuiltWebUiRoutes(fastify, { remoteLan: serverConfig.remoteLan });
@@ -179,11 +221,20 @@ function closeUnauthorizedSocket(socket: WsClient): void {
   closable.close?.(1008, "Unauthorized");
 }
 
-function sendRuntimeBusyStates(socket: WsClient): void {
+function buildConnectionBootstrap() {
+  const runtimes = supervisor.listRuntimes();
+  const childSessionFiles = db.listChildSessionFiles();
+  return {
+    runtimes,
+    sessions: db.listSessionsPage(undefined, 200, undefined, { childSessionFiles }),
+  };
+}
+
+function sendRuntimeBusyStates(socket: WsClient, runtimes = supervisor.listRuntimes()): void {
   // `hello` intentionally carries lightweight runtime metadata only. Seed the
   // conversation-busy projection separately so a fresh/reconnected frontend can
   // color sidebar status dots without fetching every background conversation.
-  for (const event of runtimeConversationBusyEvents(db, supervisor.listRuntimes())) {
+  for (const event of runtimeConversationBusyEvents(db, runtimes)) {
     wsHub.send(socket, event);
   }
 }
@@ -207,7 +258,10 @@ function sendPendingExtensionUiRequests(socket: WsClient): void {
 }
 
 function replayEventsForConnection(socket: WsClient, sinceEventId: number | undefined): void {
-  const events = sinceEventId !== undefined ? db.listEvents(sinceEventId, RECONNECT_REPLAY_LIMIT) : db.recentEvents(300, 512 * 1024);
+  const replay = sinceEventId !== undefined
+    ? db.listEventsBudgeted(sinceEventId, RECONNECT_REPLAY_LIMIT, 512 * 1024)
+    : { events: db.recentEvents(300, 512 * 1024), truncated: false };
+  const events = replay.events;
   if (sinceEventId !== undefined) {
     const gap = replayGapEventForReconnect({
       requestedSinceEventId: sinceEventId,
@@ -215,6 +269,7 @@ function replayEventsForConnection(socket: WsClient, sinceEventId: number | unde
       lastEventId: db.lastEventId(),
       replayedEventCount: events.length,
       lastReplayedEventId: events.at(-1)?.id,
+      truncated: replay.truncated,
     });
     if (gap) wsHub.send(socket, gap);
   }

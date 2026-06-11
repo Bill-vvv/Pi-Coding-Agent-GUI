@@ -13,8 +13,8 @@
 @import "./styles/token-usage.css";
 @import "./styles/session-history.css";
 @import "./styles/session-tree.css";
+@import "./styles/checkpoint.css";
 @import "./styles/thinking-animation.css";
-@import "./styles/pi-pet.css";
 @import "./styles/feedback.css";
 @import "./styles/path-picker.css";
 @import "./styles/runtime-logs.css";

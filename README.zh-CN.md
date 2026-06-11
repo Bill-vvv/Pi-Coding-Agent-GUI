@@ -4,7 +4,7 @@
 
 Pi Coding Agent GUI 是一个优先面向 WSL/本地开发环境的 Web 图形界面。
 
-Pi Coding Agent GUI 提供基于浏览器的控制界面，用于管理本地 Pi RPC 运行时：项目管理、Session/Runtime 监督、对话展示、token/context 可视化、面向受信任设备的同局域网远程访问，以及可选的 [Pi PET Companion](./docs/pi-pet-companion.md) 原生运行状态宠物。
+Pi Coding Agent GUI 提供基于浏览器的控制界面，用于管理本地 Pi RPC 运行时：项目管理、Session/Runtime 监督、对话展示、token/context 可视化、面向受信任设备的同局域网远程访问，以及可选的 [Pi PET Companion](./docs/pi-pet-companion.md) 运行状态宠物。
 
 ## 开发
 

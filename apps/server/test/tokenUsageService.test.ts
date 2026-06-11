@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { AppDatabase } from "../src/db.js";
-import { TokenUsageService } from "../src/services/tokenUsageService.js";
+import { normalizeTokenUsageRange, TokenUsageService } from "../src/services/tokenUsageService.js";
 
 function withSessionRoot<T>(root: string, run: () => T): T {
   const previous = process.env.PI_GUI_SESSION_ROOT;
@@ -126,12 +126,24 @@ test("token usage overview supports project filtering, safe empty unknown projec
   const service = new TokenUsageService({ now: () => Date.parse("2026-06-05T12:00:00.000Z") });
   withSessionRoot(sessionRoot, () => {
     const all = service.getOverview(db, { range: "all", projectId: "project" });
-    assert.deepEqual(all.days.map((day) => day.day), ["2026-05-01"]);
+    assert.equal(all.days.length, 36);
+    assert.equal(all.days[0]?.day, "2026-05-01");
+    assert.equal(all.days.at(-1)?.day, "2026-06-05");
+    assert.equal(all.days.find((day) => day.day === "2026-05-01")?.tokens.total, 41);
     assert.equal(all.summary.totalTokens, 41);
 
     const cached = service.getOverview(db, { range: "all", projectId: "project" });
     assert.equal(cached.coverage.cachedFiles, 1);
     assert.equal(cached.coverage.scannedFiles, 1);
+
+    const persistedCache = new TokenUsageService({ now: () => Date.parse("2026-06-05T12:00:00.000Z") }).getOverview(db, { range: "all", projectId: "project" });
+    assert.equal(persistedCache.coverage.cachedFiles, 1);
+    assert.equal(persistedCache.summary.totalTokens, 41);
+
+    const year = service.getOverview(db, { range: "365d", projectId: "project" });
+    assert.equal(year.days.length, 365);
+    assert.equal(year.days.find((day) => day.day === "2026-05-01")?.tokens.total, 41);
+    assert.equal(year.summary.totalTokens, 41);
 
     const empty = service.getOverview(db, { range: "all", projectId: "missing" });
     assert.equal(empty.summary.totalTokens, 0);
@@ -139,4 +151,34 @@ test("token usage overview supports project filtering, safe empty unknown projec
   });
 
   db.close();
+});
+
+test("token usage persistent cache invalidates when session file size changes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-gui-usage-persistent-cache-"));
+  const sessionRoot = join(dir, "sessions");
+  const projectCwd = join(dir, "project");
+  const db = createDb(dir, [{ id: "project", cwd: projectCwd }]);
+  const file = writeSession(sessionRoot, "session-persistent-cache", [
+    { type: "session", id: "session-persistent-cache", cwd: projectCwd, timestamp: "2026-06-04T00:00:00.000Z" },
+    { type: "message", timestamp: "2026-06-04T01:00:00.000Z", message: { role: "assistant", model: "first", usage: { totalTokens: 10 } } },
+  ]);
+
+  withSessionRoot(sessionRoot, () => {
+    const first = new TokenUsageService({ now: () => Date.parse("2026-06-05T12:00:00.000Z") }).getOverview(db, { range: "7d", projectId: "project" });
+    assert.equal(first.summary.totalTokens, 10);
+    assert.equal(first.coverage.cachedFiles, 0);
+
+    appendFileSync(file, `${JSON.stringify({ type: "message", timestamp: "2026-06-04T02:00:00.000Z", message: { role: "assistant", model: "second", usage: { totalTokens: 15 } } })}\n`, "utf8");
+
+    const updated = new TokenUsageService({ now: () => Date.parse("2026-06-05T12:00:00.000Z") }).getOverview(db, { range: "7d", projectId: "project" });
+    assert.equal(updated.coverage.cachedFiles, 0);
+    assert.equal(updated.summary.totalTokens, 25);
+  });
+
+  db.close();
+});
+
+test("normalizeTokenUsageRange accepts the GitHub-style one-year range", () => {
+  assert.equal(normalizeTokenUsageRange("365d"), "365d");
+  assert.equal(normalizeTokenUsageRange("unexpected"), "30d");
 });

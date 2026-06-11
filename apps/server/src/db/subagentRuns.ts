@@ -6,9 +6,12 @@ import type { SubagentRunRow } from "./rows.js";
 const STALE_SUBAGENT_ERROR = "GUI server restarted while this sub-agent was running; the child process cannot be reattached.";
 
 export class SubagentRunStore {
+  private childSessionFilesCache?: Set<string>;
+
   constructor(private readonly db: Database.Database) {}
 
   upsertSubagentRun(run: SubagentRun): SubagentRun {
+    this.childSessionFilesCache = undefined;
     this.db
       .prepare(
         `insert into subagent_runs (id, project_id, parent_runtime_id, parent_tool_call_id, parent_tool_message_id, agent, mode, context_mode, status, started_at, updated_at, finished_at, final_text, error_message, runs_json)
@@ -73,9 +76,19 @@ export class SubagentRunStore {
        where status in ('pending', 'running')`,
     );
     update.run(timestamp, timestamp, STALE_SUBAGENT_ERROR);
+    this.childSessionFilesCache = undefined;
   }
 
   listChildSessionFiles(): Set<string> {
+    return new Set(this.childSessionFiles());
+  }
+
+  isChildSessionFile(sessionFile: string): boolean {
+    return this.childSessionFiles().has(sessionFile);
+  }
+
+  private childSessionFiles(): Set<string> {
+    if (this.childSessionFilesCache) return this.childSessionFilesCache;
     const rows = this.db.prepare("select runs_json from subagent_runs").all() as Array<{ runs_json: string }>;
     const files = new Set<string>();
     for (const row of rows) {
@@ -83,11 +96,8 @@ export class SubagentRunStore {
         if (child.sessionFile) files.add(child.sessionFile);
       }
     }
+    this.childSessionFilesCache = files;
     return files;
-  }
-
-  isChildSessionFile(sessionFile: string): boolean {
-    return this.listChildSessionFiles().has(sessionFile);
   }
 }
 

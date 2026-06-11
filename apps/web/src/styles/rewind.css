@@ -1,0 +1,164 @@
+.rewind-panel {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  padding: 18px;
+  gap: 12px;
+  color: var(--color-text-primary);
+}
+
+.rewind-panel-header,
+.rewind-toolbar,
+.rewind-footer,
+.rewind-card,
+.rewind-actions {
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-panel);
+  border-radius: 14px;
+}
+
+.rewind-panel-header,
+.rewind-toolbar,
+.rewind-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.rewind-panel-header div,
+.rewind-card,
+.rewind-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rewind-panel small,
+.rewind-footer {
+  color: var(--color-text-muted);
+}
+
+.rewind-toolbar {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.rewind-toolbar button,
+.rewind-panel-header button,
+.rewind-actions button {
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-subtle-strong);
+  color: var(--color-text-primary);
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+
+.rewind-actions button.danger {
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(127, 29, 29, 0.35);
+}
+
+.rewind-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(360px, 1.4fr);
+  gap: 12px;
+  min-height: 0;
+  flex: 1;
+}
+
+.rewind-list,
+.rewind-detail {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-dark);
+  border-radius: 16px;
+  padding: 10px;
+}
+
+.rewind-row {
+  width: 100%;
+  text-align: left;
+  color: var(--color-text-primary);
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 12px;
+  padding: 9px 10px;
+}
+
+.rewind-row:hover,
+.rewind-row.selected {
+  border-color: var(--color-border-hover);
+  background: var(--color-surface-panel);
+}
+
+.rewind-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rewind-card,
+.rewind-actions {
+  padding: 12px;
+}
+
+.rewind-card-title,
+.rewind-actions,
+.rewind-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.rewind-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rewind-chips span,
+.rewind-change span {
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-subtle-strong);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.rewind-change {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.rewind-change code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rewind-change small {
+  grid-column: 2;
+}
+
+.rewind-empty {
+  color: var(--color-text-muted);
+  padding: 12px;
+}
+
+.rewind-actions .ok { color: var(--color-status-success); }
+.rewind-actions .bad { color: #fca5a5; }
+
+@media (max-width: 860px) {
+  .rewind-grid { grid-template-columns: 1fr; }
+}

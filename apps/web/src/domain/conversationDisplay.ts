@@ -3,7 +3,7 @@ import { subagentRunIsActive } from "./subagents";
 
 // Conversation display modes are intentionally centralized so future modes
 // can switch rendering policy without changing ChatView.
-export type ConversationDisplayMode = "compact" | "chronological";
+export type ConversationDisplayMode = "compact" | "chronological" | "tui";
 export type ConversationMessageDisplayKind = "hidden" | "markdown" | "plain" | "tool";
 export type RenderableConversationMessageDisplayKind = "markdown" | "plain";
 export type ToolDisplayStatus = "running" | "completed" | "failed";
@@ -66,6 +66,19 @@ export type ToolGroupDisplayModel = {
   current?: ProcessCurrentDisplayModel;
 };
 
+export type TuiProcessDisplayModel = {
+  kind: "thinking" | "tool" | "subagent";
+  title: string;
+  status: ToolDisplayStatus;
+  statusLabel: string;
+  summary: string;
+  detail: string;
+  updatedAt: number;
+  tool?: ToolDisplayModel;
+  thinking?: ThinkingDisplayModel;
+  subagent?: SubagentProcessDisplayModel;
+};
+
 export type ConversationDisplayBlock =
   | {
       type: "message";
@@ -82,11 +95,25 @@ export type ConversationDisplayBlock =
       subagentRuns: SubagentRun[];
       model: ToolGroupDisplayModel;
       isStreaming: boolean;
+    }
+  | {
+      type: "tui_process";
+      id: string;
+      model: TuiProcessDisplayModel;
+      isStreaming: boolean;
     };
 
 export type ConversationDisplayOptions = {
   activeRuntimeIsBusy?: boolean;
   subagentRuns?: SubagentRun[];
+};
+
+export type ConversationDisplayBuildCache = {
+  messages: ConversationMessage[];
+  mode: ConversationDisplayMode;
+  options: ConversationDisplayOptions;
+  blocks: ConversationDisplayBlock[];
+  messageFirstIndexById: Map<string, number>;
 };
 
 const TOOL_STATUS_SUFFIX_RE = /\s+(运行中|完成|失败)$/;
@@ -102,7 +129,47 @@ export function buildConversationDisplayBlocks(
 ): ConversationDisplayBlock[] {
   const displayMessages = dedupeSyntheticSnapshotMessages(messages);
   if (mode === "chronological") return buildChronologicalConversationDisplayBlocks(displayMessages, options);
+  if (mode === "tui") return buildTuiConversationDisplayBlocks(displayMessages, options);
   return buildCompactConversationDisplayBlocks(displayMessages, options);
+}
+
+export function buildConversationDisplayBlocksCached(
+  messages: ConversationMessage[],
+  mode: ConversationDisplayMode = "compact",
+  options: ConversationDisplayOptions = {},
+  previous?: ConversationDisplayBuildCache,
+): ConversationDisplayBuildCache {
+  const incremental = buildIncrementalCompactConversationDisplayBlocks(messages, mode, options, previous);
+  if (incremental) return { messages, mode, options, blocks: incremental.blocks, messageFirstIndexById: incremental.messageFirstIndexById };
+
+  const blocks = buildConversationDisplayBlocks(messages, mode, options);
+  return { messages, mode, options, blocks, messageFirstIndexById: indexMessageFirstPositions(messages) };
+}
+
+function buildIncrementalCompactConversationDisplayBlocks(
+  messages: ConversationMessage[],
+  mode: ConversationDisplayMode,
+  options: ConversationDisplayOptions,
+  previous: ConversationDisplayBuildCache | undefined,
+): { blocks: ConversationDisplayBlock[]; messageFirstIndexById: Map<string, number> } | undefined {
+  if (!previous || mode !== "compact" || previous.mode !== mode) return undefined;
+  if (previous.options.activeRuntimeIsBusy !== options.activeRuntimeIsBusy || previous.options.subagentRuns !== options.subagentRuns) return undefined;
+  if (previous.messages === messages) return { blocks: previous.blocks, messageFirstIndexById: previous.messageFirstIndexById };
+
+  const firstChangedIndex = tailAppendOrUpdateStartIndex(previous.messages, messages);
+  if (firstChangedIndex === undefined) return undefined;
+
+  const rebuildStartIndex = segmentStartIndexForCompactIncrementalBuild(messages, firstChangedIndex);
+  if (rebuildStartIndex === undefined) return undefined;
+  const prefixEndIndex = prefixBlockEndIndex(previous.blocks, messages[rebuildStartIndex]?.id);
+  if (prefixEndIndex === undefined) return undefined;
+
+  const suffixMessages = messages.slice(rebuildStartIndex);
+  if (!safeIncrementalCompactSuffix(suffixMessages, rebuildStartIndex, previous.messageFirstIndexById)) return undefined;
+  return {
+    blocks: [...previous.blocks.slice(0, prefixEndIndex), ...buildCompactConversationDisplayBlocks(suffixMessages, options)],
+    messageFirstIndexById: incrementalMessageFirstPositions(previous.messageFirstIndexById, previous.messages.length, messages),
+  };
 }
 
 function buildCompactConversationDisplayBlocks(displayMessages: ConversationMessage[], options: ConversationDisplayOptions): ConversationDisplayBlock[] {
@@ -222,6 +289,37 @@ function buildChronologicalConversationDisplayBlocks(displayMessages: Conversati
   return blocks;
 }
 
+function buildTuiConversationDisplayBlocks(displayMessages: ConversationMessage[], options: ConversationDisplayOptions): ConversationDisplayBlock[] {
+  const blocks: ConversationDisplayBlock[] = [];
+  const subagentRunByToolMessageId = new Map((options.subagentRuns ?? []).map((run) => [run.parentToolMessageId, run]));
+
+  for (const message of displayMessages) {
+    const displayMessage = conversationMessageForDisplay(message, "tui");
+    if (!displayMessage) continue;
+
+    const hasAssistantThinking = displayMessage.role === "assistant" && Boolean(displayMessage.thinking?.trim());
+    if (hasAssistantThinking) {
+      const thinking = thinkingDisplayModel(displayMessage)[0];
+      if (thinking) blocks.push(tuiProcessBlock(tuiThinkingProcessModel(thinking), `${displayMessage.id}-thinking`));
+    }
+
+    if (isToolDisplayMessage(displayMessage)) {
+      const subagentRun = subagentRunByToolMessageId.get(displayMessage.id);
+      blocks.push(subagentRun ? tuiProcessBlock(tuiSubagentProcessModel(subagentRun), `${displayMessage.id}-subagent`) : tuiProcessBlock(tuiToolProcessModel(displayMessage), displayMessage.id));
+      continue;
+    }
+
+    const textMessage = hasAssistantThinking ? { ...displayMessage, thinking: undefined } : displayMessage;
+    if (!textMessage.text) continue;
+
+    const displayKind = conversationMessageDisplayKind(textMessage, "tui");
+    if (displayKind === "hidden" || displayKind === "tool") continue;
+    blocks.push(messageBlock(textMessage, displayKind));
+  }
+
+  return blocks;
+}
+
 export function conversationMessageDisplayKind(
   message: ConversationMessage,
   mode: ConversationDisplayMode = "compact",
@@ -315,6 +413,65 @@ function isSyntheticUserInputMessageId(id: string): boolean {
   return id.startsWith("user-gui-command-");
 }
 
+function tailAppendOrUpdateStartIndex(previousMessages: ConversationMessage[], messages: ConversationMessage[]): number | undefined {
+  if (previousMessages.length === 0) return undefined;
+
+  if (messages.length === previousMessages.length) {
+    const lastIndex = messages.length - 1;
+    if (previousMessages[lastIndex] !== messages[lastIndex] && (lastIndex === 0 || previousMessages[lastIndex - 1] === messages[lastIndex - 1])) return lastIndex;
+    return undefined;
+  }
+
+  if (messages.length > previousMessages.length && previousMessages[previousMessages.length - 1] === messages[previousMessages.length - 1]) return previousMessages.length;
+  return undefined;
+}
+
+function segmentStartIndexForCompactIncrementalBuild(messages: ConversationMessage[], firstChangedIndex: number): number | undefined {
+  for (let index = Math.min(firstChangedIndex, messages.length - 1); index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") return index;
+  }
+  return undefined;
+}
+
+function prefixBlockEndIndex(blocks: ConversationDisplayBlock[], startMessageId: string | undefined): number | undefined {
+  if (!startMessageId) return blocks.length;
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block?.type === "message" && block.message.id === startMessageId) return index;
+  }
+  return undefined;
+}
+
+function safeIncrementalCompactSuffix(messages: ConversationMessage[], rebuildStartIndex: number, previousFirstIndexById: Map<string, number>): boolean {
+  const suffixIds = new Set<string>();
+  return messages.every((message, index) => {
+    if (index > 0 && message.role === "user") return false;
+    if (isSyntheticSnapshotMessageId(message.id) || isSyntheticUserInputMessageId(message.id)) return false;
+    if (suffixIds.has(message.id)) return false;
+    suffixIds.add(message.id);
+    const previousFirstIndex = previousFirstIndexById.get(message.id);
+    return previousFirstIndex === undefined || previousFirstIndex >= rebuildStartIndex;
+  });
+}
+
+function indexMessageFirstPositions(messages: ConversationMessage[]): Map<string, number> {
+  const positions = new Map<string, number>();
+  for (const [index, message] of messages.entries()) {
+    if (!positions.has(message.id)) positions.set(message.id, index);
+  }
+  return positions;
+}
+
+function incrementalMessageFirstPositions(previous: Map<string, number>, previousLength: number, messages: ConversationMessage[]): Map<string, number> {
+  if (messages.length <= previousLength) return previous;
+  const next = new Map(previous);
+  for (let index = previousLength; index < messages.length; index += 1) {
+    const id = messages[index]?.id;
+    if (id && !next.has(id)) next.set(id, index);
+  }
+  return next;
+}
+
 function conversationMessageForDisplay(message: ConversationMessage, mode: ConversationDisplayMode): ConversationMessage | undefined {
   if (message.role !== "assistant") return message;
 
@@ -396,6 +553,62 @@ function toolGroupBlock(tools: ConversationMessage[], thinkingMessages: Conversa
     model,
     isStreaming: model.status === "running",
   };
+}
+
+function tuiProcessBlock(model: TuiProcessDisplayModel, id: string): ConversationDisplayBlock {
+  return {
+    type: "tui_process",
+    id: `tui-process-${id}`,
+    model,
+    isStreaming: model.status === "running",
+  };
+}
+
+function tuiThinkingProcessModel(thinking: ThinkingDisplayModel): TuiProcessDisplayModel {
+  return {
+    kind: "thinking",
+    title: "thinking",
+    status: thinking.isStreaming ? "running" : "completed",
+    statusLabel: thinking.isStreaming ? "running" : "done",
+    summary: truncate(thinking.text.replace(/\s+/g, " ").trim() || "Thinking ...", TOOL_SUMMARY_LINE_MAX_CHARS),
+    detail: thinking.text,
+    updatedAt: thinking.updatedAt,
+    thinking,
+  };
+}
+
+function tuiToolProcessModel(message: ConversationMessage): TuiProcessDisplayModel {
+  const tool = toolDisplayModel(message);
+  return {
+    kind: "tool",
+    title: tool.name,
+    status: tool.status,
+    statusLabel: tool.status === "running" ? "running" : tool.status === "failed" ? "error" : "done",
+    summary: tuiToolSummary(tool),
+    detail: tool.detail,
+    updatedAt: tool.updatedAt,
+    tool,
+  };
+}
+
+function tuiSubagentProcessModel(run: SubagentRun): TuiProcessDisplayModel {
+  const subagent = subagentProcessDisplayModel(run);
+  return {
+    kind: "subagent",
+    title: `agent ${run.agent}`,
+    status: subagent.status,
+    statusLabel: subagent.status === "running" ? "running" : subagent.status === "failed" ? "error" : "done",
+    summary: subagent.summary,
+    detail: subagent.detail,
+    updatedAt: subagent.updatedAt,
+    subagent,
+  };
+}
+
+function tuiToolSummary(tool: ToolDisplayModel): string {
+  if (tool.status === "running") return "Running ...";
+  if (tool.toolDetails?.diff) return tool.toolDetails.path ? `${tool.toolDetails.path} · ${tool.summary}` : tool.summary;
+  return tool.summary;
 }
 
 function thinkingDisplayModel(message: ConversationMessage): ThinkingDisplayModel[] {

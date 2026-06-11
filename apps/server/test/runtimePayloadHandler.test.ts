@@ -102,51 +102,44 @@ test("handleRuntimePayload stops automatic retry for provider payload-too-large 
   assert.equal((events[1] as unknown[])[1], "pi_event");
 });
 
-test("handleRuntimePayload auto-cancels askBatch requests when the dialog is disabled", () => {
-  const projected: unknown[] = [];
-  const logs: unknown[] = [];
-  const sent: unknown[] = [];
-  const events: unknown[] = [];
-  const managed = createManaged(undefined, projected, logs, sent);
-  const payload = {
-    type: "extension_ui_request",
-    id: "ask-1",
-    method: "askBatch",
-    title: "Clarify",
-    questions: [{ id: "q1", prompt: "Choose", kind: "text" }],
-  };
-  handleRuntimePayload({
-    runtimeId: "runtime-1",
-    managed,
-    payload,
-    events: { publishGuiEvent: (...args: unknown[]) => events.push(args) } as never,
-    liveState: {} as never,
-    sessionLinker: { indexSessionFromPiResponse: () => undefined } as never,
-    broadcast: () => assert.fail("disabled askBatch requests should not be broadcast"),
-  });
-
-  assert.equal(managed.pendingExtensionUiRequest, undefined);
-  assert.deepEqual(sent, [{ id: "ask-1", type: "extension_ui_response", cancelled: true }]);
-  assert.equal(logs.length, 1);
-  assert.match(String((logs[0] as unknown[])[1]), /Interactive Prompts capability is disabled/);
-  assert.deepEqual(projected, []);
-  assert.equal(events.length, 1);
-  assert.equal((events[0] as unknown[])[1], "pi_event");
-});
-
-test("handleRuntimePayload remembers interactive extension UI requests for reconnect recovery when enabled", () => {
+test("handleRuntimePayload broadcasts blocking extension UI requests", () => {
   const projected: unknown[] = [];
   const broadcasts: unknown[] = [];
   const managed = createManaged(undefined, projected);
   const payload = {
     type: "extension_ui_request",
-    id: "ask-1",
-    method: "askBatch",
-    title: "Clarify",
-    questions: [{ id: "q1", prompt: "Choose", kind: "text" }],
+    id: "editor-1",
+    method: "editor",
+    title: "Edit",
+    prefill: "draft",
   };
-  managed.runtime = { ...managed.runtime, enabledCapabilityIds: ["interactive-prompts"] };
 
+  handleRuntimePayload({
+    runtimeId: "runtime-1",
+    managed,
+    payload,
+    events: { publishGuiEvent: () => undefined } as never,
+    liveState: {} as never,
+    sessionLinker: { indexSessionFromPiResponse: () => undefined } as never,
+    broadcast: (event: unknown) => broadcasts.push(event),
+  });
+
+  assert.deepEqual(managed.pendingExtensionUiRequest, payload);
+  assert.deepEqual(broadcasts, [{ type: "extension.ui.request", runtimeId: "runtime-1", projectId: "project-1", request: payload }]);
+  assert.deepEqual(projected, [payload]);
+});
+
+test("handleRuntimePayload remembers blocking extension UI requests for reconnect recovery", () => {
+  const projected: unknown[] = [];
+  const broadcasts: unknown[] = [];
+  const managed = createManaged(undefined, projected);
+  const payload = {
+    type: "extension_ui_request",
+    id: "editor-1",
+    method: "editor",
+    title: "Edit",
+    prefill: "draft",
+  };
   handleRuntimePayload({
       runtimeId: "runtime-1",
       managed,

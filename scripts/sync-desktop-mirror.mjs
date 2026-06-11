@@ -34,6 +34,7 @@ const directoryEntries = [
   "scripts",
   "apps/desktop/src",
   "apps/desktop/test",
+  "apps/desktop/assets",
   "apps/web/public",
   "apps/web/src",
   "apps/web/test",

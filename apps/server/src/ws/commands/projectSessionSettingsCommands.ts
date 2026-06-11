@@ -39,9 +39,16 @@ export async function handleProjectConfigure(context: CommandHandlerContext, soc
 
 export async function handleSessionList(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"session.list">): Promise<void> {
   indexKnownPiSessions(context.db);
-  const sessions = context.db.listSessions(command.projectId);
-  context.send(socket, { type: "session.list", sessions, projectId: command.projectId });
-  sendCommandResult(context, socket, command, true, { sessions });
+  const page = context.db.listSessionsPage(command.projectId, command.limit, command.cursor);
+  context.send(socket, {
+    type: "session.list",
+    sessions: page.sessions,
+    projectId: command.projectId,
+    hasMore: page.hasMore,
+    nextCursor: page.nextCursor,
+    cursor: command.cursor,
+  });
+  sendCommandResult(context, socket, command, true, { sessions: page.sessions, hasMore: page.hasMore, nextCursor: page.nextCursor });
 }
 
 export async function handleSessionResume(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"session.resume">): Promise<void> {

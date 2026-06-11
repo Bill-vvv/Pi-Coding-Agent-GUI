@@ -12,8 +12,6 @@ const DEFAULT_UI_PREFERENCES: UiPreferences = {
   accentColor: "amber",
   thinkingToolDisplayMode: "compact",
   desktopNotificationsEnabled: false,
-  petEnabled: false,
-  petCollapsed: false,
   desktopPetEnabled: false,
   guiScopedModels: DEFAULT_GUI_SCOPED_MODELS,
   keybindings: {},
@@ -49,8 +47,6 @@ function normalizeUiPreferences(value: unknown): UiPreferences {
     accentColor: isAccentColor(parsed.accentColor) ? parsed.accentColor : DEFAULT_UI_PREFERENCES.accentColor,
     thinkingToolDisplayMode: isThinkingToolDisplayMode(parsed.thinkingToolDisplayMode) ? parsed.thinkingToolDisplayMode : DEFAULT_UI_PREFERENCES.thinkingToolDisplayMode,
     desktopNotificationsEnabled: typeof parsed.desktopNotificationsEnabled === "boolean" ? parsed.desktopNotificationsEnabled : DEFAULT_UI_PREFERENCES.desktopNotificationsEnabled,
-    petEnabled: typeof parsed.petEnabled === "boolean" ? parsed.petEnabled : DEFAULT_UI_PREFERENCES.petEnabled,
-    petCollapsed: typeof parsed.petCollapsed === "boolean" ? parsed.petCollapsed : DEFAULT_UI_PREFERENCES.petCollapsed,
     desktopPetEnabled: typeof parsed.desktopPetEnabled === "boolean" ? parsed.desktopPetEnabled : DEFAULT_UI_PREFERENCES.desktopPetEnabled,
     guiScopedModels: normalizeGuiScopedModels(parsed.guiScopedModels),
     keybindings: normalizeGuiKeybindings(parsed.keybindings),
@@ -90,7 +86,7 @@ function isAccentColor(value: unknown): value is UiPreferences["accentColor"] {
 }
 
 function isThinkingToolDisplayMode(value: unknown): value is UiPreferences["thinkingToolDisplayMode"] {
-  return value === "compact" || value === "chronological";
+  return value === "compact" || value === "chronological" || value === "tui";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

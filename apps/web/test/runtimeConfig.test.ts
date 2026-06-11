@@ -23,6 +23,15 @@ test("runtime config saves remote access token from URL hash and uses it for API
   }, { href: "http://localhost:5173/#token=phone-secret" });
 });
 
+test("wsUrl derives a direct WebSocket endpoint from injected apiBaseUrl", () => {
+  withWindow({ apiBaseUrl: "http://127.0.0.1:4567/api", authToken: "secret" }, () => {
+    assert.equal(wsUrl(42), "ws://127.0.0.1:4567/ws?token=secret&sinceEventId=42");
+  });
+  withWindow({ apiBaseUrl: "https://example.test/gui", authToken: "secret" }, () => {
+    assert.equal(wsUrl(), "wss://example.test/gui/ws?token=secret");
+  });
+});
+
 test("runtime config preserves default relative API URL without injected config", () => {
   withWindow(undefined, () => {
     assert.equal(apiUrl("/api/models"), "/api/models");

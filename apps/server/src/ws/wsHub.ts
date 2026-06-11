@@ -19,6 +19,7 @@ type WsClientState = {
 type WsHubOptions = {
   heartbeatIntervalMs?: number;
   maxBufferedAmount?: number;
+  onClientClosed?: (info: { socket: WsClient; reason: string; bufferedAmount?: number; mode: "close" | "terminate" }) => void;
 };
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
@@ -29,11 +30,13 @@ export class WsHub {
   private readonly clients = new Map<WsClient, WsClientState>();
   private readonly heartbeatIntervalMs: number;
   private readonly maxBufferedAmount: number;
+  private readonly onClientClosed?: WsHubOptions["onClientClosed"];
   private readonly heartbeatTimer?: NodeJS.Timeout;
 
   constructor(options: WsHubOptions = {}) {
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
     this.maxBufferedAmount = options.maxBufferedAmount ?? DEFAULT_MAX_BUFFERED_AMOUNT;
+    this.onClientClosed = options.onClientClosed;
     if (this.heartbeatIntervalMs > 0) {
       this.heartbeatTimer = setInterval(() => this.checkHeartbeat(), this.heartbeatIntervalMs);
       this.heartbeatTimer.unref?.();
@@ -104,11 +107,18 @@ export class WsHub {
 
   private closeClient(socket: WsClient, reason: string): void {
     this.clients.delete(socket);
+    const bufferedAmount = socket.bufferedAmount;
+    let mode: "close" | "terminate" = "close";
     try {
-      if (socket.terminate) socket.terminate();
-      else socket.close?.(SLOW_CLIENT_CLOSE_CODE, reason);
+      if (socket.terminate) {
+        mode = "terminate";
+        socket.terminate();
+      } else {
+        socket.close?.(SLOW_CLIENT_CLOSE_CODE, reason);
+      }
     } catch {
       // Ignore close failures; the client has already been removed from the hub.
     }
+    this.onClientClosed?.({ socket, reason, bufferedAmount, mode });
   }
 }

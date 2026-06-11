@@ -1,4 +1,5 @@
 import type { ConversationDisplayBlock } from "../../domain/conversationDisplay";
+import { virtualHeightBefore } from "../../domain/virtualList";
 
 export type ReplyNavigationDirection = "older" | "newer";
 
@@ -64,15 +65,17 @@ export function assistantReplyAnchors(blocks: ConversationDisplayBlock[]): Reply
 export function activeReplyAnchorIndex(anchors: ReplyAnchor[], layout: ConversationBlockLayoutMetrics, scrollTop: number): number {
   if (anchors.length === 0) return -1;
   const targetTop = Math.max(0, scrollTop) + ACTIVE_REPLY_TOP_TOLERANCE_PX;
-  let activeIndex = -1;
+  let low = 0;
+  let high = anchors.length;
 
-  for (let index = 0; index < anchors.length; index += 1) {
-    const offset = replyScrollOffset(anchors[index]!, layout);
-    if (offset > targetTop) break;
-    activeIndex = index;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const offset = replyScrollOffset(anchors[middle]!, layout);
+    if (offset <= targetTop) low = middle + 1;
+    else high = middle;
   }
 
-  return activeIndex;
+  return low - 1;
 }
 
 export function adjacentReplyAnchorIndex(activeIndex: number, anchorCount: number, direction: ReplyNavigationDirection): number {
@@ -110,24 +113,18 @@ export function replyMarkerWindow(
 
 export function blockScrollOffset(layout: ConversationBlockLayoutMetrics, blockIndex: number): number {
   const safeIndex = clamp(Math.floor(blockIndex), 0, layout.blockIds.length);
-  let offset = 0;
-  for (let index = 0; index < safeIndex; index += 1) {
-    offset += positiveHeight(layout.blockHeights[index]) ?? layout.estimatedBlockHeight;
-  }
-  return offset;
+  return virtualHeightBefore({ itemHeights: layout.blockHeights, itemCount: layout.blockIds.length, index: safeIndex, estimatedItemHeight: layout.estimatedBlockHeight });
 }
 
 export function replyScrollOffset(anchor: ReplyAnchor, layout: ConversationBlockLayoutMetrics): number {
-  const layoutIndex = layout.blockIds.indexOf(anchor.targetBlockId);
-  return blockScrollOffset(layout, layoutIndex >= 0 ? layoutIndex : anchor.targetBlockIndex);
+  return blockScrollOffset(layout, resolvedLayoutIndex(layout, anchor.targetBlockId, anchor.targetBlockIndex));
 }
 
 export function lastUserMessageScrollOffset(blocks: ConversationDisplayBlock[], layout: ConversationBlockLayoutMetrics): number | undefined {
   for (let index = blocks.length - 1; index >= 0; index -= 1) {
     const block = blocks[index];
     if (block?.type !== "message" || block.message.role !== "user") continue;
-    const layoutIndex = layout.blockIds.indexOf(block.id);
-    return blockScrollOffset(layout, layoutIndex >= 0 ? layoutIndex : index);
+    return blockScrollOffset(layout, resolvedLayoutIndex(layout, block.id, index));
   }
   return undefined;
 }
@@ -159,8 +156,10 @@ function summarizeAnchorMessage(text: string | undefined): string {
   return `${normalized.slice(0, ANCHOR_SUMMARY_MAX_CHARS - 1)}…`;
 }
 
-function positiveHeight(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+function resolvedLayoutIndex(layout: ConversationBlockLayoutMetrics, blockId: string, fallbackIndex: number): number {
+  if (layout.blockIds[fallbackIndex] === blockId) return fallbackIndex;
+  const layoutIndex = layout.blockIds.indexOf(blockId);
+  return layoutIndex >= 0 ? layoutIndex : fallbackIndex;
 }
 
 function clamp(value: number, min: number, max: number): number {

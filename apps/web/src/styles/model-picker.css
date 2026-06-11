@@ -64,24 +64,6 @@
   line-height: var(--composer-meta-line-height);
 }
 
-.runtime-profile-indicator {
-  display: inline-flex;
-  align-items: center;
-  flex: 0 1 auto;
-  max-width: 160px;
-  min-width: 0;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-pill);
-  color: var(--color-text-muted);
-  font-size: var(--composer-meta-font-size);
-  font-weight: var(--weight-semibold);
-  line-height: var(--composer-meta-line-height);
-  padding: 0.2rem 0.5rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .context-indicator {
   --context-ring-color: var(--color-context-ring);
   --context-ring-track: var(--color-context-ring-track);

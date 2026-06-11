@@ -20,8 +20,12 @@ export function readServerRuntimeConfig(env: NodeJS.ProcessEnv = process.env, pe
   const envAuthToken = env.PI_GUI_AUTH_TOKEN?.trim() || undefined;
   const requestedMode = env.PI_GUI_MODE?.trim() || env.NODE_ENV?.trim() || "development";
   const explicitRemoteLan = isRemoteLanMode(requestedMode);
+  const managedLoopbackMode = requiresAuthToken(requestedMode);
   const persistedRemoteEnabled = persistedRemoteAccess?.enabled === true;
-  const remoteLan = explicitRemoteLan || persistedRemoteEnabled;
+  // Persisted Remote Access is a convenience for ordinary server starts. Managed
+  // desktop/production launches must keep their loopback mode and launch token so
+  // the supervising process can verify it reached the backend it just spawned.
+  const remoteLan = explicitRemoteLan || (persistedRemoteEnabled && !managedLoopbackMode);
   const persistedAuthToken = remoteLan ? persistedRemoteAccess?.authToken?.trim() || undefined : undefined;
   const authToken = envAuthToken ?? persistedAuthToken;
   const authTokenSource = envAuthToken ? "env" : persistedAuthToken ? "persisted" : undefined;

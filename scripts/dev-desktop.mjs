@@ -221,9 +221,18 @@ function webDevEnvArgs(port) {
 }
 
 function webDevEnvObject(port) {
+  const backendPort = firstNonBlank(process.env.PI_GUI_DESKTOP_BACKEND_PORT, process.env.PI_GUI_BACKEND_PORT, process.env.PORT);
+  const backendOrigin = backendPort ? `http://127.0.0.1:${backendPort}` : undefined;
   return {
     PI_GUI_WEB_PORT: String(port),
-    ...(process.env.PI_GUI_DESKTOP_BACKEND_PORT ? { PI_GUI_BACKEND_PORT: process.env.PI_GUI_DESKTOP_BACKEND_PORT } : {}),
+    ...(backendPort
+      ? {
+          PI_GUI_BACKEND_PORT: backendPort,
+          PI_GUI_BACKEND_ORIGIN: backendOrigin,
+          VITE_API_URL: backendOrigin,
+          VITE_WS_URL: `ws://127.0.0.1:${backendPort}/ws`,
+        }
+      : {}),
   };
 }
 

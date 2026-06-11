@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { SubagentRun } from "@pi-gui/shared";
 import { buildConversationDisplayBlocks, type ConversationDisplayBlock, type ConversationDisplayMode } from "../../domain/conversationDisplay";
 import { observeElementResize } from "../../domain/resizeObserver";
-import { estimateVirtualRange } from "../../domain/virtualList";
+import { estimateVirtualRange, virtualHeightBefore } from "../../domain/virtualList";
 import type { ConversationMessage } from "../../types";
 import { renderBlock } from "./ConversationBlockRenderer";
 import type { ConversationBlockActions } from "./types";
@@ -25,6 +25,8 @@ export const VirtualConversationBlockList = memo(function VirtualConversationBlo
 }) {
   const heightByBlockIdRef = useRef<Map<string, number>>(new Map());
   const latestEstimatedHeightsRef = useRef<number[]>([]);
+  const lastLayoutMetricsRef = useRef<ConversationBlockLayoutMetrics | undefined>(undefined);
+  const estimatedHeightsCacheRef = useRef<EstimatedConversationHeightsCache | undefined>(undefined);
   const lastViewportSampleRef = useRef<{ scrollTop: number; sampledAt: number } | undefined>(undefined);
   const viewportFrameRef = useRef<number | undefined>(undefined);
   const viewportSettleTimerRef = useRef<number | undefined>(undefined);
@@ -105,10 +107,11 @@ export const VirtualConversationBlockList = memo(function VirtualConversationBlo
     return () => window.cancelAnimationFrame(frame);
   }, [blocks.length, measurementRevision, updateViewport]);
 
-  const estimatedHeights = useMemo(
-    () => blocks.map((block) => heightByBlockIdRef.current.get(block.id) ?? estimateConversationBlockHeight(block)),
-    [blocks, measurementRevision],
-  );
+  const estimatedHeights = useMemo(() => {
+    const cache = cachedEstimatedConversationHeights(blocks, heightByBlockIdRef.current, estimatedHeightsCacheRef.current);
+    estimatedHeightsCacheRef.current = cache;
+    return cache.heights;
+  }, [blocks, measurementRevision]);
   latestEstimatedHeightsRef.current = estimatedHeights;
 
   useEffect(() => {
@@ -119,11 +122,15 @@ export const VirtualConversationBlockList = memo(function VirtualConversationBlo
   }, [blocks]);
 
   useLayoutEffect(() => {
-    onLayoutMetricsChange?.({
+    if (!onLayoutMetricsChange) return;
+    const metrics = {
       blockIds: blocks.map((block) => block.id),
       blockHeights: estimatedHeights,
       estimatedBlockHeight: ESTIMATED_CONVERSATION_BLOCK_HEIGHT,
-    });
+    };
+    if (sameLayoutMetrics(lastLayoutMetricsRef.current, metrics)) return;
+    lastLayoutMetricsRef.current = metrics;
+    onLayoutMetricsChange(metrics);
   }, [blocks, estimatedHeights, onLayoutMetricsChange]);
 
   const overscan = conversationBlockOverscan(viewport.scrollVelocity, navigationOverscanActive);
@@ -154,6 +161,13 @@ export const VirtualConversationBlockList = memo(function VirtualConversationBlo
     if (Math.abs(delta) <= 1) return;
     const surface = surfaceRef.current;
     heightByBlockIdRef.current.set(blockId, height);
+    const cache = estimatedHeightsCacheRef.current;
+    if (cache?.blocks[index]?.id === blockId) {
+      const heights = [...cache.heights];
+      heights[index] = height;
+      estimatedHeightsCacheRef.current = { blocks: cache.blocks, heights };
+      latestEstimatedHeightsRef.current = heights;
+    }
     if (surface && rowIsFullyAboveViewport(estimatedHeights, index, previousHeight, surface.scrollTop)) {
       surface.scrollTop = Math.max(0, surface.scrollTop + delta);
       lastViewportSampleRef.current = { scrollTop: surface.scrollTop, sampledAt: performance.now() };
@@ -243,10 +257,61 @@ type ConversationViewportState = {
   scrollVelocity: number;
 };
 
+type EstimatedConversationHeightsCache = {
+  blocks: ConversationDisplayBlock[];
+  heights: number[];
+};
+
+function sameLayoutMetrics(left: ConversationBlockLayoutMetrics | undefined, right: ConversationBlockLayoutMetrics): boolean {
+  if (!left) return false;
+  return left.estimatedBlockHeight === right.estimatedBlockHeight && sameStringArray(left.blockIds, right.blockIds) && sameNumberArray(left.blockHeights, right.blockHeights);
+}
+
+function sameStringArray(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function sameNumberArray(left: number[], right: number[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function cachedEstimatedConversationHeights(
+  blocks: ConversationDisplayBlock[],
+  measuredHeights: Map<string, number>,
+  previous: EstimatedConversationHeightsCache | undefined,
+): EstimatedConversationHeightsCache {
+  if (previous?.blocks === blocks) return previous;
+
+  const startIndex = incrementalHeightEstimateStartIndex(previous?.blocks, blocks);
+  if (previous && startIndex !== undefined) {
+    const heights = previous.heights.slice(0, startIndex);
+    for (let index = startIndex; index < blocks.length; index += 1) heights.push(measuredHeights.get(blocks[index]!.id) ?? estimateConversationBlockHeight(blocks[index]!));
+    return { blocks, heights };
+  }
+
+  return { blocks, heights: blocks.map((block) => measuredHeights.get(block.id) ?? estimateConversationBlockHeight(block)) };
+}
+
+function incrementalHeightEstimateStartIndex(previousBlocks: ConversationDisplayBlock[] | undefined, blocks: ConversationDisplayBlock[]): number | undefined {
+  if (!previousBlocks || previousBlocks.length === 0) return undefined;
+  if (blocks.length === previousBlocks.length) {
+    const lastIndex = blocks.length - 1;
+    return previousBlocks[lastIndex] !== blocks[lastIndex] && (lastIndex === 0 || previousBlocks[lastIndex - 1] === blocks[lastIndex - 1]) ? lastIndex : undefined;
+  }
+  if (blocks.length > previousBlocks.length && previousBlocks[previousBlocks.length - 1] === blocks[previousBlocks.length - 1]) return previousBlocks.length;
+  return undefined;
+}
+
 function estimateConversationBlockHeight(block: ConversationDisplayBlock): number {
   if (block.type === "tool_group") {
     const processCount = block.tools.length + block.thinkingMessages.length + block.subagentRuns.length;
     return clampHeight(150 + processCount * 28 + (block.model.current?.content ? estimateTextHeight(block.model.current.content, { collapsed: true }) : 0));
+  }
+
+  if (block.type === "tui_process") {
+    return clampHeight(72 + estimateTextHeight(block.model.summary || block.model.detail, { collapsed: true }));
   }
 
   const message = block.message;
@@ -295,8 +360,7 @@ function conversationBlockOverscan(scrollVelocity: number, navigationOverscanAct
 }
 
 function rowIsFullyAboveViewport(heights: number[], index: number, rowHeight: number, scrollTop: number): boolean {
-  let offset = 0;
-  for (let currentIndex = 0; currentIndex < index; currentIndex += 1) offset += heights[currentIndex] ?? ESTIMATED_CONVERSATION_BLOCK_HEIGHT;
+  const offset = virtualHeightBefore({ itemHeights: heights, itemCount: heights.length, index, estimatedItemHeight: ESTIMATED_CONVERSATION_BLOCK_HEIGHT });
   return offset + rowHeight <= scrollTop;
 }
 

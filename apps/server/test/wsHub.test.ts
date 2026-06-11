@@ -77,6 +77,22 @@ test("WsHub heartbeat keeps clients alive after pong", () => {
   hub.close();
 });
 
+test("WsHub reports why it closed a client", () => {
+  const closed: Array<{ reason: string; mode: "close" | "terminate"; bufferedAmount?: number }> = [];
+  const hub = new WsHub({
+    heartbeatIntervalMs: 0,
+    onClientClosed: ({ reason, mode, bufferedAmount }) => closed.push({ reason, mode, bufferedAmount }),
+  });
+  const client = new FakeWsClient();
+  client.throwOnSend = true;
+  hub.add(client);
+
+  assert.equal(hub.send(client, event), false);
+
+  assert.deepEqual(closed, [{ reason: "send failed", mode: "terminate", bufferedAmount: 0 }]);
+  hub.close();
+});
+
 class FakeWsClient implements WsClient {
   sent: string[] = [];
   bufferedAmount = 0;

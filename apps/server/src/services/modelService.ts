@@ -4,19 +4,49 @@ import type { ModelSummary, ThinkingLevel } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
 import { LfJsonlParser, type JsonlParseBatch } from "../runtime/jsonlFraming.js";
 
+const MODEL_CACHE_SUCCESS_TTL_MS = 5 * 60_000;
+const MODEL_CACHE_FAILURE_TTL_MS = 15_000;
+
+let modelCache: { models: ModelSummary[]; expiresAt: number } | undefined;
+let modelRefreshInFlight: Promise<ModelSummary[]> | undefined;
+
 export async function listPiModels(): Promise<ModelSummary[]> {
+  const now = Date.now();
+  if (modelCache && modelCache.expiresAt > now) return cloneModels(modelCache.models);
+  if (modelRefreshInFlight) return cloneModels(await modelRefreshInFlight);
+
+  modelRefreshInFlight = refreshPiModels()
+    .then((models) => {
+      modelCache = { models: cloneModels(models), expiresAt: Date.now() + (models.length > 0 ? MODEL_CACHE_SUCCESS_TTL_MS : MODEL_CACHE_FAILURE_TTL_MS) };
+      return models;
+    })
+    .catch(() => {
+      if (modelCache?.models.length) {
+        modelCache = { models: modelCache.models, expiresAt: Date.now() + MODEL_CACHE_FAILURE_TTL_MS };
+        return cloneModels(modelCache.models);
+      }
+      modelCache = { models: [], expiresAt: Date.now() + MODEL_CACHE_FAILURE_TTL_MS };
+      return [];
+    })
+    .finally(() => {
+      modelRefreshInFlight = undefined;
+    });
+  return cloneModels(await modelRefreshInFlight);
+}
+
+async function refreshPiModels(): Promise<ModelSummary[]> {
   // Pi/provider model discovery is the authoritative source. The CLI fallback
   // below is a GUI projection fallback only; do not treat it as provider truth
   // or use it to reject user-selected model IDs before Pi sees them.
   const fromRpc = await listPiModelsViaRpc().catch(() => []);
   if (fromRpc.length > 0) return fromRpc;
 
-  try {
-    const { stdout } = await execFileAsync("pi", ["--list-models"]);
-    return parsePiModelList(stdout);
-  } catch {
-    return [];
-  }
+  const { stdout } = await execFileAsync("pi", ["--list-models"]);
+  return parsePiModelList(stdout);
+}
+
+function cloneModels(models: ModelSummary[]): ModelSummary[] {
+  return models.map((model) => ({ ...model, supportedThinkingLevels: model.supportedThinkingLevels ? [...model.supportedThinkingLevels] : undefined }));
 }
 
 function listPiModelsViaRpc(timeoutMs = 12_000): Promise<ModelSummary[]> {

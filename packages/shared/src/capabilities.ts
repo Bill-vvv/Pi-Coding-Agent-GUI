@@ -6,6 +6,7 @@ export type CapabilityIntegrationLevel = 0 | 1 | 2 | 3;
 export type RuntimeProfileId = "vanilla-pi" | "pi-user-extensions" | "pi-gui-enhanced" | "trellis-workflow" | "custom";
 
 export const RUNTIME_PROFILE_IDS: readonly RuntimeProfileId[] = ["vanilla-pi", "pi-user-extensions", "pi-gui-enhanced", "trellis-workflow", "custom"] as const;
+export const DEFAULT_RUNTIME_PROFILE_ID: RuntimeProfileId = "pi-user-extensions";
 
 export function isRuntimeProfileId(value: unknown): value is RuntimeProfileId {
   return typeof value === "string" && (RUNTIME_PROFILE_IDS as readonly string[]).includes(value);
@@ -38,6 +39,7 @@ export type RuntimeProfileDescriptor = {
   summary: string;
   defaultCapabilityIds: string[];
   inheritsUserExtensions: boolean;
+  legacy?: boolean;
 };
 
 export type PiExtensionDiscoveryScope = "project";
@@ -55,22 +57,6 @@ export type DiscoveredPiExtensionDescriptor = {
 };
 
 export const PI_GUI_CAPABILITIES: CapabilityDescriptor[] = [
-  {
-    id: "interactive-prompts",
-    label: "Interactive Prompts",
-    summary: "用 GUI 原生表单承载 agent 的结构化澄清、选择和确认问题。",
-    origin: "builtin",
-    integrationLevel: 3,
-    implementationHost: "pi-extension",
-    risks: ["ui-only"],
-    releaseStance: "default-off",
-    mutatesPiEnvironment: false,
-    changesAgentBehavior: true,
-    startsProcesses: false,
-    extensionUiMethods: ["askBatch"],
-    supportsLocalRuntime: true,
-    supportsRemoteRuntime: false,
-  },
   {
     id: "trellis-subagent",
     label: "Trellis Sub-agent Workflow",
@@ -238,44 +224,49 @@ export const PI_GUI_CAPABILITIES: CapabilityDescriptor[] = [
 
 export const RUNTIME_PROFILES: RuntimeProfileDescriptor[] = [
   {
-    id: "vanilla-pi",
-    label: "Vanilla Pi",
-    summary: "不注入 Pi GUI 增强工具，也不继承用户扩展的干净 Pi runtime。",
-    defaultCapabilityIds: [],
-    inheritsUserExtensions: false,
-  },
-  {
     id: "pi-user-extensions",
-    label: "Pi + User Extensions",
-    summary: "继承或发现用户已有 Pi extensions，但不默认启用 Pi GUI workflow 增强。",
+    label: "默认 Pi",
+    summary: "继承用户现有 Pi extensions，不默认注入 Pi GUI workflow 增强。",
     defaultCapabilityIds: [],
     inheritsUserExtensions: true,
   },
   {
-    id: "pi-gui-enhanced",
-    label: "Pi GUI Enhanced",
-    summary: "启用低风险 GUI 增强能力，但不隐含 Trellis workflow。",
-    defaultCapabilityIds: ["interactive-prompts", "pi-ready-notifications"],
-    inheritsUserExtensions: false,
-  },
-  {
-    id: "trellis-workflow",
-    label: "Trellis Workflow",
-    summary: "启用 Trellis/sub-agent/task workflow 能力，并明确标注其为 Pi GUI/Trellis 扩展。",
-    defaultCapabilityIds: ["interactive-prompts", "pi-ready-notifications", "trellis-subagent"],
+    id: "vanilla-pi",
+    label: "隔离 Pi / Safe Mode",
+    summary: "不继承用户扩展，也不注入 Pi GUI 增强工具的干净排障 runtime。",
+    defaultCapabilityIds: [],
     inheritsUserExtensions: false,
   },
   {
     id: "custom",
-    label: "Custom",
-    summary: "用户自定义能力和扩展组合。",
+    label: "自定义 Pi",
+    summary: "手动选择 Pi GUI runtime 能力和扩展组合。",
     defaultCapabilityIds: [],
     inheritsUserExtensions: false,
   },
 ];
 
+export const LEGACY_RUNTIME_PROFILES: RuntimeProfileDescriptor[] = [
+  {
+    id: "pi-gui-enhanced",
+    label: "Pi GUI Enhanced",
+    summary: "旧版预设：启用低风险 GUI 增强能力。",
+    defaultCapabilityIds: ["pi-ready-notifications"],
+    inheritsUserExtensions: false,
+    legacy: true,
+  },
+  {
+    id: "trellis-workflow",
+    label: "Trellis Workflow",
+    summary: "旧版预设：启用 Trellis/sub-agent/task workflow 能力。",
+    defaultCapabilityIds: ["pi-ready-notifications", "trellis-subagent"],
+    inheritsUserExtensions: false,
+    legacy: true,
+  },
+];
+
 export function runtimeProfileById(profileId: RuntimeProfileId, profiles: readonly RuntimeProfileDescriptor[] = RUNTIME_PROFILES): RuntimeProfileDescriptor {
-  const profile = profiles.find((candidate) => candidate.id === profileId);
+  const profile = profiles.find((candidate) => candidate.id === profileId) ?? LEGACY_RUNTIME_PROFILES.find((candidate) => candidate.id === profileId);
   if (!profile) throw new Error(`Unknown runtime profile: ${profileId}`);
   return profile;
 }

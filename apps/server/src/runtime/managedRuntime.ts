@@ -18,6 +18,7 @@ export type ManagedRuntime = {
   pendingCompactStatsNotice?: { tokensBefore?: number };
   pendingNativeRpcCommands: Map<string, { command: string; label?: string }>;
   pendingExtensionUiRequest?: ExtensionUiRequest;
+  pendingRewindPromptCheckpoint?: { projectId: string; snapshotId: string; sessionId?: string; promptText: string; createdAt: number };
   configRevision: number;
   projection: ConversationProjection;
   subagents: SubagentRunProjection;

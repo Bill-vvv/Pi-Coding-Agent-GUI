@@ -1,6 +1,25 @@
-import type { PiPetDisplay } from "./piPet";
+import type { CodexPetAnimationName, DesktopPetStatus, PiPetDisplay } from "./piPet";
 
-export type DesktopPetDisplayPayload = Pick<PiPetDisplay, "mood" | "tone" | "title" | "detail" | "badges" | "satelliteCount">;
+export type DesktopPetDisplayPayload = Pick<PiPetDisplay, "mood" | "tone" | "title" | "detail" | "badges" | "satelliteCount"> & {
+  status: DesktopPetStatus;
+  animation: CodexPetAnimationName;
+  threadId?: string;
+  petId?: string;
+  scale?: number;
+};
+
+export type DesktopPetListPayload = {
+  pets: Array<{
+    id: string;
+    displayName: string;
+    description?: string;
+    source: "bundled" | "codex" | "legacy";
+    legacy?: boolean;
+    warning?: string;
+  }>;
+  selectedPetId: string;
+  scale: number;
+};
 
 export type DesktopShellBridge = {
   minimize: () => Promise<void>;
@@ -10,6 +29,10 @@ export type DesktopShellBridge = {
   onMaximizedChange: (callback: (maximized: boolean) => void) => () => void;
   setDesktopPetVisible?: (visible: boolean) => Promise<boolean>;
   updateDesktopPet?: (display: DesktopPetDisplayPayload) => Promise<boolean>;
+  listDesktopPets?: () => Promise<DesktopPetListPayload>;
+  setDesktopPetSelection?: (petId: string) => Promise<boolean>;
+  setDesktopPetScale?: (scale: number) => Promise<boolean>;
+  resetDesktopPetPosition?: () => Promise<boolean>;
   onDesktopPetClosed?: (callback: () => void) => () => void;
 };
 

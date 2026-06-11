@@ -16,6 +16,7 @@ type PiRpcClientEvents = {
 };
 
 type PendingRequest = {
+  command: string;
   resolve: (response: Record<string, unknown>) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -43,7 +44,6 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
       session?: string;
       extensionPaths?: string[];
       disableExtensionDiscovery?: boolean;
-      interactivePromptsEnabled?: boolean;
       codexTransportMonitorEnabled?: boolean;
     } = {},
   ) {
@@ -91,7 +91,6 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
       stdio: ["pipe", "pipe", "pipe"],
       env: createPiRuntimeEnv({
         serviceTierConfigFile: remoteTarget ? undefined : this.options.serviceTierConfigFile,
-        interactivePromptsEnabled: !remoteTarget && this.options.interactivePromptsEnabled,
         codexTransportMonitorEnabled: !remoteTarget && this.options.codexTransportMonitorEnabled,
       }),
     });
@@ -121,7 +120,7 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
         reject(new Error(`Timed out waiting for Pi RPC response: ${String(command.type)}`));
       }, timeoutMs);
       timer.unref?.();
-      this.pendingRequests.set(id, { resolve, reject, timer });
+      this.pendingRequests.set(id, { command: String(command.type), resolve, reject, timer });
       try {
         this.send(command);
       } catch (error) {
@@ -185,12 +184,31 @@ export class PiRpcClient extends EventEmitter<PiRpcClientEvents> {
   }
 
   private resolvePendingResponse(payload: unknown): void {
-    if (!isRecord(payload) || payload.type !== "response" || typeof payload.id !== "string") return;
-    const pending = this.pendingRequests.get(payload.id);
-    if (!pending) return;
-    this.pendingRequests.delete(payload.id);
+    if (!isRecord(payload) || payload.type !== "response") return;
+    const match = this.pendingResponseMatch(payload);
+    if (!match) return;
+    const [requestId, pending] = match;
+    this.pendingRequests.delete(requestId);
     clearTimeout(pending.timer);
     pending.resolve(payload);
+  }
+
+  private pendingResponseMatch(payload: Record<string, unknown>): [string, PendingRequest] | undefined {
+    if (typeof payload.id === "string") {
+      const pending = this.pendingRequests.get(payload.id);
+      return pending ? [payload.id, pending] : undefined;
+    }
+
+    // Pi currently reports unknown RPC commands without echoing the request id:
+    // { type: "response", command: "...", success: false, error: "Unknown command: ..." }.
+    // Resolve the matching pending request so callers see the actionable command
+    // error instead of timing out. Restrict this fallback to failed responses to
+    // avoid guessing correlation for successful asynchronous events.
+    if (payload.success !== false || typeof payload.command !== "string") return undefined;
+    for (const entry of this.pendingRequests.entries()) {
+      if (entry[1].command === payload.command) return entry;
+    }
+    return undefined;
   }
 
   private rejectPendingRequests(error: Error): void {

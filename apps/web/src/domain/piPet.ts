@@ -2,6 +2,8 @@ import type { ConversationContextUsage, ConversationMessage, Runtime, RuntimeQue
 
 export type PiPetMood = "sleeping" | "idle" | "starting" | "thinking" | "tool" | "subagents" | "waiting" | "queued" | "context" | "background" | "recovering" | "ready" | "error";
 export type PiPetTone = "neutral" | "active" | "attention" | "success" | "danger";
+export type DesktopPetStatus = "idle" | "running" | "waiting" | "review" | "done" | "failed" | "message";
+export type CodexPetAnimationName = "idle" | "running-right" | "running-left" | "waving" | "jumping" | "failed" | "waiting" | "running" | "review";
 
 export type PiPetSignal = {
   label: string;
@@ -275,6 +277,54 @@ export function derivePiPetDisplay(input: PiPetDisplayInput): PiPetDisplay {
     satelliteCount,
     canOpenRuntimeLogs: false,
   };
+}
+
+export function desktopPetStatusFromMood(mood: PiPetMood): DesktopPetStatus {
+  switch (mood) {
+    case "starting":
+    case "thinking":
+    case "tool":
+    case "subagents":
+    case "background":
+      return "running";
+    case "waiting":
+    case "queued":
+      return "waiting";
+    case "context":
+    case "recovering":
+      return "review";
+    case "ready":
+      return "done";
+    case "error":
+      return "failed";
+    case "sleeping":
+    case "idle":
+      return "idle";
+  }
+}
+
+export function codexPetAnimationFromMood(mood: PiPetMood): CodexPetAnimationName {
+  switch (mood) {
+    case "starting":
+    case "thinking":
+    case "tool":
+    case "subagents":
+    case "background":
+      return "running";
+    case "waiting":
+    case "queued":
+      return "waiting";
+    case "context":
+    case "recovering":
+      return "review";
+    case "ready":
+      return "waving";
+    case "error":
+      return "failed";
+    case "sleeping":
+    case "idle":
+      return "idle";
+  }
 }
 
 export function countBackgroundPiPetActivity(runtimes: Runtime[], busyByRuntime: Record<string, boolean>, activeRuntimeId?: string): PiPetBackgroundActivity {

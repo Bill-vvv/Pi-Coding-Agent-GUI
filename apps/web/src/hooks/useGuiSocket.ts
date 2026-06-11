@@ -183,10 +183,31 @@ export function replayCursorAfterServerEvent(currentEventId: number, event: Serv
 
 export function wsUrl(sinceEventId = 0): string {
   const config = piGuiRuntimeConfig();
-  const baseUrl = config.wsUrl || `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
+  const baseUrl = config.wsUrl || wsUrlFromApiBaseUrl(config.apiBaseUrl) || `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
   const url = new URL(baseUrl, window.location.href);
   const token = authToken();
   if (token) url.searchParams.set("token", token);
   if (sinceEventId > 0) url.searchParams.set("sinceEventId", String(sinceEventId));
   return url.toString();
+}
+
+function wsUrlFromApiBaseUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value, window.location.href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const basePath = stripTrailingApiPath(url.pathname).replace(/\/+$/, "");
+    url.pathname = `${basePath}/ws` || "/ws";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function stripTrailingApiPath(pathname: string): string {
+  if (pathname === "/api") return "";
+  return pathname.endsWith("/api") ? pathname.slice(0, -"/api".length) : pathname;
 }

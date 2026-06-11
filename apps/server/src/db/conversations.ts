@@ -39,6 +39,7 @@ export class ConversationStore {
         createdAt: timestamp,
         updatedAt: message.updatedAt ?? now,
       });
+    this.refreshRuntimeConversationSummary(message.runtimeId);
     return this.getConversationMessage(message.runtimeId, message.id) ?? message;
   }
 
@@ -51,6 +52,10 @@ export class ConversationStore {
 
   listConversationMessages(runtimeId: string, limit = 100): ConversationMessage[] {
     return this.listLatestConversationMessages(runtimeId, limit).messages;
+  }
+
+  hasConversationMessages(runtimeId: string): boolean {
+    return Boolean(this.db.prepare("select 1 from conversation_messages where runtime_id = ? limit 1").get(runtimeId));
   }
 
   listLatestConversationMessages(runtimeId: string, limit = 100): { messages: ConversationMessage[]; hasMoreBefore: boolean } {
@@ -91,39 +96,9 @@ export class ConversationStore {
   listRuntimeConversationSummaries(limit = 100): RuntimeConversationSummary[] {
     const rows = this.db
       .prepare(
-        `select
-           r.id as runtime_id,
-           r.project_id,
-           (
-             select m.text from conversation_messages m
-             where m.runtime_id = r.id and m.role = 'user' and trim(m.text) != ''
-             order by m.created_at asc limit 1
-           ) as first_user_text,
-           (
-             select m.text from conversation_messages m
-             where m.runtime_id = r.id and m.role in ('user', 'assistant') and trim(m.text) != ''
-             order by m.created_at asc limit 1
-           ) as first_message_text,
-           (
-             select m.text from conversation_messages m
-             where m.runtime_id = r.id and m.role in ('user', 'assistant') and trim(m.text) != ''
-             order by m.created_at desc limit 1
-           ) as latest_message_text,
-           (
-             select m.updated_at from conversation_messages m
-             where m.runtime_id = r.id and m.role in ('user', 'assistant') and trim(m.text) != ''
-             order by m.created_at desc limit 1
-           ) as latest_updated_at,
-           (
-             select m.updated_at from conversation_messages m
-             where m.runtime_id = r.id and m.role = 'assistant' and trim(m.text) != '' and m.is_streaming = 0
-             order by m.created_at desc limit 1
-           ) as latest_assistant_completed_at,
-           (
-             select count(*) from conversation_messages m
-             where m.runtime_id = r.id and m.role in ('user', 'assistant') and trim(m.text) != ''
-           ) as message_count
-         from runtimes r
+        `select s.runtime_id, s.project_id, s.first_user_text, s.first_message_text, s.latest_message_text, s.latest_updated_at, s.latest_assistant_completed_at, s.message_count
+         from runtime_conversation_summaries s
+         join runtimes r on r.id = s.runtime_id
          order by r.updated_at desc
          limit ?`,
       )
@@ -159,6 +134,7 @@ export class ConversationStore {
         });
       });
     })(messages);
+    this.refreshRuntimeConversationSummary(runtimeId);
   }
 
   markStreamingMessagesInterrupted(runtimeId: string, projectId: string, reasonText: string, timestamp = Date.now()): ConversationMessage[] {
@@ -189,6 +165,7 @@ export class ConversationStore {
         });
       }
     })(messages);
+    this.refreshRuntimeConversationSummary(runtimeId);
 
     return messages;
   }
@@ -249,6 +226,79 @@ export class ConversationStore {
     return this.db
       .prepare("select * from runtime_conversation_state where runtime_id = ?")
       .get(runtimeId) as RuntimeConversationStateRow | undefined;
+  }
+
+  private refreshRuntimeConversationSummary(runtimeId: string): void {
+    const row = this.db
+      .prepare(
+        `select
+           runtime_id,
+           project_id,
+           (
+             select m.text from conversation_messages m
+             where m.runtime_id = conversation_messages.runtime_id and m.role = 'user' and trim(m.text) != ''
+             order by m.created_at asc, m.rowid asc limit 1
+           ) as first_user_text,
+           (
+             select m.text from conversation_messages m
+             where m.runtime_id = conversation_messages.runtime_id and m.role in ('user', 'assistant') and trim(m.text) != ''
+             order by m.created_at asc, m.rowid asc limit 1
+           ) as first_message_text,
+           (
+             select m.text from conversation_messages m
+             where m.runtime_id = conversation_messages.runtime_id and m.role in ('user', 'assistant') and trim(m.text) != ''
+             order by m.created_at desc, m.rowid desc limit 1
+           ) as latest_message_text,
+           (
+             select m.updated_at from conversation_messages m
+             where m.runtime_id = conversation_messages.runtime_id and m.role in ('user', 'assistant') and trim(m.text) != ''
+             order by m.created_at desc, m.rowid desc limit 1
+           ) as latest_updated_at,
+           (
+             select m.updated_at from conversation_messages m
+             where m.runtime_id = conversation_messages.runtime_id and m.role = 'assistant' and trim(m.text) != '' and m.is_streaming = 0
+             order by m.created_at desc, m.rowid desc limit 1
+           ) as latest_assistant_completed_at,
+           (
+             select count(*) from conversation_messages m
+             where m.runtime_id = conversation_messages.runtime_id and m.role in ('user', 'assistant') and trim(m.text) != ''
+           ) as message_count
+         from conversation_messages
+         where runtime_id = ?
+         limit 1`,
+      )
+      .get(runtimeId) as RuntimeConversationSummaryRow | undefined;
+
+    if (!row || runtimeConversationSummaryFromRow(row).length === 0) {
+      this.db.prepare("delete from runtime_conversation_summaries where runtime_id = ?").run(runtimeId);
+      return;
+    }
+
+    this.db
+      .prepare(
+        `insert into runtime_conversation_summaries (runtime_id, project_id, first_user_text, first_message_text, latest_message_text, latest_updated_at, latest_assistant_completed_at, message_count, refreshed_at)
+         values (@runtimeId, @projectId, @firstUserText, @firstMessageText, @latestMessageText, @latestUpdatedAt, @latestAssistantCompletedAt, @messageCount, @refreshedAt)
+         on conflict(runtime_id) do update set
+           project_id = excluded.project_id,
+           first_user_text = excluded.first_user_text,
+           first_message_text = excluded.first_message_text,
+           latest_message_text = excluded.latest_message_text,
+           latest_updated_at = excluded.latest_updated_at,
+           latest_assistant_completed_at = excluded.latest_assistant_completed_at,
+           message_count = excluded.message_count,
+           refreshed_at = excluded.refreshed_at`,
+      )
+      .run({
+        runtimeId: row.runtime_id,
+        projectId: row.project_id,
+        firstUserText: row.first_user_text,
+        firstMessageText: row.first_message_text,
+        latestMessageText: row.latest_message_text,
+        latestUpdatedAt: row.latest_updated_at,
+        latestAssistantCompletedAt: row.latest_assistant_completed_at,
+        messageCount: row.message_count,
+        refreshedAt: Date.now(),
+      });
   }
 }
 

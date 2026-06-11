@@ -1,6 +1,5 @@
 import { forwardRef, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
 import type { ModelSummary, Project, ResponseMode, Runtime, RuntimeQueue, SlashCommand, ThinkingLevel } from "@pi-gui/shared";
-import { RUNTIME_PROFILES } from "@pi-gui/shared";
 import {
   buildCommandOptions,
   buildComposerCompletions,
@@ -535,7 +534,6 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
             onChooseThinkingLevel={onChooseThinkingLevel}
             onChooseResponseMode={onChooseResponseMode}
           />
-          <RuntimeProfileIndicator runtime={activeRuntime} />
           <ContextIndicator usage={contextUsage} activeRuntime={activeRuntime} />
         </div>
       </div>
@@ -544,20 +542,6 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
     </form>
   );
 });
-
-function RuntimeProfileIndicator({ runtime }: { runtime?: Runtime }) {
-  if (!runtime) return null;
-  const profile = RUNTIME_PROFILES.find((item) => item.id === (runtime.runtimeProfileId ?? "vanilla-pi"));
-  const capabilityCount = runtime.enabledCapabilityIds?.length ?? 0;
-  const label = profile?.label ?? runtime.runtimeProfileId ?? "Vanilla Pi";
-  const detail = `${label} · ${capabilityCount} enabled capabilities`;
-
-  return (
-    <span className="runtime-profile-indicator" title={detail} aria-label={detail}>
-      {label}
-    </span>
-  );
-}
 
 function streamingBehaviorFromSubmitter(submitter: HTMLButtonElement | null): "steer" | "followUp" | undefined {
   const behavior = submitter?.dataset.streamingBehavior;

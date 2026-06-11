@@ -1,4 +1,5 @@
 import { isRecord, type ConversationToolDetails } from "@pi-gui/shared";
+import type { AppDatabase } from "../../db.js";
 import { contextUsageFromSessionStats, numberOrUndefined } from "./contextUsage.js";
 import type { NormalizedConversationEvent, NormalizedSnapshotMessage } from "./normalizedEvents.js";
 import { extractPiMessageContent, textFromResult } from "./piMessageContent.js";
@@ -7,6 +8,7 @@ import { toolConversationIdFromPiMessage, toolKeyFromPayload, toolNameFromPayloa
 
 export type PiPayloadNormalizerOptions = {
   currentContextWindow?: number;
+  db?: AppDatabase;
 };
 
 export function normalizePiPayload(payload: unknown, options: PiPayloadNormalizerOptions = {}): NormalizedConversationEvent[] {
@@ -75,7 +77,7 @@ export function normalizePiPayload(payload: unknown, options: PiPayloadNormalize
   }
 
   if (command === "get_session_stats") {
-    const usage = contextUsageFromSessionStats(data, options.currentContextWindow);
+    const usage = contextUsageFromSessionStats(data, options.currentContextWindow, options.db);
     return usage ? [{ type: "context.usage", usage }] : [];
   }
 

@@ -36,6 +36,40 @@ type EnvironmentOptions = {
 };
 
 const PI_RPC_SMOKE_COMMAND = "get_available_models";
+const ENVIRONMENT_SUCCESS_TTL_MS = 45_000;
+const ENVIRONMENT_FAILURE_TTL_MS = 8_000;
+
+let environmentCache: { diagnostics: EnvironmentDiagnostics; expiresAt: number } | undefined;
+let environmentRefreshInFlight: Promise<EnvironmentDiagnostics> | undefined;
+
+export async function getCachedEnvironmentDiagnostics(options: EnvironmentOptions = {}): Promise<EnvironmentDiagnostics> {
+  const now = Date.now();
+  if (environmentCache && environmentCache.expiresAt > now) return cloneDiagnostics(environmentCache.diagnostics);
+  if (environmentRefreshInFlight) return cloneDiagnostics(await environmentRefreshInFlight);
+
+  environmentRefreshInFlight = diagnoseEnvironment(options)
+    .then((diagnostics) => {
+      const ttl = diagnostics.readiness?.status === "ready" ? ENVIRONMENT_SUCCESS_TTL_MS : ENVIRONMENT_FAILURE_TTL_MS;
+      environmentCache = { diagnostics: cloneDiagnostics(diagnostics), expiresAt: Date.now() + ttl };
+      return diagnostics;
+    })
+    .catch((error) => {
+      if (environmentCache) {
+        environmentCache = { diagnostics: environmentCache.diagnostics, expiresAt: Date.now() + ENVIRONMENT_FAILURE_TTL_MS };
+        return cloneDiagnostics(environmentCache.diagnostics);
+      }
+      throw error;
+    })
+    .finally(() => {
+      environmentRefreshInFlight = undefined;
+    });
+  return cloneDiagnostics(await environmentRefreshInFlight);
+}
+
+export function resetEnvironmentDiagnosticsCacheForTest(): void {
+  environmentCache = undefined;
+  environmentRefreshInFlight = undefined;
+}
 
 export async function diagnoseEnvironment(options: EnvironmentOptions = {}): Promise<EnvironmentDiagnostics> {
   const env = options.env ?? process.env;
@@ -59,6 +93,10 @@ export async function diagnoseEnvironment(options: EnvironmentOptions = {}): Pro
     ...diagnostics,
     readiness: readinessFromDiagnostics(diagnostics, npmResult.error),
   };
+}
+
+function cloneDiagnostics(diagnostics: EnvironmentDiagnostics): EnvironmentDiagnostics {
+  return JSON.parse(JSON.stringify(diagnostics)) as EnvironmentDiagnostics;
 }
 
 function backendDiagnostics(config: ServerRuntimeConfig): NonNullable<EnvironmentDiagnostics["backend"]> {

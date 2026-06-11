@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, screen } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import { existsSync } from "node:fs";
 import { release } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -6,13 +6,14 @@ import { fileURLToPath } from "node:url";
 import { startBackend, type BackendSupervisor } from "./backendSupervisor.js";
 import { createDesktopLaunchConfig, desktopTransparentWindow, type DesktopBackendHost, type DesktopBackendHostKind, type RendererRuntimeConfig } from "./desktopConfig.js";
 import { createDesktopLogStreams, type DesktopLogStreams } from "./logs.js";
-import { desktopHostChannels, desktopPetChannels, rendererConfigChannels, windowControlChannels, type DesktopPetDisplayPayload, type WindowStatePayload } from "./windowControls.js";
+import { desktopHostChannels, rendererConfigChannels, windowControlChannels, type WindowStatePayload } from "./windowControls.js";
+import { registerDesktopPetIpc } from "./services/desktopPet/desktopPetIpc.js";
+import { createDesktopPetWindowService, type DesktopPetWindowService } from "./services/desktopPet/desktopPetWindow.js";
 
 let backend: BackendSupervisor | undefined;
 let logs: DesktopLogStreams | undefined;
 let startupWindow: BrowserWindow | undefined;
-let desktopPetWindow: BrowserWindow | undefined;
-let desktopPetDisplay: DesktopPetDisplayPayload | undefined;
+let desktopPetService: DesktopPetWindowService | undefined;
 let pendingHostSelection: ((host: DesktopBackendHostKind) => void) | undefined;
 let rendererRuntimeConfig: RendererRuntimeConfig | undefined;
 let suppressNextWindowCloseQuit = false;
@@ -37,10 +38,16 @@ app.on("will-quit", (event) => {
 
 void app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
+  desktopPetService = createDesktopPetWindowService({
+    preloadPath,
+    repoRoot,
+    preferencesPath: resolve(app.getPath("userData"), "desktop-pet.json"),
+    isQuitting: () => isQuitting,
+  });
   registerWindowControlIpc();
   registerDesktopHostIpc();
   registerRendererConfigIpc();
-  registerDesktopPetIpc();
+  registerDesktopPetIpc(ipcMain, desktopPetService);
 
   if (process.platform !== "win32") {
     showFatalError("Unsupported platform", "Pi GUI Desktop MVP currently supports Windows + WSL only. Run the existing web dev server on non-Windows platforms.");
@@ -145,6 +152,7 @@ function createMainWindow(): BrowserWindow {
   });
 
   wireWindowStateEvents(window);
+  wireRendererDiagnostics(window);
 
   window.on("closed", () => {
     if (suppressNextWindowCloseQuit) {
@@ -250,7 +258,7 @@ async function shutdown(): Promise<void> {
   logs = undefined;
   startupWindow = undefined;
   rendererRuntimeConfig = undefined;
-  closeDesktopPetWindow();
+  desktopPetService?.close();
   await currentBackend?.stop().catch(() => undefined);
   await currentLogs?.close().catch(() => undefined);
 }
@@ -258,176 +266,6 @@ async function shutdown(): Promise<void> {
 function showFatalError(title: string, message: string): void {
   dialog.showErrorBox(title, message);
   console.error(`${title}: ${message}`);
-}
-
-function registerDesktopPetIpc(): void {
-  ipcMain.handle(desktopPetChannels.setVisible, (_event, visible: unknown) => {
-    if (visible) {
-      createDesktopPetWindow();
-      return true;
-    }
-    closeDesktopPetWindow();
-    return true;
-  });
-
-  ipcMain.handle(desktopPetChannels.update, (_event, payload: unknown) => {
-    const display = normalizeDesktopPetDisplay(payload);
-    if (!display) return false;
-    desktopPetDisplay = display;
-    desktopPetWindow?.webContents.send(desktopPetChannels.updated, display);
-    return true;
-  });
-}
-
-function createDesktopPetWindow(): BrowserWindow {
-  if (desktopPetWindow && !desktopPetWindow.isDestroyed()) {
-    desktopPetWindow.show();
-    if (desktopPetDisplay) desktopPetWindow.webContents.send(desktopPetChannels.updated, desktopPetDisplay);
-    return desktopPetWindow;
-  }
-
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { x, y, width, height } = primaryDisplay.workArea;
-  const windowWidth = 286;
-  const windowHeight = 118;
-  const window = new BrowserWindow({
-    width: windowWidth,
-    height: windowHeight,
-    x: Math.max(x, x + width - windowWidth - 28),
-    y: Math.max(y, y + height - windowHeight - 36),
-    frame: false,
-    transparent: true,
-    resizable: false,
-    movable: true,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    hasShadow: false,
-    backgroundColor: "#00000000",
-    webPreferences: {
-      preload: preloadPath,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      additionalArguments: ["--pi-gui-transparent-window=1"],
-    },
-  });
-
-  desktopPetWindow = window;
-  window.setAlwaysOnTop(true, "floating");
-  window.on("closed", () => {
-    if (desktopPetWindow === window) desktopPetWindow = undefined;
-    broadcastDesktopPetClosed();
-  });
-
-  void window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(desktopPetHtml())}`).then(() => {
-    if (desktopPetDisplay && !window.isDestroyed()) window.webContents.send(desktopPetChannels.updated, desktopPetDisplay);
-  });
-
-  return window;
-}
-
-function closeDesktopPetWindow(): void {
-  const window = desktopPetWindow;
-  desktopPetWindow = undefined;
-  if (window && !window.isDestroyed()) window.close();
-}
-
-function broadcastDesktopPetClosed(): void {
-  if (isQuitting) return;
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(desktopPetChannels.closed);
-  }
-}
-
-function normalizeDesktopPetDisplay(payload: unknown): DesktopPetDisplayPayload | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  const record = payload as Partial<DesktopPetDisplayPayload>;
-  if (typeof record.mood !== "string" || typeof record.tone !== "string" || typeof record.title !== "string" || typeof record.detail !== "string") return undefined;
-  return {
-    mood: compactDesktopPetText(record.mood, 32),
-    tone: compactDesktopPetText(record.tone, 32),
-    title: compactDesktopPetText(record.title, 80),
-    detail: compactDesktopPetText(record.detail, 220),
-    badges: Array.isArray(record.badges) ? record.badges.filter((item): item is string => typeof item === "string").map((item) => compactDesktopPetText(item, 48)).slice(0, 3) : [],
-    satelliteCount: typeof record.satelliteCount === "number" && Number.isFinite(record.satelliteCount) ? Math.max(0, Math.min(3, Math.round(record.satelliteCount))) : 0,
-  };
-}
-
-function compactDesktopPetText(value: string, maxLength: number): string {
-  const compact = value.replace(/\s+/g, " ").trim();
-  return compact.length > maxLength ? `${compact.slice(0, Math.max(0, maxLength - 1))}…` : compact;
-}
-
-function desktopPetHtml(): string {
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>Pi PET</title>
-<style>
-  html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; color: #f4efe4; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  body { -webkit-app-region: drag; display: grid; place-items: center; user-select: none; }
-  .pet { width: 268px; min-height: 96px; display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 10px; align-items: center; border: 1px solid rgba(244, 239, 228, 0.14); border-radius: 26px; background: rgba(28, 27, 25, 0.72); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.34); backdrop-filter: blur(18px); padding: 10px 10px 10px 12px; }
-  .orb { position: relative; width: 52px; height: 52px; border-radius: 999px; color: #f0ab56; }
-  .pet.tone-active .orb, .pet.tone-success .orb { color: #76c893; }
-  .pet.tone-attention .orb { color: #f0ab56; }
-  .pet.tone-danger .orb { color: #e57373; }
-  .aura, .core, .tail, .satellite, .spark { position: absolute; border-radius: 999px; background: currentColor; }
-  .aura { inset: 0; opacity: 0.12; transform: scale(0.9); border: 1px solid currentColor; background: transparent; }
-  .core { inset: 8px; border-radius: 48% 52% 50% 50%; opacity: 0.94; animation: breathe 2600ms ease-in-out infinite; }
-  .core::after { content: ""; position: absolute; inset: 7px; border-radius: inherit; background: #1c1b19; opacity: 0.36; }
-  .face { position: absolute; z-index: 2; left: 17px; top: 17px; width: 18px; height: 14px; }
-  .eye, .mouth { position: absolute; display: block; background: #171614; opacity: 0.82; }
-  .eye { top: 2px; width: 4px; height: 4px; border-radius: 999px; }
-  .eye.left { left: 2px; } .eye.right { right: 2px; }
-  .mouth { left: 50%; bottom: 1px; width: 8px; height: 3px; border-radius: 0 0 999px 999px; transform: translateX(-50%); }
-  .pet.mood-idle .eye, .pet.mood-sleeping .eye, .pet.mood-context .eye { height: 2px; transform: translateY(1px); }
-  .pet.mood-waiting .mouth { width: 5px; height: 5px; border-radius: 999px; }
-  .pet.mood-error .eye { height: 2px; } .pet.mood-error .eye.left { transform: rotate(36deg); } .pet.mood-error .eye.right { transform: rotate(-36deg); }
-  .pet.mood-recovering .eye { height: 2px; } .pet.mood-recovering .eye.left { transform: rotate(-18deg); } .pet.mood-recovering .eye.right { transform: rotate(18deg); }
-  .tail { right: 6px; bottom: 8px; width: 12px; height: 12px; border-radius: 70% 30% 70% 30%; opacity: 0.28; transform: rotate(22deg); }
-  .satellite { width: 5px; height: 5px; opacity: 0.7; transform-origin: 26px 26px; animation: orbit 2600ms linear infinite; }
-  .satellite-1 { top: 2px; left: 24px; } .satellite-2 { top: 36px; left: 4px; animation-delay: -860ms; } .satellite-3 { top: 38px; right: 5px; animation-delay: -1720ms; }
-  .copy { min-width: 0; display: grid; gap: 4px; }
-  strong { overflow: hidden; font-size: 13px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
-  p { margin: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: rgba(244, 239, 228, 0.72); font-size: 11px; line-height: 1.35; }
-  .badges { display: flex; gap: 4px; overflow: hidden; }
-  .badges span { flex: none; max-width: 88px; overflow: hidden; border: 1px solid rgba(244,239,228,0.13); border-radius: 999px; color: rgba(244,239,228,0.64); font-size: 9px; line-height: 1.2; padding: 2px 6px; text-overflow: ellipsis; white-space: nowrap; }
-  button { -webkit-app-region: no-drag; align-self: start; width: 24px; height: 24px; border: 1px solid rgba(244,239,228,0.14); border-radius: 999px; background: rgba(255,255,255,0.04); color: rgba(244,239,228,0.72); cursor: pointer; }
-  button:hover { border-color: rgba(240,171,86,0.58); color: #f4efe4; }
-  @keyframes breathe { 0%, 100% { transform: scale(0.94) rotate(0deg); opacity: 0.8; } 50% { transform: scale(1.08) rotate(5deg); opacity: 1; } }
-  @keyframes orbit { 0% { transform: rotate(0deg) translateY(-2px) rotate(0deg); } 100% { transform: rotate(360deg) translateY(-2px) rotate(-360deg); } }
-  @media (prefers-reduced-motion: reduce) { .core, .satellite { animation: none !important; } }
-</style>
-</head>
-<body>
-  <main id="pet" class="pet mood-idle tone-neutral" aria-label="Pi PET desktop companion">
-    <span class="orb" aria-hidden="true"><span class="aura"></span><span class="core"></span><span class="face"><span class="eye left"></span><span class="eye right"></span><span class="mouth"></span></span><span class="tail"></span><span class="satellite satellite-1"></span><span class="satellite satellite-2"></span><span class="satellite satellite-3"></span></span>
-    <span class="copy"><strong id="title">Pi PET</strong><p id="detail">等待 Pi GUI 状态…</p><span id="badges" class="badges"></span></span>
-    <button type="button" id="close" title="关闭桌宠" aria-label="关闭桌宠">×</button>
-  </main>
-<script>
-  const pet = document.getElementById('pet');
-  const title = document.getElementById('title');
-  const detail = document.getElementById('detail');
-  const badges = document.getElementById('badges');
-  const satellites = Array.from(document.querySelectorAll('.satellite'));
-  function applyDisplay(display) {
-    pet.className = 'pet mood-' + display.mood + ' tone-' + display.tone;
-    title.textContent = display.title || 'Pi PET';
-    detail.textContent = display.detail || '';
-    badges.replaceChildren(...(display.badges || []).slice(0, 2).map((badge) => {
-      const item = document.createElement('span');
-      item.textContent = badge;
-      return item;
-    }));
-    satellites.forEach((item, index) => { item.style.display = index < (display.satelliteCount || 0) ? 'block' : 'none'; });
-  }
-  window.__PI_GUI_DESKTOP__?.onDesktopPetDisplay(applyDisplay);
-  document.getElementById('close').addEventListener('click', () => window.__PI_GUI_DESKTOP__?.setDesktopPetVisible(false));
-</script>
-</body>
-</html>`;
 }
 
 function registerRendererConfigIpc(): void {
@@ -472,4 +310,29 @@ function wireWindowStateEvents(window: BrowserWindow): void {
   window.on("maximize", sendWindowState);
   window.on("unmaximize", sendWindowState);
   window.on("restore", sendWindowState);
+}
+
+function wireRendererDiagnostics(window: BrowserWindow): void {
+  const writeLog = (message: string) => logs?.backendLog.write(`[renderer] ${new Date().toISOString()} ${message}\n`);
+
+  window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    if (level < 2 && !/\b(error|exception|uncaught|failed)\b/i.test(message)) return;
+    writeLog(`console level=${level} source=${redactLogUrl(sourceId)}:${line} ${message}`);
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
+    writeLog(`render-process-gone ${JSON.stringify(details)}`);
+  });
+  window.webContents.on("unresponsive", () => {
+    writeLog("window became unresponsive");
+  });
+  window.webContents.on("responsive", () => {
+    writeLog("window became responsive");
+  });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    writeLog(`did-fail-load mainFrame=${isMainFrame} code=${errorCode} description=${errorDescription} url=${redactLogUrl(validatedURL)}`);
+  });
+}
+
+function redactLogUrl(value: string): string {
+  return value.replace(/([?&](?:token|authToken|access_token)=)[^&]*/gi, "$1[redacted]");
 }
