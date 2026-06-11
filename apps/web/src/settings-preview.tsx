@@ -1,3 +1,4 @@
+// Dev-only visual preview entry, launched by `npm run dev:settings`.
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DEFAULT_RUNTIME_PROFILE_ID, type AppSettings, type Project, type RemoteAccessStatus, type RuntimeProfileId } from "@pi-gui/shared";

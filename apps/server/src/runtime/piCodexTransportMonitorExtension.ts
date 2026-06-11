@@ -1,3 +1,4 @@
+// Dynamic runtime entry. Loaded by path, not by TypeScript import.
 import {
   formatCodexTransportMonitorLine,
   isCodexProviderRequest,
