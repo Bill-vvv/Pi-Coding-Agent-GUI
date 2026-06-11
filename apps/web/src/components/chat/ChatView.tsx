@@ -4,7 +4,7 @@ import type { ConversationMessage } from "../../types";
 import { isTransportConnectionError } from "../../domain/connection";
 import { buildConversationDisplayBlocksCached, type ConversationDisplayBuildCache, type ConversationDisplayMode } from "../../domain/conversationDisplay";
 import type { RuntimeExtensionUiChrome } from "../../domain/extensionUiChrome";
-import { prependScrollTop } from "../../domain/virtualList";
+import { resolvedPrependAnchorScrollTop, type PendingPrependAnchor } from "./prependAnchor";
 import { ExtensionUiStatusStrip } from "../ExtensionUiChrome";
 import { ThinkingStatus } from "../ThinkingAnimation";
 import { VirtualConversationBlockList } from "./ConversationBlockList";
@@ -20,6 +20,7 @@ type ChatViewProps = {
   conversationSummary?: RuntimeConversationSummary;
   messages: ConversationMessage[];
   activeRuntimeIsBusy: boolean;
+  conversationPageSignal?: number;
   hasMoreBefore?: boolean;
   subagentRuns?: SubagentRun[];
   extensionUi?: RuntimeExtensionUiChrome;
@@ -45,6 +46,7 @@ export const ChatView = memo(function ChatView({
   conversationSummary,
   messages,
   activeRuntimeIsBusy,
+  conversationPageSignal = 0,
   hasMoreBefore = false,
   subagentRuns = [],
   extensionUi,
@@ -66,7 +68,7 @@ export const ChatView = memo(function ChatView({
   const [blockLayoutMetrics, setBlockLayoutMetrics] = useState<ConversationBlockLayoutMetrics | undefined>();
   const [navigationOverscanSignal, setNavigationOverscanSignal] = useState(0);
   const conversationScrollbar = useStealthScrollbar();
-  const prependAnchorRef = useRef<{ scrollTop: number; scrollHeight: number } | undefined>(undefined);
+  const prependAnchorRef = useRef<PendingPrependAnchor | undefined>(undefined);
   const followBottomFrameRef = useRef<number | undefined>(undefined);
   const forcedAutoFollowFramesRef = useRef(0);
   const observedScrollToBottomSignalRef = useRef<number | undefined>(undefined);
@@ -148,6 +150,7 @@ export const ChatView = memo(function ChatView({
   }, []);
 
   useLayoutEffect(() => {
+    if (prependAnchorRef.current && prependAnchorRef.current.runtimeId !== activeRuntime?.id) prependAnchorRef.current = undefined;
     // Only runtime changes force the existing bottom-follow behavior. Last-user
     // request changes are handled by the dedicated one-shot effect below.
     if (
@@ -183,10 +186,12 @@ export const ChatView = memo(function ChatView({
   useLayoutEffect(() => {
     const anchor = prependAnchorRef.current;
     const surface = surfaceRef.current;
-    if (!anchor || !surface) return;
+    if (!anchor || !surface || anchor.runtimeId !== activeRuntime?.id || conversationPageSignal <= anchor.pageSignal) return;
     prependAnchorRef.current = undefined;
-    surface.scrollTop = prependScrollTop(anchor.scrollTop, anchor.scrollHeight, surface.scrollHeight);
-  }, [messages.length]);
+    const nextScrollTop = resolvedPrependAnchorScrollTop(anchor, messages.length, surface.scrollHeight, messages[0]?.id);
+    if (nextScrollTop === undefined) return;
+    surface.scrollTop = nextScrollTop;
+  }, [activeRuntime?.id, conversationPageSignal, messages.length]);
 
   useLayoutEffect(() => {
     requestAutoFollowBottom();
@@ -268,7 +273,16 @@ export const ChatView = memo(function ChatView({
 
   function handleLoadOlderMessages() {
     const surface = surfaceRef.current;
-    if (surface) prependAnchorRef.current = { scrollTop: surface.scrollTop, scrollHeight: surface.scrollHeight };
+    if (surface) {
+      prependAnchorRef.current = {
+        runtimeId: activeRuntime?.id,
+        beforeMessageId: messages[0]?.id,
+        scrollTop: surface.scrollTop,
+        scrollHeight: surface.scrollHeight,
+        messageCount: messages.length,
+        pageSignal: conversationPageSignal,
+      };
+    }
     onLoadOlderMessages?.();
   }
 

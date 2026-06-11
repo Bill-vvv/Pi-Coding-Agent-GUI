@@ -368,3 +368,97 @@ test("conversation snapshots trust backend hasMoreBefore instead of message coun
   assert.equal(state.messagesByRuntime["runtime-1"]?.length, 1);
   assert.equal(state.hasMoreBeforeByRuntime["runtime-1"], false);
 });
+
+test("conversation pages increment a per-runtime page signal even when no new messages are prepended", () => {
+  const withSnapshot = appReducer(initialAppState, {
+    type: "server.event",
+    event: {
+      type: "conversation.snapshot",
+      runtimeId: "runtime-1",
+      projectId: "project-1",
+      busy: false,
+      hasMoreBefore: true,
+      messages: [
+        {
+          id: "message-1",
+          runtimeId: "runtime-1",
+          projectId: "project-1",
+          role: "assistant",
+          text: "loaded",
+          timestamp: 1,
+        },
+      ],
+    },
+  });
+
+  const afterPage = appReducer(withSnapshot, {
+    type: "server.event",
+    event: {
+      type: "conversation.page",
+      runtimeId: "runtime-1",
+      projectId: "project-1",
+      beforeMessageId: "message-1",
+      hasMoreBefore: false,
+      messages: [
+        {
+          id: "message-1",
+          runtimeId: "runtime-1",
+          projectId: "project-1",
+          role: "assistant",
+          text: "loaded",
+          timestamp: 1,
+        },
+      ],
+    },
+  });
+
+  assert.equal(afterPage.pageSignalsByRuntime["runtime-1"], 1);
+  assert.notEqual(afterPage.messagesByRuntime["runtime-1"], withSnapshot.messagesByRuntime["runtime-1"]);
+  assert.deepEqual(afterPage.messagesByRuntime["runtime-1"]?.map((item) => item.id), ["message-1"]);
+});
+
+test("conversation pages are ignored when the requested anchor is no longer in the working set", () => {
+  const withSnapshot = appReducer(initialAppState, {
+    type: "server.event",
+    event: {
+      type: "conversation.snapshot",
+      runtimeId: "runtime-1",
+      projectId: "project-1",
+      busy: false,
+      hasMoreBefore: true,
+      messages: [
+        {
+          id: "message-2",
+          runtimeId: "runtime-1",
+          projectId: "project-1",
+          role: "assistant",
+          text: "loaded",
+          timestamp: 2,
+        },
+      ],
+    },
+  });
+
+  const afterStalePage = appReducer(withSnapshot, {
+    type: "server.event",
+    event: {
+      type: "conversation.page",
+      runtimeId: "runtime-1",
+      projectId: "project-1",
+      beforeMessageId: "missing-anchor",
+      hasMoreBefore: false,
+      messages: [
+        {
+          id: "message-1",
+          runtimeId: "runtime-1",
+          projectId: "project-1",
+          role: "assistant",
+          text: "stale older page",
+          timestamp: 1,
+        },
+      ],
+    },
+  });
+
+  assert.equal(afterStalePage, withSnapshot);
+});

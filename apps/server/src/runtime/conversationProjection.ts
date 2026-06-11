@@ -301,7 +301,9 @@ export class ConversationProjection {
     const indexById = new Map<string, number>();
     for (const message of messages) {
       const signature = snapshotDuplicateSignature(message);
-      const existing = this.matchRecentSyntheticUserInput(message) ?? (signature && isSyntheticSnapshotMessageId(message.id) ? existingBySignature.get(signature) : undefined);
+      const signatureMatch = signature ? existingBySignature.get(signature) : undefined;
+      const existing = this.matchRecentSyntheticUserInput(message)
+        ?? ((signatureMatch && (isSyntheticSnapshotMessageId(message.id) || isGeneratedConversationPlaceholderId(signatureMatch.id))) ? signatureMatch : undefined);
       const normalized = existing ? { ...message, id: existing.id } : message;
       const existingIndex = indexById.get(normalized.id);
       if (existingIndex !== undefined) {
@@ -435,4 +437,8 @@ function compactConversationToolDetails(details: ConversationToolDetails | undef
     ...(diff ? { diff } : {}),
     ...(firstChangedLine !== undefined ? { firstChangedLine } : {}),
   };
+}
+
+function isGeneratedConversationPlaceholderId(id: string): boolean {
+  return /^(assistant|user)-(?:retry-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }

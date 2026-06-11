@@ -27,7 +27,7 @@ import { isRecord } from "@pi-gui/shared";
 import { upsertById } from "../domain/collections";
 import { isTransportConnectionError } from "../domain/connection";
 import { indexConversationSummaries } from "../domain/conversationSummary";
-import { applyConversationDeltas, applyConversationDelta, evictInactiveRuntimeMessages, mergeConversationSnapshot, prependConversationPage, rememberHydratedRuntime, upsertConversationMessage } from "../domain/conversationState";
+import { applyConversationDeltas, evictInactiveRuntimeMessages, mergeConversationSnapshot, prependConversationPage, rememberHydratedRuntime, upsertConversationMessage } from "../domain/conversationState";
 import { applyExtensionUiChromeRequest, extensionUiChromeRequestFromPayload, type ExtensionUiChromeByRuntime } from "../domain/extensionUiChrome";
 import { subagentDetailKey } from "../domain/subagents";
 
@@ -45,6 +45,7 @@ export type AppState = {
   messagesByRuntime: Record<string, ConversationMessage[]>;
   hydratedRuntimeIds: string[];
   hasMoreBeforeByRuntime: Record<string, boolean>;
+  pageSignalsByRuntime: Record<string, number>;
   persistedConversationSummaries: Record<string, RuntimeConversationSummary>;
   contextUsageByRuntime: Record<string, ConversationContextUsage>;
   busyByRuntime: Record<string, boolean>;
@@ -82,6 +83,7 @@ export const initialAppState: AppState = {
   messagesByRuntime: {},
   hydratedRuntimeIds: [],
   hasMoreBeforeByRuntime: {},
+  pageSignalsByRuntime: {},
   persistedConversationSummaries: {},
   contextUsageByRuntime: {},
   busyByRuntime: {},
@@ -318,15 +320,19 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
         replayRecovery: undefined,
       };
     }
-    case "conversation.page":
+    case "conversation.page": {
+      const currentMessages = state.messagesByRuntime[event.runtimeId] ?? [];
+      if (!currentMessages.some((message) => message.id === event.beforeMessageId)) return state;
       return {
         ...state,
         messagesByRuntime: {
           ...state.messagesByRuntime,
-          [event.runtimeId]: prependConversationPage(state.messagesByRuntime[event.runtimeId] ?? [], event.messages),
+          [event.runtimeId]: prependConversationPage(currentMessages, event.messages),
         },
         hasMoreBeforeByRuntime: { ...state.hasMoreBeforeByRuntime, [event.runtimeId]: event.hasMoreBefore },
+        pageSignalsByRuntime: { ...state.pageSignalsByRuntime, [event.runtimeId]: (state.pageSignalsByRuntime[event.runtimeId] ?? 0) + 1 },
       };
+    }
     case "conversation.message": {
       const hydratedRuntimeIds = rememberHydratedRuntime(state.hydratedRuntimeIds, event.message.runtimeId);
       return {

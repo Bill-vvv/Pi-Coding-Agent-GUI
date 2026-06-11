@@ -588,6 +588,33 @@ test("ConversationProjection does not persist synthetic snapshot duplicates for 
   db.close();
 });
 
+test("ConversationProjection aligns explicit snapshot ids with generated live placeholder messages", () => {
+  const { db, runtime, projection } = createHarness();
+
+  projection.handlePiPayload({ type: "message_start", message: { role: "assistant", content: [], timestamp: 100 } });
+  projection.handlePiPayload({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "同一个回答" } });
+  projection.handlePiPayload({ type: "message_end", message: { role: "assistant", content: "同一个回答", timestamp: 100 } });
+
+  const beforeSnapshot = db.listConversationMessages(runtime.id);
+  assert.equal(beforeSnapshot.length, 1);
+  const placeholderId = beforeSnapshot[0]?.id;
+  assert.match(placeholderId ?? "", /^assistant-/);
+
+  projection.handlePiPayload({
+    type: "response",
+    command: "get_messages",
+    success: true,
+    data: {
+      messages: [{ id: "assistant-pi-1", role: "assistant", content: "同一个回答", timestamp: 100 }],
+    },
+  });
+
+  const messages = db.listConversationMessages(runtime.id);
+  assert.deepEqual(messages.map((message) => message.id), [placeholderId]);
+  assert.deepEqual(messages.map((message) => message.text), ["同一个回答"]);
+  db.close();
+});
+
 test("AppDatabase lists conversation messages before an anchor without dropping full history", () => {
   const { db, runtime } = createHarness();
   for (let index = 1; index <= 6; index += 1) {

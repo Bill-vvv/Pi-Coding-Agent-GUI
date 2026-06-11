@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConversationMessage } from "@pi-gui/shared";
 import { mergeConversationSummaries, mergeConversationSummariesCached } from "../src/domain/conversationSummary";
-import { prependConversationPage, evictInactiveRuntimeMessages, rememberHydratedRuntime, applyConversationDeltas } from "../src/domain/conversationState";
+import { prependConversationPage, evictInactiveRuntimeMessages, rememberHydratedRuntime, applyConversationDeltas, upsertConversationMessage } from "../src/domain/conversationState";
 import { performanceFixtureEvents, performanceFixtureMessages } from "../src/domain/performanceFixtures";
 import { estimateVirtualRange, prependScrollTop } from "../src/domain/virtualList";
 
-function message(id: string, runtimeId = "runtime-1"): ConversationMessage {
-  return { id, runtimeId, projectId: "project-1", role: "assistant", text: id, timestamp: 1, updatedAt: 1 };
+function message(id: string, runtimeId = "runtime-1", overrides: Partial<ConversationMessage> = {}): ConversationMessage {
+  return { id, runtimeId, projectId: "project-1", role: "assistant", text: id, timestamp: 1, updatedAt: 1, ...overrides };
 }
 
 test("prependConversationPage merges older pages without duplicates", () => {
@@ -35,6 +35,43 @@ test("applyConversationDeltas preserves append order", () => {
   ]);
   assert.equal(messages[0]?.text, "hello world");
   assert.equal(messages[0]?.thinking, "plan");
+});
+
+test("upsertConversationMessage keeps newer local content when an older message payload arrives", () => {
+  const current = [message("assistant-1", "runtime-1", { text: "hello world", thinking: "plan", updatedAt: 20, isStreaming: true })];
+  const merged = upsertConversationMessage(current, message("assistant-1", "runtime-1", { text: "hello", updatedAt: 10, isStreaming: false }));
+
+  assert.equal(merged[0]?.text, "hello world");
+  assert.equal(merged[0]?.thinking, "plan");
+  assert.equal(merged[0]?.isStreaming, true);
+  assert.equal(merged[0]?.updatedAt, 20);
+});
+
+test("upsertConversationMessage keeps richer local content while allowing equal-timestamp terminal metadata", () => {
+  const current = [message("assistant-1", "runtime-1", { text: "hello world", thinking: "plan more", updatedAt: 20, isStreaming: true })];
+  const merged = upsertConversationMessage(current, message("assistant-1", "runtime-1", { text: "hello", thinking: "plan", updatedAt: 20, isStreaming: false }));
+
+  assert.equal(merged[0]?.text, "hello world");
+  assert.equal(merged[0]?.thinking, "plan more");
+  assert.equal(merged[0]?.isStreaming, false);
+  assert.equal(merged[0]?.updatedAt, 20);
+});
+
+test("applyConversationDeltas inserts unknown messages in chronological order", () => {
+  const messages = applyConversationDeltas(
+    [message("user-1", "runtime-1", { role: "user", timestamp: 1, updatedAt: 1 }), message("assistant-2", "runtime-1", { timestamp: 3, updatedAt: 3 })],
+    [{ runtimeId: "runtime-1", projectId: "project-1", messageId: "assistant-1", timestamp: 2, appendText: "middle" }],
+  );
+
+  assert.deepEqual(messages.map((item) => item.id), ["user-1", "assistant-1", "assistant-2"]);
+});
+
+test("prependConversationPage returns a fresh array for duplicate-only pages", () => {
+  const current = [message("b"), message("c")];
+  const merged = prependConversationPage(current, [message("b")]);
+
+  assert.deepEqual(merged.map((item) => item.id), ["b", "c"]);
+  assert.notEqual(merged, current);
 });
 
 test("virtual range computes visible window and prepend scroll anchor", () => {
