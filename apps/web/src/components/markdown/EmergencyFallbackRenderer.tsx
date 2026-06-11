@@ -1,6 +1,6 @@
 import { memo } from "react";
 import type { MarkdownContentSource } from "../../domain/markdownRenderDiagnostics";
-import { copyWithTemporaryTextarea } from "./clipboard";
+import { CopyIconButton } from "./CopyIconButton";
 
 type EmergencyFallbackRendererProps = {
   text: string;
@@ -11,17 +11,12 @@ type EmergencyFallbackRendererProps = {
 export const EmergencyFallbackRenderer = memo(function EmergencyFallbackRenderer({ text, source, reason }: EmergencyFallbackRendererProps) {
   const preview = previewText(text);
 
-  async function copyFullText() {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-    else copyWithTemporaryTextarea(text);
-  }
-
   return (
     <div className="markdown-message large-markdown-preview" data-markdown-fallback-source={source} data-markdown-fallback-reason={reason}>
       <p className="large-markdown-preview-notice">内容渲染遇到异常，已切换到紧急保护模式。</p>
       <pre>{preview}</pre>
       <div className="large-markdown-preview-actions">
-        <button type="button" onClick={() => void copyFullText()}>复制完整内容</button>
+        <CopyIconButton value={text} label="复制完整内容" />
       </div>
     </div>
   );
