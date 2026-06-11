@@ -1,11 +1,9 @@
 import type React from "react";
-import type { ExecutionHostRef, GuiSession, Project, Runtime } from "@pi-gui/shared";
-import { executionHostLabel } from "../domain/executionHost";
+import type { GuiSession, Project, Runtime } from "@pi-gui/shared";
 import type { ConnectionState } from "../types";
 
 type WorkbenchHomeProps = {
   connection: ConnectionState;
-  executionHost?: ExecutionHostRef;
   projects: Project[];
   runtimes: Runtime[];
   sessions: GuiSession[];
@@ -22,7 +20,6 @@ type WorkbenchHomeProps = {
 
 export function WorkbenchHome({
   connection,
-  executionHost,
   projects,
   runtimes,
   sessions,
@@ -39,8 +36,8 @@ export function WorkbenchHome({
   const recentProjects = [...projects].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt).slice(0, 5);
   const recentSessions = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
   const recoverableRuntimes = runtimes.filter((runtime) => !runtime.archivedAt && (runtime.status === "crashed" || runtime.status === "stopped")).slice(0, 4);
-  const host = executionHostLabel(executionHost) ?? "未知执行主机";
   const primaryProject = selectedProject ?? recentProjects[0];
+  const connectionStatusTone = connectionTone(connection);
 
   return (
     <div className="workbench-home" aria-label="Workbench Home">
@@ -49,6 +46,7 @@ export function WorkbenchHome({
           <p className="workbench-home-kicker">Pi Coding Agent Desktop Workbench</p>
           <h1>开始或恢复一个 Pi 运行时</h1>
           <p className="workbench-home-subtitle">选择项目、恢复最近会话，或查看运行时恢复线索。</p>
+          <p className={`workbench-home-connection ${connectionStatusTone ? `tone-${connectionStatusTone}` : ""}`}>连接：{connectionLabel(connection)}</p>
         </div>
         <div className="workbench-home-actions">
           <button type="button" className="primary" disabled={!primaryProject} onClick={() => primaryProject && onStartRuntimeForProject(primaryProject.id)}>
@@ -56,12 +54,6 @@ export function WorkbenchHome({
           </button>
           <button type="button" onClick={onAddProject}>添加项目</button>
         </div>
-      </section>
-
-      <section className="workbench-home-context" aria-label="当前上下文">
-        <ContextItem label="执行主机" value={host} />
-        <ContextItem label="连接" value={connectionLabel(connection)} tone={connection === "ready" ? "good" : connection === "degraded" ? "warn" : undefined} />
-        <ContextItem label="当前项目" value={selectedProject?.cwd ?? "未选择项目"} />
       </section>
 
       <div className="workbench-home-grid">
@@ -112,10 +104,6 @@ export function WorkbenchHome({
   );
 }
 
-function ContextItem({ label, value, tone }: { label: string; value: string; tone?: "good" | "warn" }) {
-  return <div className={`workbench-home-context-item ${tone ? `tone-${tone}` : ""}`}><span>{label}</span><strong>{value}</strong></div>;
-}
-
 function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return <section className="workbench-home-panel"><header><h2>{title}</h2>{action}</header><div className="workbench-home-list">{children}</div></section>;
 }
@@ -129,9 +117,17 @@ function connectionLabel(connection: ConnectionState): string {
   if (connection === "degraded") return "重新同步中";
   if (connection === "replaying") return "回放事件中";
   if (connection === "bootstrapping" || connection === "connected_waiting_hello") return "初始化中";
+  if (connection === "connecting") return "连接中";
   if (connection === "reconnecting") return "重连中";
   if (connection === "unauthorized") return "认证失败";
-  return "未连接";
+  if (connection === "closed") return "未连接";
+  return connection;
+}
+
+function connectionTone(connection: ConnectionState): "warn" | "danger" | undefined {
+  if (connection === "ready") return undefined;
+  if (connection === "unauthorized" || connection === "closed") return "danger";
+  return "warn";
 }
 
 function sessionDetail(session: GuiSession, projects: Project[]): string {

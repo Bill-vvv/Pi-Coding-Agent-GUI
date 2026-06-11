@@ -785,7 +785,6 @@ export function App() {
         ) : !activeRuntime ? (
           <WorkbenchHome
             connection={workbenchConnection}
-            executionHost={executionHost}
             projects={projects}
             runtimes={runtimes}
             sessions={sessions}
