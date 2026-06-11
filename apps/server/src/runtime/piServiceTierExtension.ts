@@ -1,3 +1,4 @@
+// Dynamic runtime entry. Loaded by path, not by TypeScript import.
 import { isServiceTier, type ServiceTier } from "@pi-gui/shared";
 import { readFileSync } from "node:fs";
 
