@@ -29,16 +29,19 @@ test("streaming markdown model keeps an open fenced block as the active tail", (
 });
 
 test("streaming markdown model keeps earlier paragraph blocks stable when plain tail text grows", () => {
-  const initial = buildStreamingMarkdownModel("第一段\n\n第二段");
-  const appended = buildStreamingMarkdownModel("第一段\n\n第二段继续");
+  const initial = buildStreamingMarkdownModel("第一段\n\n第二段\n\n第三段");
+  const appended = buildStreamingMarkdownModel("第一段\n\n第二段\n\n第三段继续");
 
-  assert.equal(initial.blocks.length, 2);
+  assert.equal(initial.blocks.length, 3);
   assert.equal(initial.blocks[0]?.kind, "markdown");
   assert.equal(initial.blocks[0]?.stable, true);
   assert.equal(initial.blocks[1]?.kind, "markdown");
-  assert.equal(initial.blocks[1]?.stable, false);
+  assert.equal(initial.blocks[1]?.stable, true);
+  assert.equal(initial.blocks[2]?.kind, "markdown");
+  assert.equal(initial.blocks[2]?.stable, false);
   assert.equal(initial.blocks[0]?.id, appended.blocks[0]?.id);
   assert.equal(initial.blocks[1]?.id, appended.blocks[1]?.id);
-  assert.match(initial.blocks[1]?.text ?? "", /第二段/);
-  assert.match(appended.blocks[1]?.text ?? "", /第二段继续/);
+  assert.equal(initial.blocks[2]?.id, appended.blocks[2]?.id);
+  assert.match(initial.blocks[2]?.text ?? "", /第三段/);
+  assert.match(appended.blocks[2]?.text ?? "", /第三段继续/);
 });

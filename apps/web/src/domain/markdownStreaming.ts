@@ -74,13 +74,26 @@ type ClosingFence = { start: number; end: number };
 function pushMarkdownSegment(blocks: StreamingMarkdownBlock[], text: string, start: number, end: number, stable: boolean) {
   if (end <= start) return;
   if (stable) {
-    pushMarkdownBlock(blocks, text, start, end, true);
+    pushStableMarkdownBlocks(blocks, text, start, end);
     return;
   }
 
   const stableEnd = lastStableMarkdownBoundary(text, start, end);
-  if (stableEnd > start) pushMarkdownBlock(blocks, text, start, stableEnd, true);
+  if (stableEnd > start) pushStableMarkdownBlocks(blocks, text, start, stableEnd);
   if (stableEnd < end) pushMarkdownBlock(blocks, text, stableEnd, end, false);
+}
+
+function pushStableMarkdownBlocks(blocks: StreamingMarkdownBlock[], text: string, start: number, end: number) {
+  let cursor = start;
+  while (cursor < end) {
+    const boundary = nextMarkdownBoundary(text, cursor, end);
+    if (boundary === undefined) {
+      pushMarkdownBlock(blocks, text, cursor, end, true);
+      return;
+    }
+    pushMarkdownBlock(blocks, text, cursor, boundary, true);
+    cursor = boundary;
+  }
 }
 
 function pushMarkdownBlock(blocks: StreamingMarkdownBlock[], text: string, start: number, end: number, stable: boolean) {
@@ -99,6 +112,12 @@ function lastStableMarkdownBoundary(text: string, start: number, end: number): n
   const trailingParagraphBoundary = text.lastIndexOf("\n\n", end - 1);
   if (trailingParagraphBoundary >= start) return trailingParagraphBoundary + 2;
   return start;
+}
+
+function nextMarkdownBoundary(text: string, start: number, end: number): number | undefined {
+  const boundaryIndex = text.indexOf("\n\n", start);
+  if (boundaryIndex < 0 || boundaryIndex + 2 >= end) return undefined;
+  return boundaryIndex + 2;
 }
 
 function findOpeningFence(text: string, fromIndex: number): OpeningFence | undefined {
