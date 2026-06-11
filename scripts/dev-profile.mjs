@@ -10,21 +10,27 @@ const profiles = {
     label: "stable dogfood instance",
     backendPort: "8787",
     webPort: "5173",
-    dataDir: ".pi-gui-stable",
+    dataDir: ".pi-gui",
     tmuxSession: "pi-gui-stable",
   },
-  sandbox: {
-    label: "feature sandbox instance",
+  dev: {
+    label: "dev revision instance",
     backendPort: "8877",
     webPort: "5273",
     dataDir: ".pi-gui-dev",
-    tmuxSession: "pi-gui-dev-sandbox",
+    tmuxSession: "pi-gui-dev",
+    instanceTag: "DEV",
   },
+};
+
+const profileAliases = {
+  sandbox: "dev",
 };
 
 const rawArgs = process.argv.slice(2);
 const showHelp = rawArgs.includes("--help") || rawArgs.includes("-h");
-const profileName = rawArgs.find((arg) => !arg.startsWith("-"));
+const requestedProfileName = rawArgs.find((arg) => !arg.startsWith("-"));
+const profileName = requestedProfileName ? profileAliases[requestedProfileName] || requestedProfileName : undefined;
 
 if (showHelp || !profileName || !profiles[profileName]) {
   printHelp();
@@ -32,7 +38,7 @@ if (showHelp || !profileName || !profiles[profileName]) {
 }
 
 const restartMode = rawArgs.includes("--restart") || rawArgs.includes("--stop") || rawArgs.includes("--start") || rawArgs.includes("--status") || rawArgs.includes("--dry-run");
-const passthroughArgs = rawArgs.filter((arg) => arg !== profileName && arg !== "--restart");
+const passthroughArgs = rawArgs.filter((arg) => arg !== requestedProfileName && arg !== profileName && arg !== "--restart");
 const env = profileEnv(profiles[profileName]);
 
 if (rawArgs.includes("--print-env")) {
@@ -76,6 +82,14 @@ function profileEnv(profile) {
   env.PI_GUI_DEV_STATE_DIR = firstNonBlank(env.PI_GUI_DEV_PROFILE_STATE_DIR, `${dataDir}/dev-state`);
   env.PI_GUI_DEV_TMUX_SESSION = firstNonBlank(env.PI_GUI_DEV_PROFILE_TMUX_SESSION, profile.tmuxSession);
   env.PI_GUI_DEV_NPM_SCRIPT = firstNonBlank(env.PI_GUI_DEV_PROFILE_NPM_SCRIPT, "dev:watch");
+  const instanceTag = firstNonBlank(env.PI_GUI_DEV_PROFILE_INSTANCE_TAG, profile.instanceTag);
+  if (instanceTag) {
+    env.PI_GUI_INSTANCE_TAG = instanceTag;
+    env.VITE_PI_GUI_INSTANCE_TAG = instanceTag;
+  } else {
+    delete env.PI_GUI_INSTANCE_TAG;
+    delete env.VITE_PI_GUI_INSTANCE_TAG;
+  }
   return env;
 }
 
@@ -92,13 +106,16 @@ function firstNonBlank(...values) {
 }
 
 function printHelp() {
-  console.log(`Usage: node scripts/dev-profile.mjs <stable|sandbox> [--restart|--stop|--start|--status|--dry-run|--print-env]
+  console.log(`Usage: node scripts/dev-profile.mjs <stable|dev> [--restart|--stop|--start|--status|--dry-run|--print-env]
 
 Runs Pi GUI with isolated ports, database, restart state, and tmux session.
 
 Profiles:
-  stable   backend 8787, web 5173, data apps/server/.pi-gui-stable
-  sandbox  backend 8877, web 5273, data apps/server/.pi-gui-dev
+  stable   backend 8787, web 5173, data apps/server/.pi-gui
+  dev      backend 8877, web 5273, data apps/server/.pi-gui-dev
+
+Alias:
+  sandbox  same as dev (backward compatible)
 
 Default action: run npm run dev:watch in the foreground with the selected profile.
 Use --restart/--stop/--start/--status to delegate to scripts/restart-dev.mjs with the same profile environment.
@@ -110,9 +127,10 @@ Overrides:
   PI_GUI_DEV_PROFILE_STATE_DIR
   PI_GUI_DEV_PROFILE_TMUX_SESSION
   PI_GUI_DEV_PROFILE_NPM_SCRIPT
+  PI_GUI_DEV_PROFILE_INSTANCE_TAG
 
 Generic backend env such as PORT and PI_GUI_DATA_DIR is intentionally ignored
-so stable/sandbox profiles do not accidentally share a running dev instance.`);
+so stable/dev profiles do not accidentally share a running dev instance.`);
 }
 
 function printProfileEnv(profileName, profile, env) {
@@ -129,6 +147,7 @@ function printProfileEnv(profileName, profile, env) {
     "PI_GUI_BACKEND_ORIGIN",
     "VITE_API_URL",
     "VITE_WS_URL",
+    "VITE_PI_GUI_INSTANCE_TAG",
   ]) {
     console.log(`${key}=${env[key] ?? ""}`);
   }

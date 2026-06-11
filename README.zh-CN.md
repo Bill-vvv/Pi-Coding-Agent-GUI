@@ -26,14 +26,14 @@ npm run dev:restart
 并行开发建议使用隔离的 stable/dev 实例：
 
 ```bash
-# 稳定 dogfood 实例：8787 + 5173，数据 .pi-gui-stable
+# 稳定 dogfood 实例：8787 + 5173，数据 .pi-gui
 npm run dev:stable
 
-# 新功能沙箱实例：8877 + 5273，数据 .pi-gui-dev
-npm run dev:sandbox
+# dev 实例：8877 + 5273，数据 .pi-gui-dev
+npm run dev:dev
 ```
 
-对应后台重启/状态查看命令：`npm run dev:stable:restart`、`npm run dev:sandbox:restart`、`npm run dev:stable:status`、`npm run dev:sandbox:status`。
+对应后台重启/状态查看命令：`npm run dev:stable:restart`、`npm run dev:dev:restart`、`npm run dev:stable:status`、`npm run dev:dev:status`。
 
 桌面 GUI 开发也使用同样的隔离方式（Windows + WSL）：
 
@@ -41,7 +41,7 @@ npm run dev:sandbox
 # 同步 WSL 改动到 Windows Electron mirror，并重建 desktop
 npm run sync:desktop-mirror
 
-# stable：用于日常开发，8787 + 5173，数据 .pi-gui-stable
+# stable：用于日常开发，8787 + 5173，数据 .pi-gui
 npm run dev:desktop:stable
 
 # dev：用于观察修订效果，8877 + 5273，数据 .pi-gui-dev

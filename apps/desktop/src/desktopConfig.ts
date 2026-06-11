@@ -7,6 +7,7 @@ export type RendererRuntimeConfig = {
   apiBaseUrl: string;
   wsUrl: string;
   authToken: string;
+  instanceTag?: string;
 };
 
 export type DesktopMode = "dev" | "built";
@@ -49,6 +50,7 @@ export async function createDesktopLaunchConfig(options: {
   const apiBaseUrl = `http://127.0.0.1:${backendPort}`;
   const wsUrl = `ws://127.0.0.1:${backendPort}/ws`;
   const backendHost = resolveBackendHost(options.repoRoot, env);
+  const instanceTag = rendererInstanceTag(env);
 
   return {
     mode,
@@ -59,7 +61,7 @@ export async function createDesktopLaunchConfig(options: {
     dataDir: resolveDesktopDataDir(backendHost, env, inheritedBackendEnv),
     authToken,
     desktopLaunchId,
-    rendererConfig: { apiBaseUrl, wsUrl, authToken },
+    rendererConfig: { apiBaseUrl, wsUrl, authToken, ...(instanceTag ? { instanceTag } : {}) },
     backendHost,
     backendCommand: trimmed(env.PI_GUI_DESKTOP_BACKEND_COMMAND) ?? defaultBackendCommand(mode, backendHost.kind),
     backendReadyTimeoutMs: parsePositiveInt(env.PI_GUI_DESKTOP_BACKEND_READY_TIMEOUT_MS) ?? DEFAULT_BACKEND_READY_TIMEOUT_MS,
@@ -123,7 +125,8 @@ export function decodeRendererConfig(value: string | undefined): RendererRuntime
   try {
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<RendererRuntimeConfig>;
     if (!parsed.apiBaseUrl || !parsed.wsUrl || !parsed.authToken) return undefined;
-    return { apiBaseUrl: parsed.apiBaseUrl, wsUrl: parsed.wsUrl, authToken: parsed.authToken };
+    const instanceTag = trimmed(parsed.instanceTag);
+    return { apiBaseUrl: parsed.apiBaseUrl, wsUrl: parsed.wsUrl, authToken: parsed.authToken, ...(instanceTag ? { instanceTag } : {}) };
   } catch {
     return undefined;
   }
@@ -143,7 +146,7 @@ export function resolveWslCwd(repoRoot: string, options: { env?: NodeJS.ProcessE
 }
 
 export function resolveDesktopDataDir(host: DesktopBackendHost, env: NodeJS.ProcessEnv = process.env, inheritedBackendEnv = looksLikeInheritedBackendEnv(env)): string {
-  const explicit = firstNonBlank(env.PI_GUI_DESKTOP_DATA_DIR, inheritedBackendEnv ? undefined : env.PI_GUI_DATA_DIR);
+  const explicit = firstNonBlank(env.PI_GUI_DESKTOP_DATA_DIR, inheritedBackendEnv ? undefined : env.PI_GUI_DATA_DIR, defaultDesktopProfileDataDir(env));
   const relative = explicit ?? ".pi-gui";
   if (host.kind === "wsl") return isAbsoluteWslPath(relative) ? relative : posix.join(host.cwd, "apps", "server", relative);
   return isAbsoluteWindowsPath(relative) ? relative : win32.join(host.cwd, "apps", "server", relative);
@@ -207,6 +210,20 @@ export async function findAvailableLoopbackPort(): Promise<number> {
       });
     });
   });
+}
+
+function rendererInstanceTag(env: NodeJS.ProcessEnv): string | undefined {
+  return firstNonBlank(env.PI_GUI_INSTANCE_TAG, env.PI_GUI_DESKTOP_INSTANCE_TAG, env.VITE_PI_GUI_INSTANCE_TAG)
+    ?? (trimmed(env.PI_GUI_DESKTOP_PROFILE)?.toLowerCase() === "dev" ? "DEV" : undefined);
+}
+
+function defaultDesktopProfileDataDir(env: NodeJS.ProcessEnv): string | undefined {
+  switch (trimmed(env.PI_GUI_DESKTOP_PROFILE)?.toLowerCase()) {
+    case "dev":
+      return ".pi-gui-dev";
+    default:
+      return undefined;
+  }
 }
 
 function looksLikeInheritedBackendEnv(env: NodeJS.ProcessEnv): boolean {

@@ -49,10 +49,14 @@ test("desktop backend host selection supports WSL by default and explicit Window
   });
 });
 
-test("desktop data dir defaults to a stable server-package path for each host", () => {
+test("desktop data dir defaults to the main database unless dev profile overrides it", () => {
   assert.equal(resolveDesktopDataDir({ kind: "windows", cwd: "C:/repo/pi-gui" }, {}), win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui"));
+  assert.equal(resolveDesktopDataDir({ kind: "windows", cwd: "C:/repo/pi-gui" }, { PI_GUI_DESKTOP_PROFILE: "stable" }), win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui"));
+  assert.equal(resolveDesktopDataDir({ kind: "windows", cwd: "C:/repo/pi-gui" }, { PI_GUI_DESKTOP_PROFILE: "dev" }), win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui-dev"));
   assert.equal(resolveDesktopDataDir({ kind: "windows", cwd: "C:/repo/pi-gui" }, { PI_GUI_DESKTOP_DATA_DIR: ".pi-gui-dev" }), win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui-dev"));
   assert.equal(resolveDesktopDataDir({ kind: "wsl", cwd: "/home/user/pi-gui" }, {}), "/home/user/pi-gui/apps/server/.pi-gui");
+  assert.equal(resolveDesktopDataDir({ kind: "wsl", cwd: "/home/user/pi-gui" }, { PI_GUI_DESKTOP_PROFILE: "stable" }), "/home/user/pi-gui/apps/server/.pi-gui");
+  assert.equal(resolveDesktopDataDir({ kind: "wsl", cwd: "/home/user/pi-gui" }, { PI_GUI_DESKTOP_PROFILE: "dev" }), "/home/user/pi-gui/apps/server/.pi-gui-dev");
   assert.equal(resolveDesktopDataDir({ kind: "wsl", cwd: "/home/user/pi-gui" }, { PI_GUI_DESKTOP_DATA_DIR: ".pi-gui-dev" }), "/home/user/pi-gui/apps/server/.pi-gui-dev");
 });
 
@@ -92,10 +96,27 @@ test("desktop launch config ignores inherited backend env for generic port and d
   assert.equal(config.dataDir, win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui"));
 });
 
-test("renderer config encoding round-trips API, WebSocket, and auth token", () => {
-  const config = { apiBaseUrl: "http://127.0.0.1:4567", wsUrl: "ws://127.0.0.1:4567/ws", authToken: "secret" };
+test("renderer config encoding round-trips API, WebSocket, auth token, and optional instance tag", () => {
+  const config = { apiBaseUrl: "http://127.0.0.1:4567", wsUrl: "ws://127.0.0.1:4567/ws", authToken: "secret", instanceTag: "DEV" };
   assert.deepEqual(decodeRendererConfig(encodeRendererConfig(config)), config);
   assert.equal(decodeRendererConfig("not-valid"), undefined);
+});
+
+
+test("desktop dev profile injects a visible renderer instance tag", async () => {
+  const config = await createDesktopLaunchConfig({
+    isPackaged: false,
+    repoRoot: "C:/repo/pi-gui",
+    env: {
+      PI_GUI_DESKTOP_HOST: "windows",
+      PI_GUI_DESKTOP_PROFILE: "dev",
+      PI_GUI_DESKTOP_BACKEND_PORT: "8877",
+      PI_GUI_DESKTOP_AUTH_TOKEN: "secret",
+    },
+  });
+
+  assert.equal(config.rendererConfig.instanceTag, "DEV");
+  assert.equal(config.dataDir, win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui-dev"));
 });
 
 test("backend env uses desktop mode, loopback host, controlled port, token, and optional data dir", () => {

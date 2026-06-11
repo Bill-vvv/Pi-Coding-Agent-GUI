@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { DesktopShellBridge } from "../domain/desktopShell";
+import { piGuiRuntimeConfig } from "../domain/runtimeConfig";
 
 type DesktopWindowChromeProps = {
   bridge: DesktopShellBridge;
@@ -7,6 +8,7 @@ type DesktopWindowChromeProps = {
 
 export function DesktopWindowChrome({ bridge }: DesktopWindowChromeProps) {
   const [maximized, setMaximized] = useState(false);
+  const instanceTag = piGuiRuntimeConfig().instanceTag;
 
   useEffect(() => {
     let mounted = true;
@@ -25,6 +27,7 @@ export function DesktopWindowChrome({ bridge }: DesktopWindowChromeProps) {
       <div className="desktop-window-drag-region">
         <span className="desktop-window-title">Pi GUI</span>
         <span className="desktop-window-chip">Desktop</span>
+        {instanceTag ? <span className="desktop-window-chip is-instance-tag" title={`Pi GUI ${instanceTag} instance`}>{instanceTag}</span> : null}
       </div>
       <div className="desktop-window-controls">
         <button className="desktop-window-control minimize" type="button" aria-label="最小化窗口" title="最小化" onClick={() => void bridge.minimize()}>

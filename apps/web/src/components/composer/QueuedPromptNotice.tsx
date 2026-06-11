@@ -1,5 +1,6 @@
 import { useState, type DragEvent } from "react";
 import type { RuntimeQueue } from "@pi-gui/shared";
+import { isConnectionReady } from "../../domain/connection";
 import { adjacentRuntimeQueueItemKey, moveRuntimeQueueItem, runtimeQueueFromOrderItems, type RuntimeQueueOrderItem } from "../../domain/runtimeQueueOrdering";
 import type { ConnectionState } from "../../types";
 import { Icon } from "../Icon";
@@ -14,7 +15,8 @@ type QueuedPromptNoticeProps = {
 
 export function QueuedPromptNotice({ items, runtimeId, connection, onDequeueRuntimeQueue, onReorderRuntimeQueue }: QueuedPromptNoticeProps) {
   const [draggedKey, setDraggedKey] = useState<string | undefined>();
-  const canReorder = Boolean(runtimeId && connection === "open");
+  const connectionReady = isConnectionReady(connection);
+  const canReorder = Boolean(runtimeId && connectionReady);
   if (items.length === 0) return null;
 
   function reorderTo(sourceKey: string | undefined, targetKey: string | undefined) {
@@ -96,7 +98,7 @@ export function QueuedPromptNotice({ items, runtimeId, connection, onDequeueRunt
           title="撤回队列并放回输入框（Alt+↑）"
           aria-label="撤回队列并放回输入框"
           onClick={() => onDequeueRuntimeQueue(runtimeId)}
-          disabled={connection !== "open"}
+          disabled={!connectionReady}
         >
           <Icon name="x" />
         </button>

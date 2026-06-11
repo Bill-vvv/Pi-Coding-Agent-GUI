@@ -9,6 +9,7 @@ import type {
   RewindStorageHealth,
   Runtime,
 } from "@pi-gui/shared";
+import { isConnectionReady } from "../../domain/connection";
 import type { ConnectionState } from "../../types";
 import { checkpointConversationRestoreTarget } from "../../hooks/useCheckpointControls";
 
@@ -44,7 +45,8 @@ type CheckpointPanelProps = {
 const PREVIEW_ACTION_ORDER: Array<keyof RewindCheckpointPreview["summary"]> = ["modify", "add", "delete", "overwrite", "recreate", "conflict", "skip", "unchanged"];
 
 export function CheckpointPanel(props: CheckpointPanelProps) {
-  const disabled = props.connection !== "open" || !props.project;
+  const connectionReady = isConnectionReady(props.connection);
+  const disabled = !connectionReady || !props.project;
   const previewCheckpoint = props.checkpoints.find((checkpoint) => checkpoint.id === props.checkpointPreviewSnapshotId);
   const previewRestoreTarget = previewCheckpoint ? checkpointConversationRestoreTarget(previewCheckpoint, props.activeRuntime) : undefined;
   const previewResult =
@@ -94,7 +96,7 @@ export function CheckpointPanel(props: CheckpointPanelProps) {
 
       <div className="checkpoint-storage-row">
         <span className="checkpoint-muted">
-          {props.connection === "open" ? "Prompt 前会自动 capture；恢复前请先看 preview。" : "连接关闭时无法创建或恢复 checkpoint。"}
+          {connectionReady ? "Prompt 前会自动 capture；恢复前请先看 preview。" : "连接未就绪时无法创建或恢复 checkpoint。"}
         </span>
         <span className="checkpoint-actions-inline">
           <button type="button" disabled={disabled || props.checkpointHealthLoading} onClick={props.onRefreshCheckpointHealth}>健康</button>

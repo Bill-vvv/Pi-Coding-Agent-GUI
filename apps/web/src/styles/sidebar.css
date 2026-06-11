@@ -125,6 +125,23 @@
   color: var(--color-text-soft);
 }
 
+.sidebar-instance-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  margin-left: auto;
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-pill);
+  padding: 0 0.55rem;
+  background: var(--color-warning-bg-subtle);
+  color: var(--color-warning-text);
+  font-size: 0.7rem;
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
 .add-project-entry svg,
 .archive-entry svg,
 .settings-entry svg {

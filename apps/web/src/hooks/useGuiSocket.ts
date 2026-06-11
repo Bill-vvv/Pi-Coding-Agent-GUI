@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ServerEvent } from "@pi-gui/shared";
+import { connectionUnavailableMessage } from "../domain/connection";
 import { createRequestId } from "../domain/requestId";
 import { authToken, piGuiRuntimeConfig } from "../domain/runtimeConfig";
-import type { ConnectionState, GuiSocketSend } from "../types";
+import { sanitizeWebSocketUrlForDiagnostics } from "../domain/webSocketDiagnostics";
+import type { ConnectionState, GuiSocketSend, WebSocketDiagnostics } from "../types";
 
 type UseGuiSocketOptions = {
   onEvent: (event: ServerEvent) => void;
@@ -22,6 +24,7 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
   const lastGuiEventIdRef = useRef(0);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [connectionWarning, setConnectionWarning] = useState<string | undefined>();
+  const [diagnostics, setDiagnostics] = useState<WebSocketDiagnostics>(() => initialWebSocketDiagnostics());
 
   useEffect(() => {
     onEventRef.current = onEvent;
@@ -79,15 +82,19 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
     const scheduleReconnect = (immediate = false) => {
       if (closedByEffect) return;
       clearReconnectTimer();
-      const delay = immediate ? 0 : reconnectDelayMs(reconnectAttempt++);
+      const attempt = reconnectAttempt++;
+      setDiagnostics((current) => ({ ...current, reconnectAttempt }));
+      const delay = immediate ? 0 : reconnectDelayMs(attempt);
       reconnectTimer = window.setTimeout(connect, delay);
     };
 
     const connect = () => {
       clearReconnectTimer();
       if (closedByEffect) return;
-      setConnection("connecting");
-      const ws = new WebSocket(wsUrl(lastGuiEventIdRef.current));
+      setConnection(reconnectAttempt > 0 ? "reconnecting" : "connecting");
+      const socketUrl = wsUrl(lastGuiEventIdRef.current);
+      setDiagnostics((current) => ({ ...current, endpoint: sanitizeWebSocketUrlForDiagnostics(socketUrl), authPresent: Boolean(authToken()) }));
+      const ws = new WebSocket(socketUrl);
       wsRef.current = ws;
       const isCurrentSocket = () => wsRef.current === ws;
 
@@ -95,7 +102,8 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
         if (!isCurrentSocket()) return;
         reconnectAttempt = 0;
         clearConnectionWarning();
-        setConnection("open");
+        setConnection("connected_waiting_hello");
+        setDiagnostics((current) => ({ ...current, reconnectAttempt: 0 }));
         onOpenRef.current?.();
       });
 
@@ -104,17 +112,37 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
         try {
           const event = JSON.parse(message.data as string) as ServerEvent;
           lastGuiEventIdRef.current = replayCursorAfterServerEvent(lastGuiEventIdRef.current, event);
+          setConnection((current) => connectionStateAfterServerEvent(current, event));
+          setDiagnostics((current) => diagnosticsAfterServerEvent(current, event, lastGuiEventIdRef.current));
           onEventRef.current(event);
         } catch (error) {
           onErrorRef.current((error as Error).message || "WebSocket 消息解析失败");
         }
       });
 
-      ws.addEventListener("close", () => {
+      ws.addEventListener("close", (event) => {
         if (!isCurrentSocket()) return;
         wsRef.current = null;
         if (closedByEffect) return;
         onCloseRef.current?.();
+        setDiagnostics((current) => ({
+          ...current,
+          lastClose: {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+            at: Date.now(),
+            reconnectAttempt,
+          },
+        }));
+        if (isUnauthorizedCloseEvent(event)) {
+          clearConnectionWarning();
+          const warning = connectionUnavailableMessage("unauthorized");
+          setConnection("unauthorized");
+          setConnectionWarning(warning);
+          onConnectionWarningRef.current?.(warning);
+          return;
+        }
         setConnection("closed");
         scheduleConnectionWarning();
         scheduleReconnect();
@@ -161,7 +189,7 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
     return true;
   }, []);
 
-  return { connection, send, connectionWarning };
+  return { connection, send, connectionWarning, diagnostics };
 }
 
 const RECONNECT_BASE_DELAY_MS = 800;
@@ -175,10 +203,48 @@ function reconnectDelayMs(attempt: number): number {
 }
 
 export function replayCursorAfterServerEvent(currentEventId: number, event: ServerEvent): number {
-  if (event.type === "hello" && currentEventId > event.lastEventId) return event.lastEventId;
+  if ((event.type === "hello" || event.type === "bootstrap.begin" || event.type === "bootstrap.complete" || event.type === "replay.complete" || event.type === "connection.ready") && currentEventId > event.lastEventId) return event.lastEventId;
   if (event.type === "gui.event") return Math.max(currentEventId, event.event.id);
   if (event.type === "event.replay.gap") return event.lastEventId;
   return currentEventId;
+}
+
+export function connectionStateAfterServerEvent(current: ConnectionState, event: ServerEvent): ConnectionState {
+  if (event.type === "hello" || event.type === "bootstrap.begin") return "bootstrapping";
+  if (event.type === "bootstrap.complete") return "replaying";
+  if (event.type === "event.replay.gap") return "degraded";
+  if (event.type === "connection.ready") return "ready";
+  return current;
+}
+
+export function diagnosticsAfterServerEvent(current: WebSocketDiagnostics, event: ServerEvent, lastGuiEventId: number): WebSocketDiagnostics {
+  const base = current.lastGuiEventId === lastGuiEventId ? current : { ...current, lastGuiEventId };
+  if (event.type === "hello") {
+    return { ...base, lastHelloAt: Date.now(), lastServerTime: event.serverTime, lastConnectionId: event.connectionId ?? current.lastConnectionId };
+  }
+  if (event.type === "bootstrap.begin" || event.type === "bootstrap.complete" || event.type === "replay.complete") {
+    return { ...base, lastServerTime: event.serverTime, lastConnectionId: event.connectionId };
+  }
+  if (event.type === "connection.ready") {
+    return { ...base, lastReadyAt: Date.now(), lastServerTime: event.serverTime, lastConnectionId: event.connectionId ?? current.lastConnectionId };
+  }
+  if (event.type === "event.replay.gap") {
+    return { ...base, lastReplayGap: event };
+  }
+  return base;
+}
+
+function initialWebSocketDiagnostics(): WebSocketDiagnostics {
+  return {
+    endpoint: sanitizeWebSocketUrlForDiagnostics(wsUrl()),
+    authPresent: Boolean(authToken()),
+    reconnectAttempt: 0,
+    lastGuiEventId: 0,
+  };
+}
+
+export function isUnauthorizedCloseEvent(event: CloseEvent): boolean {
+  return event.code === 1008 || event.reason.toLowerCase() === "unauthorized";
 }
 
 export function wsUrl(sinceEventId = 0): string {

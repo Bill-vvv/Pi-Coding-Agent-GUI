@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ConversationMessage, GuiEvent, GuiSession, Project, Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
+import { isConnectionReady } from "../domain/connection";
 import type { ConnectionState } from "../types";
 import { runtimeHasVisibleConversationContent } from "../domain/conversationVisibility";
 import { mediaQueryMatches, subscribeMediaQuery } from "../domain/mediaQuery";
@@ -19,6 +20,7 @@ type SidebarProps = {
   selectedProject?: Project;
   activeRuntime?: Runtime;
   activeRuntimeIsBusy: boolean;
+  instanceTag?: string;
   busyByRuntime: Record<string, boolean>;
   messagesByRuntime: Record<string, ConversationMessage[]>;
   conversationSummaries: Record<string, RuntimeConversationSummary>;
@@ -43,6 +45,7 @@ export function Sidebar({
   selectedProject,
   activeRuntime,
   activeRuntimeIsBusy,
+  instanceTag,
   busyByRuntime,
   messagesByRuntime,
   conversationSummaries,
@@ -142,6 +145,7 @@ export function Sidebar({
   }
 
   const sidebarClassName = `left-sidebar ${projects.length === 0 ? "empty-projects" : ""} ${draggingProjectId ? "dragging-project" : ""} ${draggingSession ? "dragging-session" : ""} ${isCompactViewport ? "is-compact-viewport" : ""} ${compactExpanded ? "is-compact-expanded" : ""}`;
+  const connectionReady = isConnectionReady(connection);
 
   return (
     <aside className={sidebarClassName}>
@@ -150,7 +154,7 @@ export function Sidebar({
           {projects.length === 0 ? (
             <div className="empty-project-actions">
               <p className="muted">暂无项目。</p>
-              <IconButton className="empty-project-add" icon="plus" label="添加项目" title="添加项目" onClick={onAddProject} disabled={connection !== "open"} />
+              <IconButton className="empty-project-add" icon="plus" label="添加项目" title="添加项目" onClick={onAddProject} disabled={!connectionReady} />
             </div>
           ) : null}
           {orderedProjects.map((project) => {
@@ -217,7 +221,7 @@ export function Sidebar({
                     icon="plus"
                     label="在此项目中新建对话"
                     onClick={() => onStartRuntimeForProject(project.id)}
-                    disabled={connection !== "open"}
+                    disabled={!connectionReady}
                   />
                 </div>
                 {projectExpanded ? (
@@ -291,7 +295,7 @@ export function Sidebar({
 
       </div>
       <div className="sidebar-footer">
-        <IconButton className="add-project-entry" icon="plus" label="添加项目" title="添加项目" onClick={onAddProject} disabled={connection !== "open"} />
+        <IconButton className="add-project-entry" icon="plus" label="添加项目" title="添加项目" onClick={onAddProject} disabled={!connectionReady} />
         <IconButton
           className="archive-entry"
           icon="archive"
@@ -303,6 +307,7 @@ export function Sidebar({
           }}
         />
         <IconButton className="settings-entry" icon="settings" label="设置" onClick={onOpenSettings} />
+        {instanceTag ? <span className="sidebar-instance-tag" title={`Pi GUI ${instanceTag} instance`}>{instanceTag}</span> : null}
       </div>
     </aside>
   );
