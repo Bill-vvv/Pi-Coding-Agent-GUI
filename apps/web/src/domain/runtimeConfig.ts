@@ -4,6 +4,7 @@ export type PiGuiRuntimeConfig = {
   apiBaseUrl?: string;
   wsUrl?: string;
   authToken?: string;
+  instanceTag?: string;
 };
 
 declare global {
@@ -15,10 +16,12 @@ declare global {
 export function piGuiRuntimeConfig(): PiGuiRuntimeConfig {
   const injected = typeof window !== "undefined" ? normalizeRuntimeConfig(window.__PI_GUI_CONFIG__) : undefined;
   const env = (import.meta as { env?: Record<string, unknown> }).env;
+  const instanceTag = injected?.instanceTag ?? stringEnv(env?.VITE_PI_GUI_INSTANCE_TAG);
   return {
     apiBaseUrl: injected?.apiBaseUrl ?? stringEnv(env?.VITE_API_URL),
     wsUrl: injected?.wsUrl ?? stringEnv(env?.VITE_WS_URL),
     authToken: injected?.authToken ?? stringEnv(env?.VITE_PI_GUI_AUTH_TOKEN) ?? remoteAccessToken(),
+    ...(instanceTag ? { instanceTag } : {}),
   };
 }
 
@@ -37,10 +40,12 @@ export function authToken(): string | undefined {
 function normalizeRuntimeConfig(value: unknown): PiGuiRuntimeConfig | undefined {
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
+  const instanceTag = stringEnv(record.instanceTag);
   return {
     apiBaseUrl: stringEnv(record.apiBaseUrl),
     wsUrl: stringEnv(record.wsUrl),
     authToken: stringEnv(record.authToken),
+    ...(instanceTag ? { instanceTag } : {}),
   };
 }
 

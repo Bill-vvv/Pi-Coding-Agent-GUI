@@ -19,6 +19,7 @@ const profiles = {
     webPort: "5273",
     dataDir: ".pi-gui-dev",
     tmuxSession: "pi-gui-dev-sandbox",
+    instanceTag: "DEV",
   },
 };
 
@@ -76,6 +77,14 @@ function profileEnv(profile) {
   env.PI_GUI_DEV_STATE_DIR = firstNonBlank(env.PI_GUI_DEV_PROFILE_STATE_DIR, `${dataDir}/dev-state`);
   env.PI_GUI_DEV_TMUX_SESSION = firstNonBlank(env.PI_GUI_DEV_PROFILE_TMUX_SESSION, profile.tmuxSession);
   env.PI_GUI_DEV_NPM_SCRIPT = firstNonBlank(env.PI_GUI_DEV_PROFILE_NPM_SCRIPT, "dev:watch");
+  const instanceTag = firstNonBlank(env.PI_GUI_DEV_PROFILE_INSTANCE_TAG, profile.instanceTag);
+  if (instanceTag) {
+    env.PI_GUI_INSTANCE_TAG = instanceTag;
+    env.VITE_PI_GUI_INSTANCE_TAG = instanceTag;
+  } else {
+    delete env.PI_GUI_INSTANCE_TAG;
+    delete env.VITE_PI_GUI_INSTANCE_TAG;
+  }
   return env;
 }
 
@@ -110,6 +119,7 @@ Overrides:
   PI_GUI_DEV_PROFILE_STATE_DIR
   PI_GUI_DEV_PROFILE_TMUX_SESSION
   PI_GUI_DEV_PROFILE_NPM_SCRIPT
+  PI_GUI_DEV_PROFILE_INSTANCE_TAG
 
 Generic backend env such as PORT and PI_GUI_DATA_DIR is intentionally ignored
 so stable/sandbox profiles do not accidentally share a running dev instance.`);
@@ -129,6 +139,7 @@ function printProfileEnv(profileName, profile, env) {
     "PI_GUI_BACKEND_ORIGIN",
     "VITE_API_URL",
     "VITE_WS_URL",
+    "VITE_PI_GUI_INSTANCE_TAG",
   ]) {
     console.log(`${key}=${env[key] ?? ""}`);
   }

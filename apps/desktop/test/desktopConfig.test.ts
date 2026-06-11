@@ -92,10 +92,26 @@ test("desktop launch config ignores inherited backend env for generic port and d
   assert.equal(config.dataDir, win32.join("C:/repo/pi-gui", "apps", "server", ".pi-gui"));
 });
 
-test("renderer config encoding round-trips API, WebSocket, and auth token", () => {
-  const config = { apiBaseUrl: "http://127.0.0.1:4567", wsUrl: "ws://127.0.0.1:4567/ws", authToken: "secret" };
+test("renderer config encoding round-trips API, WebSocket, auth token, and optional instance tag", () => {
+  const config = { apiBaseUrl: "http://127.0.0.1:4567", wsUrl: "ws://127.0.0.1:4567/ws", authToken: "secret", instanceTag: "DEV" };
   assert.deepEqual(decodeRendererConfig(encodeRendererConfig(config)), config);
   assert.equal(decodeRendererConfig("not-valid"), undefined);
+});
+
+
+test("desktop dev profile injects a visible renderer instance tag", async () => {
+  const config = await createDesktopLaunchConfig({
+    isPackaged: false,
+    repoRoot: "C:/repo/pi-gui",
+    env: {
+      PI_GUI_DESKTOP_HOST: "windows",
+      PI_GUI_DESKTOP_PROFILE: "dev",
+      PI_GUI_DESKTOP_BACKEND_PORT: "8877",
+      PI_GUI_DESKTOP_AUTH_TOKEN: "secret",
+    },
+  });
+
+  assert.equal(config.rendererConfig.instanceTag, "DEV");
 });
 
 test("backend env uses desktop mode, loopback host, controlled port, token, and optional data dir", () => {

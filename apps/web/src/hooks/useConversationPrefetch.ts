@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { Runtime, RuntimeConversationSummary } from "@pi-gui/shared";
+import { isConnectionReady } from "../domain/connection";
 import type { ConnectionState, GuiSocketSend } from "../types";
 
 const ACTIVE_CONVERSATION_OPEN_LIMIT = 500;
@@ -36,12 +37,12 @@ export function useConversationPrefetch({
   }, []);
 
   useEffect(() => {
-    if (connection === "open") return;
+    if (isConnectionReady(connection)) return;
     clearConversationPrefetchState();
   }, [connection, clearConversationPrefetchState]);
 
   useEffect(() => {
-    if (connection !== "open" || !activeRuntime) return;
+    if (!isConnectionReady(connection) || !activeRuntime) return;
     openedRuntimeIdsRef.current.add(activeRuntime.id);
     if (!send({ type: "conversation.open", runtimeId: activeRuntime.id, limit: ACTIVE_CONVERSATION_OPEN_LIMIT }, { notifyOnDisconnected: false })) {
       openedRuntimeIdsRef.current.delete(activeRuntime.id);
@@ -49,7 +50,7 @@ export function useConversationPrefetch({
   }, [connection, activeRuntime?.id, send]);
 
   useEffect(() => {
-    if (connection !== "open") return;
+    if (!isConnectionReady(connection)) return;
     const remainingBudget = SIDEBAR_CONVERSATION_PREFETCH_MAX - prefetchedRuntimeIdsRef.current.size;
     if (remainingBudget <= 0) return;
 

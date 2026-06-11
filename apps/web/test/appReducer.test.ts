@@ -96,6 +96,39 @@ test("hello stores the current execution host for host-aware session actions", (
   assert.deepEqual(state.executionHost, executionHost);
 });
 
+test("bootstrap chunks hydrate startup state after minimal hello", () => {
+  const executionHost = { kind: "wsl" as const, id: "wsl:Ubuntu", label: "WSL (Ubuntu)" };
+  const projectOne = project("project-1");
+  const runtimeOne = runtime("runtime-1", "project-1", "running");
+  const sessionOne = session("session-1");
+  const afterHello = appReducer(initialAppState, {
+    type: "server.event",
+    event: { type: "hello", serverTime: 1, lastEventId: 10, connectionId: "1", protocolVersion: 2 },
+  });
+  const afterProjects = appReducer(afterHello, {
+    type: "server.event",
+    event: { type: "bootstrap.chunk", connectionId: "1", scope: "projects", projects: [projectOne], executionHost },
+  });
+  const afterRuntimes = appReducer(afterProjects, {
+    type: "server.event",
+    event: { type: "bootstrap.chunk", connectionId: "1", scope: "runtimes", runtimes: [runtimeOne] },
+  });
+  const afterSessions = appReducer(afterRuntimes, {
+    type: "server.event",
+    event: { type: "bootstrap.chunk", connectionId: "1", scope: "sessions", sessions: [sessionOne], hasMore: false },
+  });
+  const finalState = appReducer(afterSessions, {
+    type: "server.event",
+    event: { type: "bootstrap.chunk", connectionId: "1", scope: "settings", settings: { defaultModel: "model-a" } },
+  });
+
+  assert.equal(finalState.selectedProjectId, "project-1");
+  assert.equal(finalState.selectedRuntimeId, "runtime-1");
+  assert.deepEqual(finalState.executionHost, executionHost);
+  assert.deepEqual(finalState.sessions.map((item) => item.id), ["session-1"]);
+  assert.equal(finalState.selectedModelKey, "model-a");
+});
+
 test("hello seeds recent checkpoint operations and jumps for reconnect recovery", () => {
   const operation = checkpointOperation(1, "restore", "snap-1");
   const jump = checkpointJump(1, "snap-1");
@@ -152,7 +185,7 @@ test("checkpoint events update checkpoint reducer state", () => {
   assert.match(finalState.notice ?? "", /已清理 Rewind 存储/);
 });
 
-test("event replay gap surfaces a recoverable notice", () => {
+test("event replay gap surfaces partial recovery and resync state", () => {
   const state = appReducer(initialAppState, {
     type: "server.event",
     event: {
@@ -166,7 +199,9 @@ test("event replay gap surfaces a recoverable notice", () => {
   });
 
   assert.match(state.notice ?? "", /较早事件已被清理/);
-  assert.match(state.notice ?? "", /最新快照恢复/);
+  assert.match(state.notice ?? "", /重新同步/);
+  assert.equal(state.replayRecovery?.status, "degraded");
+  assert.equal(state.replayRecovery?.gap.lastEventId, 30);
 });
 
 test("event replay stale cursor gap explains snapshot recovery", () => {
@@ -182,7 +217,29 @@ test("event replay stale cursor gap explains snapshot recovery", () => {
   });
 
   assert.match(state.notice ?? "", /回放游标已过期/);
-  assert.match(state.notice ?? "", /最新快照恢复/);
+  assert.match(state.notice ?? "", /重新同步/);
+});
+
+test("event replay gap resync request and snapshot clear recovery state", () => {
+  const degraded = appReducer(initialAppState, {
+    type: "server.event",
+    event: {
+      type: "event.replay.gap",
+      requestedSinceEventId: 10,
+      lastEventId: 30,
+      replayedEvents: 0,
+      reason: "truncated",
+    },
+  });
+
+  const resyncing = appReducer(degraded, { type: "replayRecovery.resyncRequested", sequence: degraded.replayRecovery?.sequence ?? 0 });
+  assert.equal(resyncing.replayRecovery?.status, "resyncing");
+
+  const cleared = appReducer(resyncing, {
+    type: "server.event",
+    event: { type: "session.list", sessions: [], hasMore: false },
+  });
+  assert.equal(cleared.replayRecovery, undefined);
 });
 
 test("runtime.status selects the new runtime when the active project has no selection", () => {

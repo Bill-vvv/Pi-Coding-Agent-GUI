@@ -11,6 +11,8 @@
 @import "./styles/remote-access.css";
 @import "./styles/provider-auth.css";
 @import "./styles/token-usage.css";
+@import "./styles/workbench-home.css";
+@import "./styles/host-context.css";
 @import "./styles/session-history.css";
 @import "./styles/session-tree.css";
 @import "./styles/checkpoint.css";
@@ -18,5 +20,6 @@
 @import "./styles/feedback.css";
 @import "./styles/path-picker.css";
 @import "./styles/runtime-logs.css";
+@import "./styles/runtime-recovery.css";
 @import "./styles/responsive.css";
 @import "./styles/desktop-window.css";

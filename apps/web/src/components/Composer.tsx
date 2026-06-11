@@ -21,9 +21,11 @@ import {
 import { apiUrl } from "../domain/apiUrl";
 import { activeComposerReferenceToken, completeComposerReference, type ComposerFileSearchEntry, type ComposerFileSearchResponse } from "../domain/composerReferences";
 import { authHeaders } from "../domain/runtimeConfig";
+import type { PendingCommandEntry } from "../domain/pendingCommands";
 import { runtimeQueueOrderItems } from "../domain/runtimeQueueOrdering";
 import type { RuntimeExtensionUiChrome } from "../domain/extensionUiChrome";
 import { mediaQueryMatches } from "../domain/mediaQuery";
+import { isConnectionReady } from "../domain/connection";
 import type { ConnectionState, ConversationContextUsage } from "../types";
 import { ContextIndicator } from "./ContextIndicator";
 import { ExtensionUiWidgetStack } from "./ExtensionUiChrome";
@@ -52,6 +54,7 @@ type ComposerProps = {
   connection: ConnectionState;
   activeRuntime?: Runtime;
   activeRuntimeIsBusy: boolean;
+  pendingCommand?: PendingCommandEntry;
   onSubmit: (streamingBehavior?: "steer" | "followUp") => void;
   onPromptChange: (prompt: string) => void;
   onExecuteCommandInput: (input: string, command?: ComposerCommandOption) => boolean;
@@ -85,6 +88,7 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
   connection,
   activeRuntime,
   activeRuntimeIsBusy,
+  pendingCommand,
   onSubmit,
   onPromptChange,
   onExecuteCommandInput,
@@ -110,10 +114,13 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
   const [dropState, setDropState] = useState<"idle" | "active" | "reading">("idle");
   const [dropNotice, setDropNotice] = useState<string | undefined>();
   const hasPrompt = prompt.trim().length > 0;
+  const connectionReady = isConnectionReady(connection);
   const runtimeCanReceiveAbort = Boolean(activeRuntime && (activeRuntime.status === "running" || activeRuntime.status === "starting") && !activeRuntime.archivedAt);
   const showAbortAction = runtimeCanReceiveAbort && (activeRuntimeIsBusy || activeRuntime?.status === "starting");
   const sendTitle = activeRuntimeIsBusy ? "Steer up（回车）" : "发送（回车）";
   const queuedPromptItems = runtimeQueueOrderItems(activeRuntimeQueue);
+  const inlinePromptPendingNotice = pendingCommand?.command === "runtime.prompt" && pendingCommand.status === "sent" ? "Pi正在接收你的信息。" : undefined;
+  const pendingCommandNotice = inlinePromptPendingNotice ? undefined : composerPendingCommandNotice(pendingCommand);
   const commandOptions = useMemo(() => buildCommandOptions(slashCommands), [slashCommands]);
   const commandCompletion = useMemo(
     () => buildComposerCompletions({ prompt, commands: commandOptions, models, selectedIndex: selectedCommandIndex, suppressed: commandMenuSuppressed }),
@@ -344,6 +351,12 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
         onReorderRuntimeQueue={onReorderRuntimeQueue}
       />
 
+      {pendingCommandNotice ? (
+        <div className={`composer-command-status ${pendingCommand?.status ?? ""}`} aria-live="polite">
+          <span>{pendingCommandNotice}</span>
+        </div>
+      ) : null}
+
       {dropState !== "idle" || dropNotice ? (
         <div className={`composer-drop-status ${dropState !== "idle" ? `is-${dropState}` : ""}`} aria-live="polite">
           <span>{dropState === "active" ? "松开即可导入文件到对话" : dropState === "reading" ? "正在导入拖拽文件…" : dropNotice}</span>
@@ -373,95 +386,107 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
 
       <div className="composer-input-row">
         <input ref={fileInputRef} className="composer-file-input" type="file" multiple onChange={(event) => void importSelectedPromptFiles(event)} />
-        <textarea
-          ref={textareaRef}
-          value={prompt}
-          onChange={(event) => {
-            setSelectedCommandIndex(0);
-            setCommandMenuSuppressed(false);
-            setReferenceMenuSuppressed(false);
-            setCaretIndex(event.target.selectionStart ?? event.target.value.length);
-            updatePrompt(event.target.value);
-          }}
-          onPaste={(event) => void importPastedPromptFiles(event)}
-          onSelect={(event) => setCaretIndex(event.currentTarget.selectionStart ?? latestPromptRef.current.length)}
-          onClick={(event) => setCaretIndex(event.currentTarget.selectionStart ?? latestPromptRef.current.length)}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
-
-            if (event.key === "/" && !event.shiftKey && !prompt.trim()) {
+        <div className="composer-editor-column">
+          <textarea
+            ref={textareaRef}
+            value={prompt}
+            onChange={(event) => {
+              setSelectedCommandIndex(0);
               setCommandMenuSuppressed(false);
-              return;
-            }
+              setReferenceMenuSuppressed(false);
+              setCaretIndex(event.target.selectionStart ?? event.target.value.length);
+              updatePrompt(event.target.value);
+            }}
+            onPaste={(event) => void importPastedPromptFiles(event)}
+            onSelect={(event) => setCaretIndex(event.currentTarget.selectionStart ?? latestPromptRef.current.length)}
+            onClick={(event) => setCaretIndex(event.currentTarget.selectionStart ?? latestPromptRef.current.length)}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
 
-            if (event.key === "ArrowUp" && event.altKey && activeRuntime && queuedPromptItems.length > 0) {
-              event.preventDefault();
-              onDequeueRuntimeQueue(activeRuntime.id);
-              return;
-            }
+              if (event.key === "/" && !event.shiftKey && !prompt.trim()) {
+                setCommandMenuSuppressed(false);
+                return;
+              }
 
-            if (commandCompletion.visible) {
-              if (event.key === "ArrowDown") {
+              if (event.key === "ArrowUp" && event.altKey && activeRuntime && queuedPromptItems.length > 0) {
                 event.preventDefault();
-                setSelectedCommandIndex((index) => (index + 1) % commandCompletion.items.length);
+                onDequeueRuntimeQueue(activeRuntime.id);
                 return;
               }
-              if (event.key === "ArrowUp") {
-                event.preventDefault();
-                setSelectedCommandIndex((index) => (index - 1 + commandCompletion.items.length) % commandCompletion.items.length);
-                return;
+
+              if (commandCompletion.visible) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setSelectedCommandIndex((index) => (index + 1) % commandCompletion.items.length);
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setSelectedCommandIndex((index) => (index - 1 + commandCompletion.items.length) % commandCompletion.items.length);
+                  return;
+                }
+                if (event.key === "Tab") {
+                  event.preventDefault();
+                  completeCompletion(commandCompletion.items[commandCompletion.activeIndex]);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setCommandMenuSuppressed(true);
+                  return;
+                }
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  const selectedItem = commandCompletion.items[commandCompletion.activeIndex];
+                  if (selectedItem?.kind === "model") chooseModelCompletion(selectedItem);
+                  else if (!isExecutableCommandInput(prompt, selectedItem?.command)) completeCompletion(selectedItem);
+                  else submit(activeRuntimeIsBusy ? (event.altKey ? "followUp" : "steer") : undefined);
+                  return;
+                }
               }
-              if (event.key === "Tab") {
-                event.preventDefault();
-                completeCompletion(commandCompletion.items[commandCompletion.activeIndex]);
-                return;
+
+              if (referenceCompletionVisible) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setSelectedReferenceIndex((index) => (index + 1) % referenceItems.length);
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setSelectedReferenceIndex((index) => (index - 1 + referenceItems.length) % referenceItems.length);
+                  return;
+                }
+                if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+                  event.preventDefault();
+                  completeReference(referenceItems[selectedReferenceIndex]);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setReferenceMenuSuppressed(true);
+                  return;
+                }
               }
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setCommandMenuSuppressed(true);
-                return;
-              }
+
               if (event.key === "Enter" && !event.shiftKey) {
+                if (shouldTreatEnterAsNewlineOnMobile()) return;
                 event.preventDefault();
-                const selectedItem = commandCompletion.items[commandCompletion.activeIndex];
-                if (selectedItem?.kind === "model") chooseModelCompletion(selectedItem);
-                else if (!isExecutableCommandInput(prompt, selectedItem?.command)) completeCompletion(selectedItem);
-                else submit(activeRuntimeIsBusy ? (event.altKey ? "followUp" : "steer") : undefined);
-                return;
+                if (activeRuntimeIsBusy) submit(event.altKey ? "followUp" : "steer");
+                else event.currentTarget.form?.requestSubmit();
               }
-            }
-
-            if (referenceCompletionVisible) {
-              if (event.key === "ArrowDown") {
-                event.preventDefault();
-                setSelectedReferenceIndex((index) => (index + 1) % referenceItems.length);
-                return;
-              }
-              if (event.key === "ArrowUp") {
-                event.preventDefault();
-                setSelectedReferenceIndex((index) => (index - 1 + referenceItems.length) % referenceItems.length);
-                return;
-              }
-              if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
-                event.preventDefault();
-                completeReference(referenceItems[selectedReferenceIndex]);
-                return;
-              }
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setReferenceMenuSuppressed(true);
-                return;
-              }
-            }
-
-            if (event.key === "Enter" && !event.shiftKey) {
-              if (shouldTreatEnterAsNewlineOnMobile()) return;
-              event.preventDefault();
-              if (activeRuntimeIsBusy) submit(event.altKey ? "followUp" : "steer");
-              else event.currentTarget.form?.requestSubmit();
-            }
-          }}
-        />
+            }}
+          />
+          {inlinePromptPendingNotice ? (
+            <div className="composer-inline-prompt-status" role="status" aria-live="polite">
+              <span>{inlinePromptPendingNotice}</span>
+              <span className="composer-inline-prompt-loader" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
+          ) : null}
+        </div>
         <div className="composer-input-actions">
           <div className="composer-input-tools" role="group" aria-label="输入辅助操作">
             <button
@@ -470,7 +495,7 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
               title="选择文件并插入引用"
               aria-label="选择文件并插入引用"
               onClick={() => fileInputRef.current?.click()}
-              disabled={dropState === "reading" || connection !== "open"}
+              disabled={dropState === "reading" || !connectionReady}
             >
               <Icon name="attach" />
             </button>
@@ -494,7 +519,7 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
                 data-streaming-behavior={activeRuntimeIsBusy ? "steer" : undefined}
                 title={sendTitle}
                 aria-label={sendTitle}
-                disabled={!hasPrompt || connection !== "open"}
+                disabled={!hasPrompt || !connectionReady}
               >
                 <Icon name="enter" />
               </button>
@@ -542,6 +567,30 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
     </form>
   );
 });
+
+function composerPendingCommandNotice(command?: PendingCommandEntry): string | undefined {
+  if (!command) return undefined;
+  if (command.status === "sent") return `${commandLabel(command.command)} 已发送，等待确认…`;
+  if (command.status === "timeout") return `${commandLabel(command.command)} 暂无确认，可能仍在后端执行。`;
+  if (command.status === "unknown_after_disconnect") return `${commandLabel(command.command)} 断线前已发送，状态未知；等待重连同步。`;
+  if (command.status === "failed") return `${commandLabel(command.command)} 失败${command.error ? `：${command.error}` : ""}`;
+  return undefined;
+}
+
+function commandLabel(command: PendingCommandEntry["command"]): string {
+  if (command === "runtime.prompt") return "Prompt";
+  if (command === "runtime.start") return "启动 runtime";
+  if (command === "runtime.resume") return "恢复 runtime";
+  if (command === "runtime.restart") return "重启 runtime";
+  if (command === "runtime.abort") return "中止 runtime";
+  if (command === "runtime.stop") return "停止 runtime";
+  if (command === "runtime.archive" || command === "runtime.archiveBlank") return "归档 runtime";
+  if (command === "runtime.queue.dequeue") return "取回队列 prompt";
+  if (command === "runtime.queue.reorder") return "调整队列";
+  if (command === "project.create") return "创建项目";
+  if (command === "session.resume") return "恢复会话";
+  return command;
+}
 
 function streamingBehaviorFromSubmitter(submitter: HTMLButtonElement | null): "steer" | "followUp" | undefined {
   const behavior = submitter?.dataset.streamingBehavior;

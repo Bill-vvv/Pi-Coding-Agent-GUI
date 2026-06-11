@@ -63,6 +63,23 @@
   display: none;
 }
 
+.desktop-window-chip.is-instance-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-pill);
+  padding: 0 0.5rem;
+  background: var(--color-warning-bg-subtle);
+  color: var(--color-warning-text);
+  font-size: 0.68rem;
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-bg-app) 24%, transparent);
+}
+
 .desktop-window-controls {
   position: relative;
   z-index: 1;

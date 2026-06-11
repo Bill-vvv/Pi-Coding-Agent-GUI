@@ -1,11 +1,41 @@
-import type { ClientCommand } from "@pi-gui/shared";
+import type { ClientCommand, ServerEvent } from "@pi-gui/shared";
 import type { ConversationDisplayMode } from "./domain/conversationDisplay";
 import type { GuiKeybindingMap } from "./domain/keybindings";
 import type { GuiScopedModelsPreference } from "./domain/scopedModels";
 
 export type { ConversationContextUsage, ConversationMessage } from "@pi-gui/shared";
 
-export type ConnectionState = "connecting" | "open" | "closed";
+export type ConnectionState =
+  | "connecting"
+  | "reconnecting"
+  | "connected_waiting_hello"
+  | "bootstrapping"
+  | "replaying"
+  | "ready"
+  | "degraded"
+  | "closed"
+  | "unauthorized";
+
+export type WebSocketCloseDiagnostic = {
+  code: number;
+  reason: string;
+  wasClean: boolean;
+  at: number;
+  reconnectAttempt: number;
+};
+
+export type WebSocketDiagnostics = {
+  endpoint: string;
+  authPresent: boolean;
+  lastClose?: WebSocketCloseDiagnostic;
+  reconnectAttempt: number;
+  lastHelloAt?: number;
+  lastReadyAt?: number;
+  lastServerTime?: number;
+  lastGuiEventId: number;
+  lastConnectionId?: string;
+  lastReplayGap?: Extract<ServerEvent, { type: "event.replay.gap" }>;
+};
 
 export type GuiSocketSendOptions = {
   notifyOnDisconnected?: boolean;

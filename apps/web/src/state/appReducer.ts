@@ -31,6 +31,14 @@ import { applyConversationDeltas, applyConversationDelta, evictInactiveRuntimeMe
 import { applyExtensionUiChromeRequest, extensionUiChromeRequestFromPayload, type ExtensionUiChromeByRuntime } from "../domain/extensionUiChrome";
 import { subagentDetailKey } from "../domain/subagents";
 
+export type ReplayRecoveryState = {
+  status: "degraded" | "resyncing";
+  sequence: number;
+  detectedAt: number;
+  gap: Extract<ServerEvent, { type: "event.replay.gap" }>;
+  requestedAt?: number;
+};
+
 export type AppState = {
   projects: Project[];
   runtimes: Runtime[];
@@ -65,6 +73,7 @@ export type AppState = {
   responseMode: ResponseMode;
   operationError?: string;
   notice?: string;
+  replayRecovery?: ReplayRecoveryState;
 };
 
 export const initialAppState: AppState = {
@@ -106,6 +115,7 @@ export type AppAction =
   | { type: "set.notice"; notice?: string }
   | { type: "clear.notice"; notice?: string }
   | { type: "clear.transportError" }
+  | { type: "replayRecovery.resyncRequested"; sequence: number }
   | { type: "set.projectCwd"; cwd: string }
   | { type: "select.project"; projectId?: string }
   | { type: "select.runtime"; projectId: string; runtimeId: string }
@@ -130,6 +140,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return action.notice !== undefined && state.notice !== action.notice ? state : { ...state, notice: undefined };
     case "clear.transportError":
       return isTransportConnectionError(state.operationError) ? { ...state, operationError: undefined } : state;
+    case "replayRecovery.resyncRequested":
+      return state.replayRecovery?.sequence === action.sequence
+        ? { ...state, replayRecovery: { ...state.replayRecovery, status: "resyncing", requestedAt: Date.now() } }
+        : state;
     case "set.projectCwd":
       return { ...state, projectCwd: action.cwd };
     case "select.project": {
@@ -209,36 +223,51 @@ function applyConversationDeltaBatch(state: AppState, deltas: ConversationDelta[
 
 function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?: string): AppState {
   switch (event.type) {
+    case "connection.ready":
+    case "bootstrap.begin":
+    case "bootstrap.complete":
+    case "replay.complete":
+      return state;
     case "hello": {
-      const nextProjectId = event.projects.some((project) => project.id === state.selectedProjectId) ? state.selectedProjectId : event.projects[0]?.id;
-      const nextRuntimeMap = reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, event.runtimes);
-      const nextRuntimeId = preferredRuntimeIdForProject(event.runtimes, nextProjectId, [
-        state.selectedRuntimeId,
-        nextProjectId ? nextRuntimeMap[nextProjectId] : undefined,
-      ]);
-      const seededRuntimeMap = seedSelectedRuntimeMap(nextRuntimeMap, nextProjectId, nextRuntimeId);
-      const nextSubagentRuns = event.subagentRuns ? indexSubagentRuns(event.subagentRuns) : state.subagentRuns;
-      return applySettingsState(
-        {
-          ...state,
-          projects: event.projects,
-          runtimes: event.runtimes,
-          persistedConversationSummaries: indexConversationSummaries(event.conversationSummaries ?? []),
-          // Session visibility is owned by the backend session projection. The
-          // frontend must not re-derive hidden provider child sessions from
-          // optional subagent run internals.
-          sessions: event.sessions ?? state.sessions,
-          checkpointOperations: mergeCheckpointOperations(state.checkpointOperations, event.checkpointOperations ?? []),
-          checkpointJumpsByProject: mergeCheckpointJumpsByProject(state.checkpointJumpsByProject, event.checkpointJumps ?? []),
-          subagentRuns: nextSubagentRuns,
-          executionHost: event.executionHost,
-          selectedProjectId: nextProjectId,
-          selectedRuntimeId: nextRuntimeId,
-          selectedRuntimeIdByProject: seededRuntimeMap,
-        },
-        event.settings,
-        fallbackModelKey,
-      );
+      let nextState: AppState = { ...state, replayRecovery: undefined, executionHost: event.executionHost ?? state.executionHost };
+      if (event.projects && event.runtimes) nextState = applyProjectsAndRuntimesSnapshot(nextState, event.projects, event.runtimes, event.executionHost);
+      else {
+        if (event.projects) nextState = applyProjectsSnapshot(nextState, event.projects, event.executionHost);
+        if (event.runtimes) nextState = applyRuntimesSnapshot(nextState, event.runtimes);
+      }
+      if (event.conversationSummaries) nextState = { ...nextState, persistedConversationSummaries: indexConversationSummaries(event.conversationSummaries) };
+      if (event.sessions) nextState = { ...nextState, sessions: event.sessions };
+      if (event.checkpointOperations || event.checkpointJumps) {
+        nextState = {
+          ...nextState,
+          checkpointOperations: mergeCheckpointOperations(nextState.checkpointOperations, event.checkpointOperations ?? []),
+          checkpointJumpsByProject: mergeCheckpointJumpsByProject(nextState.checkpointJumpsByProject, event.checkpointJumps ?? []),
+        };
+      }
+      if (event.subagentRuns) nextState = { ...nextState, subagentRuns: indexSubagentRuns(event.subagentRuns) };
+      return event.settings ? applySettingsState(nextState, event.settings, fallbackModelKey) : nextState;
+    }
+    case "bootstrap.chunk": {
+      switch (event.scope) {
+        case "projects":
+          return applyProjectsSnapshot(state, event.projects, event.executionHost);
+        case "runtimes":
+          return applyRuntimesSnapshot(state, event.runtimes);
+        case "settings":
+          return applySettingsState(state, event.settings, fallbackModelKey);
+        case "sessions":
+          return { ...state, sessions: mergeSessionList(state.sessions, event.sessions, undefined, undefined) };
+        case "conversationSummaries":
+          return { ...state, persistedConversationSummaries: indexConversationSummaries(event.conversationSummaries) };
+        case "subagents":
+          return { ...state, subagentRuns: indexSubagentRuns(event.subagentRuns) };
+        case "checkpoints":
+          return {
+            ...state,
+            checkpointOperations: mergeCheckpointOperations(state.checkpointOperations, event.checkpointOperations),
+            checkpointJumpsByProject: mergeCheckpointJumpsByProject(state.checkpointJumpsByProject, event.checkpointJumps),
+          };
+      }
     }
     case "project.list": {
       const nextProjectId = event.projects.some((project) => project.id === state.selectedProjectId) ? state.selectedProjectId : event.projects[0]?.id;
@@ -264,7 +293,7 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
         selectedRuntimeId: undefined,
       };
     case "session.list":
-      return { ...state, sessions: mergeSessionList(state.sessions, event.sessions, event.projectId, event.cursor) };
+      return { ...state, sessions: mergeSessionList(state.sessions, event.sessions, event.projectId, event.cursor), replayRecovery: undefined };
     case "session.updated":
       return { ...state, sessions: upsertById(state.sessions, event.session) };
     case "settings.updated":
@@ -286,6 +315,7 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
         contextUsageByRuntime: event.contextUsage
           ? { ...state.contextUsageByRuntime, [event.runtimeId]: event.contextUsage }
           : state.contextUsageByRuntime,
+        replayRecovery: undefined,
       };
     }
     case "conversation.page":
@@ -379,6 +409,7 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
       return {
         ...state,
         commandsByRuntime: { ...state.commandsByRuntime, [event.runtimeId]: event.commands },
+        replayRecovery: undefined,
       };
     case "runtime.logs":
       return state;
@@ -412,6 +443,12 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
       return {
         ...state,
         notice: replayGapNotice(event),
+        replayRecovery: {
+          status: "degraded",
+          sequence: (state.replayRecovery?.sequence ?? 0) + 1,
+          detectedAt: Date.now(),
+          gap: event,
+        },
       };
     case "gui.event":
       return applyGuiEvent(state, event.event);
@@ -420,7 +457,58 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
 
 function replayGapNotice(event: Extract<ServerEvent, { type: "event.replay.gap" }>): string {
   const reason = event.reason === "pruned" ? "部分较早事件已被清理" : event.reason === "truncated" ? "离线期间事件过多，已截断回放" : "事件回放游标已过期";
-  return `${reason}；界面已使用最新快照恢复，并回放最近 ${event.replayedEvents} 条事件。`;
+  return `${reason}；连接已部分恢复，正在请求最新快照重新同步，并回放最近 ${event.replayedEvents} 条事件。`;
+}
+
+function applyProjectsAndRuntimesSnapshot(state: AppState, projects: Project[], runtimes: Runtime[], executionHost?: ExecutionHostRef): AppState {
+  const nextProjectId = projects.some((project) => project.id === state.selectedProjectId) ? state.selectedProjectId : projects[0]?.id;
+  const nextRuntimeMap = reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, runtimes);
+  const nextRuntimeId = preferredRuntimeIdForProject(runtimes, nextProjectId, [
+    state.selectedRuntimeId,
+    nextProjectId ? nextRuntimeMap[nextProjectId] : undefined,
+  ]);
+  return {
+    ...state,
+    projects,
+    runtimes,
+    executionHost: executionHost ?? state.executionHost,
+    selectedProjectId: nextProjectId,
+    selectedRuntimeId: nextRuntimeId,
+    selectedRuntimeIdByProject: seedSelectedRuntimeMap(nextRuntimeMap, nextProjectId, nextRuntimeId),
+  };
+}
+
+function applyProjectsSnapshot(state: AppState, projects: Project[], executionHost?: ExecutionHostRef): AppState {
+  const nextProjectId = projects.some((project) => project.id === state.selectedProjectId) ? state.selectedProjectId : projects[0]?.id;
+  const nextRuntimeMap = reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, state.runtimes);
+  const nextRuntimeId = preferredRuntimeIdForProject(state.runtimes, nextProjectId, [
+    state.selectedRuntimeId,
+    nextProjectId ? nextRuntimeMap[nextProjectId] : undefined,
+  ]);
+  return {
+    ...state,
+    projects,
+    executionHost: executionHost ?? state.executionHost,
+    selectedProjectId: nextProjectId,
+    selectedRuntimeId: nextRuntimeId,
+    selectedRuntimeIdByProject: seedSelectedRuntimeMap(nextRuntimeMap, nextProjectId, nextRuntimeId),
+  };
+}
+
+function applyRuntimesSnapshot(state: AppState, runtimes: Runtime[]): AppState {
+  const nextProjectId = state.projects.some((project) => project.id === state.selectedProjectId) ? state.selectedProjectId : state.projects[0]?.id;
+  const nextRuntimeMap = reconcileSelectedRuntimeMap(state.selectedRuntimeIdByProject, runtimes);
+  const nextRuntimeId = preferredRuntimeIdForProject(runtimes, nextProjectId, [
+    state.selectedRuntimeId,
+    nextProjectId ? nextRuntimeMap[nextProjectId] : undefined,
+  ]);
+  return {
+    ...state,
+    runtimes,
+    selectedProjectId: nextProjectId,
+    selectedRuntimeId: nextRuntimeId,
+    selectedRuntimeIdByProject: seedSelectedRuntimeMap(nextRuntimeMap, nextProjectId, nextRuntimeId),
+  };
 }
 
 function mergeSessionList(currentSessions: GuiSession[], nextSessions: GuiSession[], projectId?: string, cursor?: string): GuiSession[] {

@@ -136,7 +136,7 @@ export function useProjectRuntimeActions({
     const pendingProjectStart = pendingProjectStartRef.current;
     if (!pendingProjectStart) return;
     pendingProjectStartRef.current = undefined;
-    const project = event.projects.find((item) => item.cwd === pendingProjectStart.cwd);
+    const project = event.projects?.find((item) => item.cwd === pendingProjectStart.cwd);
     if (!project) {
       restorePendingMessage(pendingProjectStart.message);
       return;

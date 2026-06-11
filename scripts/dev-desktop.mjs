@@ -75,6 +75,7 @@ function applyDesktopProfile(profileName) {
       backendPort: "8877",
       webPort: "5273",
       dataDir: ".pi-gui-dev",
+      instanceTag: "DEV",
     },
   };
 
@@ -87,10 +88,15 @@ function applyDesktopProfile(profileName) {
     process.exit(1);
   }
 
+  process.env.PI_GUI_DESKTOP_PROFILE = name;
   process.env.PI_GUI_DESKTOP_BACKEND_PORT = firstNonBlank(process.env.PI_GUI_DESKTOP_BACKEND_PORT, process.env.PI_GUI_BACKEND_PORT, process.env.PORT, profile.backendPort);
   process.env.PORT = firstNonBlank(process.env.PORT, process.env.PI_GUI_DESKTOP_BACKEND_PORT);
   process.env.PI_GUI_WEB_PORT = firstNonBlank(process.env.PI_GUI_WEB_PORT, process.env.VITE_PORT, profile.webPort);
   process.env.VITE_PORT = firstNonBlank(process.env.VITE_PORT, process.env.PI_GUI_WEB_PORT);
+  if (profile.instanceTag) {
+    process.env.PI_GUI_INSTANCE_TAG = firstNonBlank(process.env.PI_GUI_INSTANCE_TAG, profile.instanceTag);
+    process.env.VITE_PI_GUI_INSTANCE_TAG = firstNonBlank(process.env.VITE_PI_GUI_INSTANCE_TAG, process.env.PI_GUI_INSTANCE_TAG);
+  }
   return { name, ...profile };
 }
 

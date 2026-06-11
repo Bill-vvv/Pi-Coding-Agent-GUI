@@ -14,6 +14,7 @@ type ServerEventDispatcherContext = {
   handleExtensionUiServerEvent: (event: ServerEvent) => void;
   handleComposerCommandServerEvent: (event: ServerEvent) => void;
   handleCheckpointServerEvent: (event: ServerEvent) => void;
+  handlePendingCommandServerEvent: (event: ServerEvent) => void;
 };
 
 export function dispatchAppServerEvent({
@@ -29,6 +30,7 @@ export function dispatchAppServerEvent({
   handleExtensionUiServerEvent,
   handleComposerCommandServerEvent,
   handleCheckpointServerEvent,
+  handlePendingCommandServerEvent,
 }: ServerEventDispatcherContext): void {
   if (performanceFixtureMode) return;
   if (event.type === "conversation.delta") {
@@ -45,4 +47,5 @@ export function dispatchAppServerEvent({
   handleExtensionUiServerEvent(event);
   handleComposerCommandServerEvent(event);
   handleCheckpointServerEvent(event);
+  handlePendingCommandServerEvent(event);
 }

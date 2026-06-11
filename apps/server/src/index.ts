@@ -116,32 +116,30 @@ fastify.get("/ws", { websocket: true }, (socket: WsClient, request: FastifyReque
 
   wsHub.add(socket);
   const bootstrap = buildConnectionBootstrap();
+  const connectionId = String(socketId);
   wsHub.send(socket, {
     type: "hello",
+    connectionId,
+    protocolVersion: 2,
+    capabilities: ["bootstrap-chunks", "replay-complete", "connection-ready"],
     serverTime: Date.now(),
-    projects: db.listProjects(),
-    runtimes: bootstrap.runtimes,
-    settings: db.getSettings(),
     lastEventId: db.lastEventId(),
-    executionHost: db.getExecutionHost(),
-    conversationSummaries: supervisor.listRuntimeConversationSummaries(100, bootstrap.runtimes),
-    sessions: bootstrap.sessions.sessions,
-    sessionsHasMore: bootstrap.sessions.hasMore,
-    sessionsNextCursor: bootstrap.sessions.nextCursor,
-    // Keep the connection bootstrap lightweight: active sub-agent runs are
-    // needed for refresh recovery, while historical per-runtime runs are sent
-    // by `conversation.open`. Sending hundreds of historical runs can bloat the
-    // initial `hello` enough to trip WebSocket backpressure before busy seeds
-    // reach the client, making sidebar dots look idle until a conversation is opened.
-    subagentRuns: supervisor.listActiveSubagentRuns(100),
-    checkpointOperations: db.listRecentRewindCheckpointOperations(20),
-    checkpointJumps: db.listRecentRewindJumpHistory(20),
   });
+  wsHub.send(socket, { type: "bootstrap.begin", connectionId, serverTime: Date.now(), lastEventId: db.lastEventId() });
+  sendBootstrapChunks(socket, connectionId, bootstrap);
   sendRuntimeBusyStates(socket, bootstrap.runtimes);
   sendRuntimeQueues(socket);
   sendRuntimeCommands(socket);
   sendPendingExtensionUiRequests(socket);
-  replayEventsForConnection(socket, sinceEventId);
+  wsHub.send(socket, { type: "bootstrap.complete", connectionId, serverTime: Date.now(), lastEventId: db.lastEventId() });
+  const replayedEvents = replayEventsForConnection(socket, sinceEventId);
+  wsHub.send(socket, { type: "replay.complete", connectionId, serverTime: Date.now(), lastEventId: db.lastEventId(), replayedEvents });
+  wsHub.send(socket, {
+    type: "connection.ready",
+    connectionId,
+    serverTime: Date.now(),
+    lastEventId: db.lastEventId(),
+  });
 
   socket.on("message", (data) => {
     void handleSocketMessage(socket, data).catch((error) => {
@@ -225,9 +223,41 @@ function buildConnectionBootstrap() {
   const runtimes = supervisor.listRuntimes();
   const childSessionFiles = db.listChildSessionFiles();
   return {
+    projects: db.listProjects(),
     runtimes,
+    settings: db.getSettings(),
+    executionHost: db.getExecutionHost(),
+    conversationSummaries: supervisor.listRuntimeConversationSummaries(100, runtimes),
     sessions: db.listSessionsPage(undefined, 200, undefined, { childSessionFiles }),
+    // Keep bootstrap active-only for sub-agents; historical per-runtime runs are
+    // still sent by `conversation.open` to keep initial payloads bounded.
+    subagentRuns: supervisor.listActiveSubagentRuns(100),
+    checkpointOperations: db.listRecentRewindCheckpointOperations(20),
+    checkpointJumps: db.listRecentRewindJumpHistory(20),
   };
+}
+
+function sendBootstrapChunks(socket: WsClient, connectionId: string, bootstrap: ReturnType<typeof buildConnectionBootstrap>): void {
+  wsHub.send(socket, { type: "bootstrap.chunk", connectionId, scope: "projects", projects: bootstrap.projects, executionHost: bootstrap.executionHost });
+  wsHub.send(socket, { type: "bootstrap.chunk", connectionId, scope: "runtimes", runtimes: bootstrap.runtimes });
+  wsHub.send(socket, { type: "bootstrap.chunk", connectionId, scope: "settings", settings: bootstrap.settings });
+  wsHub.send(socket, {
+    type: "bootstrap.chunk",
+    connectionId,
+    scope: "sessions",
+    sessions: bootstrap.sessions.sessions,
+    hasMore: bootstrap.sessions.hasMore,
+    nextCursor: bootstrap.sessions.nextCursor,
+  });
+  wsHub.send(socket, { type: "bootstrap.chunk", connectionId, scope: "conversationSummaries", conversationSummaries: bootstrap.conversationSummaries });
+  wsHub.send(socket, { type: "bootstrap.chunk", connectionId, scope: "subagents", subagentRuns: bootstrap.subagentRuns });
+  wsHub.send(socket, {
+    type: "bootstrap.chunk",
+    connectionId,
+    scope: "checkpoints",
+    checkpointOperations: bootstrap.checkpointOperations,
+    checkpointJumps: bootstrap.checkpointJumps,
+  });
 }
 
 function sendRuntimeBusyStates(socket: WsClient, runtimes = supervisor.listRuntimes()): void {
@@ -257,7 +287,7 @@ function sendPendingExtensionUiRequests(socket: WsClient): void {
   }
 }
 
-function replayEventsForConnection(socket: WsClient, sinceEventId: number | undefined): void {
+function replayEventsForConnection(socket: WsClient, sinceEventId: number | undefined): number {
   const replay = sinceEventId !== undefined
     ? db.listEventsBudgeted(sinceEventId, RECONNECT_REPLAY_LIMIT, 512 * 1024)
     : { events: db.recentEvents(300, 512 * 1024), truncated: false };
@@ -276,6 +306,7 @@ function replayEventsForConnection(socket: WsClient, sinceEventId: number | unde
   for (const event of events) {
     wsHub.send(socket, { type: "gui.event", event });
   }
+  return events.length;
 }
 
 function parseSinceEventId(request: FastifyRequest): number | undefined {

@@ -10,6 +10,9 @@ import { ProviderAuthPanel } from "./components/ProviderAuthPanel";
 import { ScopedModelsPanel } from "./components/ScopedModelsPanel";
 import { SessionTreeForkPanel } from "./components/SessionTreeForkPanel";
 import { RewindPanel } from "./components/RewindPanel";
+import { RuntimeRecoveryPanel } from "./components/RuntimeRecoveryPanel";
+import { WorkbenchContextStrip } from "./components/WorkbenchContextStrip";
+import { WorkbenchHome } from "./components/WorkbenchHome";
 
 import { useActiveRuntimeView } from "./hooks/useActiveRuntimeView";
 import { useAppModalState } from "./hooks/useAppModalState";
@@ -26,7 +29,9 @@ import { useMainSurfaceMode } from "./hooks/useMainSurfaceMode";
 import { useModelCatalog } from "./hooks/useModelCatalog";
 import { useModelRuntimeSettings } from "./hooks/useModelRuntimeSettings";
 import { usePathPickerFlow } from "./hooks/usePathPickerFlow";
+import { usePendingCommandRegistry } from "./hooks/usePendingCommandRegistry";
 import { useProjectRuntimeActions } from "./hooks/useProjectRuntimeActions";
+import { useReplayGapResync } from "./hooks/useReplayGapResync";
 import { useRuntimeCommandRefresh } from "./hooks/useRuntimeCommandRefresh";
 import { useRuntimeLogsDrawer } from "./hooks/useRuntimeLogsDrawer";
 import { useSessionRestoreActions } from "./hooks/useSessionRestoreActions";
@@ -34,7 +39,10 @@ import { useSessionTreeForkControls } from "./hooks/useSessionTreeForkControls";
 import { useSubagentDrawer } from "./hooks/useSubagentDrawer";
 import { useUiPreferences } from "./hooks/useUiPreferences";
 import { shouldAutoArchiveBlankRuntime } from "./domain/blankRuntimeCleanup";
+import { isConnectionReady } from "./domain/connection";
 import { desktopShellBridge } from "./domain/desktopShell";
+import { latestVisiblePendingCommandForTarget } from "./domain/pendingCommands";
+import { piGuiRuntimeConfig } from "./domain/runtimeConfig";
 import { isRecoverableRuntimeInterruption } from "./domain/runtimeRecovery";
 import { performanceFixtureEvents } from "./domain/performanceFixtures";
 import { codexPetAnimationFromMood, countBackgroundPiPetActivity, derivePiPetDisplay, desktopPetStatusFromMood } from "./domain/piPet";
@@ -94,6 +102,8 @@ export function App() {
   } = useMainSurfaceMode();
 
   const desktopShell = desktopShellBridge();
+  const runtimeConfig = piGuiRuntimeConfig();
+  const instanceTag = runtimeConfig.instanceTag;
   const desktopPetAvailable = Boolean(desktopShell?.setDesktopPetVisible && desktopShell.updateDesktopPet);
   const performanceFixtureMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("fixture") === "performance";
 
@@ -142,6 +152,7 @@ export function App() {
     checkpointJumpsByProject,
     checkpointHealthByProject,
     checkpointGcResultsByProject,
+    replayRecovery,
   } = state;
 
   useEffect(() => {
@@ -157,11 +168,12 @@ export function App() {
     flushConversationDeltas,
   });
 
-  const { connection, send, connectionWarning } = useGuiSocket({
+  const { connection, send: socketSend, connectionWarning, diagnostics: webSocketDiagnostics } = useGuiSocket({
     onEvent: handleServerEvent,
     onError: (message) => dispatch({ type: "set.operationError", error: message }),
     onOpen: () => dispatch({ type: "clear.transportError" }),
   });
+  const { send, pendingCommands, pendingCommandSummary, handlePendingCommandServerEvent } = usePendingCommandRegistry({ connection, send: socketSend });
   const updateAppSettings = useCallback((next: Partial<AppSettings>) => {
     return send({ type: "settings.update", settings: { ...settings, ...next } });
   }, [send, settings]);
@@ -195,13 +207,23 @@ export function App() {
     activeRuntimeCommands,
     activeRuntimeIsBusy,
   } = useActiveRuntimeView(state, models);
+  const workbenchConnection = connection === "ready" && replayRecovery ? "degraded" : connection;
+  const composerPendingCommand = latestVisiblePendingCommandForTarget(pendingCommands, { runtimeId: activeRuntime?.id, projectId: selectedProject?.id });
   const { markRuntimeConversationStale } = useConversationPrefetch({
-    connection,
+    connection: workbenchConnection,
     activeRuntime,
     runtimes,
     busyByRuntime,
     conversationSummaries,
     send,
+  });
+  useReplayGapResync({
+    replayRecovery,
+    connection,
+    activeRuntime,
+    selectedProjectId: selectedProject?.id,
+    send,
+    dispatch,
   });
   const { defaultRuntimeModelKey, chooseModel, chooseThinkingLevel, chooseResponseMode } = useModelRuntimeSettings({
     models,
@@ -323,7 +345,7 @@ export function App() {
     markRuntimeLocalUserActivity,
     startRuntimeForSidebarProject,
   });
-  useRuntimeCommandRefresh({ connection, activeRuntime, send });
+  useRuntimeCommandRefresh({ connection: workbenchConnection, activeRuntime, send });
 
   const previousActiveRuntimeRef = useRef(activeRuntime);
   const autoArchiveRequestedRuntimeIdsRef = useRef(new Set<string>());
@@ -353,6 +375,7 @@ export function App() {
     [activeRuntime?.id, subagentRuns],
   );
   const activeRuntimeExtensionUi = activeRuntime ? extensionUiByRuntime[activeRuntime.id] : undefined;
+  const activeRuntimeEvents = useMemo(() => (activeRuntime ? guiEvents.filter((event) => event.runtimeId === activeRuntime.id) : []), [activeRuntime, guiEvents]);
   const modalExtensionUiRequest = isExtensionUiDialogRequest(extensionUiDialog?.request) ? extensionUiDialog.request : undefined;
   const {
     selectedSubagentRun,
@@ -525,14 +548,14 @@ export function App() {
 
       // Do not gate on frontend busy state here: busy can lag prompt start,
       // retry, or tool transitions, while Pi treats idle abort as a no-op.
-      if (connection !== "open" || !escapeAbortRuntimeId) return;
+      if (!isConnectionReady(workbenchConnection) || !escapeAbortRuntimeId) return;
       event.preventDefault();
       send({ type: "runtime.abort", runtimeId: escapeAbortRuntimeId });
     }
 
     window.addEventListener("keydown", handleGlobalEscapeKey);
     return () => window.removeEventListener("keydown", handleGlobalEscapeKey);
-  }, [closeEscapeSurface, connection, escapeAbortRuntimeId, send]);
+  }, [closeEscapeSurface, workbenchConnection, escapeAbortRuntimeId, send]);
 
   useAppServerEventSideEffects({
     setServerEventSideEffectHandlers,
@@ -543,6 +566,7 @@ export function App() {
     handleExtensionUiServerEvent,
     handleComposerCommandServerEvent,
     handleCheckpointServerEvent,
+    handlePendingCommandServerEvent,
   });
 
   useComposerBottomClearance({
@@ -568,6 +592,19 @@ export function App() {
 
   function openUsageOverview() {
     openMainUsageOverview({ closeSettings, closeSessionHistory });
+  }
+
+  function openAddProjectPicker() {
+    updateLastUserMessageScrollRequest({ type: "clear" });
+    closeSurfaces({ closeSessionHistory });
+    void openPathPicker("addProject");
+  }
+
+  function openEnvironmentDiagnostics() {
+    closeSurfaces({ closeSessionHistory });
+    setSettingsFocusTab("ui");
+    setSettingsFocusCapabilityId(undefined);
+    setSettingsOpen(true);
   }
 
   function startNewRuntimeForProject(projectId: string) {
@@ -597,22 +634,19 @@ export function App() {
       {desktopShell ? <DesktopWindowChrome bridge={desktopShell} /> : null}
 
       <Sidebar
-        connection={connection}
+        connection={workbenchConnection}
         projects={projects}
         runtimes={runtimes}
         sessions={sessions}
         selectedProject={selectedProject}
         activeRuntime={activeRuntime}
         activeRuntimeIsBusy={activeRuntimeIsBusy}
+        instanceTag={!desktopShell ? instanceTag : undefined}
         busyByRuntime={busyByRuntime}
         messagesByRuntime={messagesByRuntime}
         compactExpanded={compactSidebarExpanded}
         onToggleCompact={toggleCompactSidebar}
-        onAddProject={() => {
-          updateLastUserMessageScrollRequest({ type: "clear" });
-          closeSurfaces({ closeSessionHistory });
-          void openPathPicker("addProject");
-        }}
+        onAddProject={openAddProjectPicker}
         onStartRuntimeForProject={startNewRuntimeForProject}
         onOpenSessionHistory={(projectId) => {
           closeSurfaces({ closeSettings });
@@ -626,12 +660,7 @@ export function App() {
         onSelectRuntime={selectRuntimeFromSessionClick}
         onArchiveRuntime={archiveRuntime}
         onOpenRuntimeLogs={openRuntimeLogs}
-        onOpenSettings={() => {
-          closeSurfaces({ closeSessionHistory });
-          setSettingsFocusTab("ui");
-          setSettingsFocusCapabilityId(undefined);
-          setSettingsOpen(true);
-        }}
+        onOpenSettings={openEnvironmentDiagnostics}
         conversationSummaries={conversationSummaries}
         guiEvents={guiEvents}
       />
@@ -641,13 +670,25 @@ export function App() {
       ) : null}
 
       <section ref={mainChatRef} className={`main-chat ${settingsOpen ? "settings-mode" : ""}`}>
+        <WorkbenchContextStrip
+          connection={workbenchConnection}
+          executionHost={executionHost}
+          backendEndpoint={runtimeConfig.apiBaseUrl}
+          selectedProject={selectedProject}
+          activeRuntime={activeRuntime}
+          activeRuntimeIsBusy={activeRuntimeIsBusy}
+          waitingForInput={Boolean(activeRuntime && extensionUiDialog?.runtimeId === activeRuntime.id)}
+        />
         {settingsOpen ? (
           <Suspense fallback={<MainSurfaceFallback />}>
             <SettingsPanel
               open={settingsOpen}
               preferences={uiPreferences}
               settings={settings}
-              connection={connection}
+              connection={workbenchConnection}
+              webSocketDiagnostics={webSocketDiagnostics}
+              replayRecovery={replayRecovery}
+              pendingCommandSummary={pendingCommandSummary}
               selectedProject={selectedProject}
               activeRuntime={activeRuntime}
               checkpoints={selectedProject ? state.checkpointsByProject[selectedProject.id] ?? [] : []}
@@ -690,7 +731,7 @@ export function App() {
               project={sessionHistoryProject}
               sessions={sessions}
               runtimes={runtimes}
-              connection={connection}
+              connection={workbenchConnection}
               currentHost={executionHost}
               pendingRestoreId={pendingHistoryRestoreId}
               onClose={closeSessionHistory}
@@ -734,10 +775,43 @@ export function App() {
             send={send}
             onClose={() => setRewindOpen(false)}
           />
-        ) : usageOverviewOpen || !activeRuntime ? (
+        ) : usageOverviewOpen ? (
           <Suspense fallback={<MainSurfaceFallback />}>
             <TokenUsageOverview projects={projects} />
           </Suspense>
+        ) : activeRuntime && (activeRuntime.status === "stopped" || activeRuntime.status === "crashed") ? (
+          <RuntimeRecoveryPanel
+            runtime={activeRuntime}
+            connection={workbenchConnection}
+            events={activeRuntimeEvents}
+            busy={busyByRuntime[activeRuntime.id] === true}
+            onResume={resumeRuntime}
+            onRestart={restartRuntime}
+            onStop={(runtimeId) => send({ type: "runtime.stop", runtimeId })}
+            onArchive={archiveRuntime}
+            onOpenLogs={openRuntimeLogs}
+            onStartNewConversation={() => startNewRuntimeForProject(activeRuntime.projectId)}
+          />
+        ) : !activeRuntime ? (
+          <WorkbenchHome
+            connection={workbenchConnection}
+            executionHost={executionHost}
+            projects={projects}
+            runtimes={runtimes}
+            sessions={sessions}
+            selectedProject={selectedProject}
+            busyByRuntime={busyByRuntime}
+            onAddProject={openAddProjectPicker}
+            onSelectProject={(projectId) => dispatch({ type: "select.project", projectId })}
+            onStartRuntimeForProject={startNewRuntimeForProject}
+            onResumeSession={resumeSessionFromHistory}
+            onOpenSessionHistory={(projectId) => {
+              closeSurfaces({ closeSettings });
+              openSessionHistory(projectId);
+            }}
+            onOpenEnvironmentDiagnostics={openEnvironmentDiagnostics}
+            onOpenRuntimeLogs={openRuntimeLogs}
+          />
         ) : (
           <>
             <ChatView
@@ -786,9 +860,10 @@ export function App() {
               extensionUi={activeRuntimeExtensionUi}
               commandMenuOpenSignal={commandMenuOpenSignal}
               focusRequestSignal={composerFocusSignal}
-              connection={connection}
+              connection={workbenchConnection}
               activeRuntime={activeRuntime}
               activeRuntimeIsBusy={activeRuntimeIsBusy}
+              pendingCommand={composerPendingCommand}
               onSubmit={submitPromptAndFollowConversation}
               onPromptChange={setPrompt}
               onExecuteCommandInput={executeCommandInput}

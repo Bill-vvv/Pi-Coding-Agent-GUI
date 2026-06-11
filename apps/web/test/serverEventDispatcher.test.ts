@@ -48,6 +48,9 @@ function createContext(overrides: Partial<Parameters<typeof dispatchAppServerEve
       handleCheckpointServerEvent: () => {
         calls.push("checkpoint");
       },
+      handlePendingCommandServerEvent: () => {
+        calls.push("pendingCommand");
+      },
       ...overrides,
     },
   };
@@ -88,6 +91,7 @@ test("non-delta events flush deltas before reducer dispatch and post-reducer sid
     "extensionUi",
     "composerCommand",
     "checkpoint",
+    "pendingCommand",
   ]);
   assert.deepEqual(actions, [{ type: "server.event", event }]);
 });

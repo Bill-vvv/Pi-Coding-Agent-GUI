@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ExecutionHostRef, GuiSession, Project, Runtime } from "@pi-gui/shared";
 import { executionHostLabel } from "../domain/executionHost";
+import { isConnectionReady } from "../domain/connection";
 import type { ConnectionState } from "../types";
 import { IconButton } from "./ui";
 
@@ -65,7 +66,7 @@ export function SessionHistoryPanel({ project, sessions, runtimes, connection, c
           const host = session.host ?? runtime?.host;
           const hostLabel = executionHostLabel(host);
           const hostMismatch = Boolean(host && currentHost && !sameExecutionHost(host, currentHost));
-          const disabled = connection !== "open" || pending || hostMismatch;
+          const disabled = !isConnectionReady(connection) || pending || hostMismatch;
           return (
             <button
               className="session-history-item"

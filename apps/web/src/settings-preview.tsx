@@ -91,7 +91,18 @@ function SettingsPreviewApp() {
             open={true}
             preferences={preferences}
             settings={settings}
-            connection="open"
+            connection="ready"
+            webSocketDiagnostics={{
+              endpoint: "ws://localhost:8787/ws",
+              authPresent: true,
+              reconnectAttempt: 0,
+              lastGuiEventId: 128,
+              lastHelloAt: Date.now() - 5000,
+              lastReadyAt: Date.now() - 3000,
+              lastServerTime: Date.now() - 3000,
+              lastConnectionId: "preview",
+            }}
+            pendingCommandSummary={{ total: 0, sent: 0, succeeded: 0, failed: 0, timeout: 0, unknownAfterDisconnect: 0 }}
             selectedProject={project}
             activeRuntime={undefined}
             checkpoints={[]}

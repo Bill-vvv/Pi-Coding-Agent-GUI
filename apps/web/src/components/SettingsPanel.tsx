@@ -18,8 +18,10 @@ import { useEnvironmentDiagnostics } from "../hooks/useEnvironmentDiagnostics";
 import { useRemoteAccess } from "../hooks/useRemoteAccess";
 import { requiresUnknownExtensionConfirmation, UNKNOWN_USER_EXTENSIONS_CONFIRMATION } from "../domain/capabilities";
 import { GUI_KEYBINDING_DEFINITIONS, effectiveGuiKeybindings, normalizeKeyCombo } from "../domain/keybindings";
+import type { PendingCommandSummary } from "../domain/pendingCommands";
 import type { DesktopPetListPayload, DesktopShellBridge } from "../domain/desktopShell";
-import type { AccentColor, ChatFontSize, ConnectionState, ThemeMode, ThinkingToolDisplayMode, UiFontSize, UiPreferences } from "../types";
+import type { ReplayRecoveryState } from "../state/appReducer";
+import type { AccentColor, ChatFontSize, ConnectionState, ThemeMode, ThinkingToolDisplayMode, UiFontSize, UiPreferences, WebSocketDiagnostics } from "../types";
 import { Icon } from "./Icon";
 import { IconButton } from "./ui";
 import { RemoteAccessPanel } from "./RemoteAccessPanel";
@@ -27,6 +29,7 @@ import { CapabilityPanel } from "./settings/CapabilityPanel";
 import { CheckpointPanel } from "./settings/CheckpointPanel";
 import { EnvironmentDiagnosticsPanel } from "./settings/EnvironmentDiagnosticsPanel";
 import { SettingsOptionGroup } from "./settings/SettingsOptionGroup";
+import { WebSocketDiagnosticsPanel } from "./settings/WebSocketDiagnosticsPanel";
 import { useSettingsScrollbar } from "./settings/useSettingsScrollbar";
 
 type SettingsTab = "ui" | "function" | "extension";
@@ -36,6 +39,9 @@ type SettingsPanelProps = {
   preferences: UiPreferences;
   settings: AppSettings;
   connection: ConnectionState;
+  webSocketDiagnostics: WebSocketDiagnostics;
+  replayRecovery?: ReplayRecoveryState;
+  pendingCommandSummary?: PendingCommandSummary;
   selectedProject?: Project;
   activeRuntime?: Runtime;
   checkpoints: RewindCheckpointSummary[];
@@ -123,6 +129,9 @@ export function SettingsPanel({
   preferences,
   settings,
   connection,
+  webSocketDiagnostics,
+  replayRecovery,
+  pendingCommandSummary,
   selectedProject,
   activeRuntime,
   checkpoints,
@@ -304,6 +313,7 @@ export function SettingsPanel({
             </button>
 
             <EnvironmentDiagnosticsPanel state={environmentDiagnostics} />
+            <WebSocketDiagnosticsPanel connection={connection} diagnostics={webSocketDiagnostics} replayRecovery={replayRecovery} pendingCommandSummary={pendingCommandSummary} />
             <RemoteAccessPanel state={remoteAccess} />
 
             <PiPetSettings preferences={preferences} desktopPetAvailable={Boolean(desktopPetAvailable)} desktopShell={desktopShell} onChange={update} />
