@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import hljs from "highlight.js";
+import { markdownEnhancementCacheKey, scheduleDeferredMarkdownTask } from "../../domain/markdownEnhancement";
 import { CopyIconButton } from "./CopyIconButton";
 
 type CodeBlockRendererProps = {
@@ -14,12 +15,17 @@ type SvgPreviewState =
   | { status: "ready"; url: string }
   | { status: "invalid"; reason: string };
 
+type SanitizedSvgResult =
+  | { status: "ready"; svg: string }
+  | { status: "invalid"; reason: string };
+
 const highlightCache = new Map<string, string>();
+const sanitizedSvgCache = new Map<string, SanitizedSvgResult>();
 
 export function CodeBlockRenderer({ blockId, code, language, closed, streaming }: CodeBlockRendererProps) {
   const [highlightedHtml, setHighlightedHtml] = useState<string | undefined>();
   const svgPreview = useSvgPreview(language, code, closed);
-  const highlightKey = useMemo(() => `${blockId}:${language ?? "plain"}:${code}`, [blockId, code, language]);
+  const highlightKey = useMemo(() => markdownEnhancementCacheKey(language, code), [code, language]);
 
   useEffect(() => {
     if (!closed || !code) {
@@ -32,15 +38,15 @@ export function CodeBlockRenderer({ blockId, code, language, closed, streaming }
       return;
     }
     let cancelled = false;
-    const timer = window.setTimeout(() => {
+    const scheduled = scheduleDeferredMarkdownTask(() => {
       if (cancelled) return;
       const html = highlightCode(code, language);
       highlightCache.set(highlightKey, html);
       if (!cancelled) setHighlightedHtml(html);
-    }, streaming ? 32 : 0);
+    }, { timeoutMs: streaming ? 96 : 48 });
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
+      scheduled.cancel();
     };
   }, [closed, code, highlightKey, language, streaming]);
 
@@ -88,11 +94,32 @@ function SvgPreview({ preview }: { preview: SvgPreviewState }) {
 }
 
 function useSvgPreview(language: string | undefined, code: string, closed: boolean): SvgPreviewState | undefined {
-  const sanitizedSvg = useMemo(() => {
-    if (!closed || language?.toLowerCase() !== "svg" || typeof DOMParser !== "function") return undefined;
-    return sanitizeSvgForPreview(code);
-  }, [closed, code, language]);
+  const [sanitizedSvg, setSanitizedSvg] = useState<SanitizedSvgResult | undefined>();
   const [preview, setPreview] = useState<SvgPreviewState | undefined>();
+  const svgKey = useMemo(() => markdownEnhancementCacheKey(language, code), [code, language]);
+
+  useEffect(() => {
+    if (!closed || language?.toLowerCase() !== "svg" || typeof DOMParser !== "function") {
+      setSanitizedSvg(undefined);
+      return;
+    }
+    const cached = sanitizedSvgCache.get(svgKey);
+    if (cached) {
+      setSanitizedSvg(cached);
+      return;
+    }
+    let cancelled = false;
+    const scheduled = scheduleDeferredMarkdownTask(() => {
+      if (cancelled) return;
+      const next = sanitizeSvgForPreview(code);
+      sanitizedSvgCache.set(svgKey, next);
+      if (!cancelled) setSanitizedSvg(next);
+    }, { timeoutMs: 96 });
+    return () => {
+      cancelled = true;
+      scheduled.cancel();
+    };
+  }, [closed, code, language, svgKey]);
 
   useEffect(() => {
     if (!sanitizedSvg) {
@@ -116,7 +143,7 @@ function useSvgPreview(language: string | undefined, code: string, closed: boole
   return preview;
 }
 
-function sanitizeSvgForPreview(code: string): { status: "ready"; svg: string } | { status: "invalid"; reason: string } {
+function sanitizeSvgForPreview(code: string): SanitizedSvgResult {
   const trimmed = code.trim();
   if (!trimmed) return { status: "invalid", reason: "内容为空" };
   const document = new DOMParser().parseFromString(trimmed, "image/svg+xml");
