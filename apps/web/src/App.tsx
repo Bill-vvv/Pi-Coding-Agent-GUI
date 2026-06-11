@@ -202,6 +202,7 @@ export function App() {
     conversationSummaries,
     activeRuntimeConversationSummary,
     activeRuntimeContextUsage,
+    activeRuntimeConversationPageSignal,
     activeRuntimeQueue,
     activeRuntimeCommands,
     activeRuntimeIsBusy,
@@ -812,6 +813,7 @@ export function App() {
               conversationSummary={activeRuntimeConversationSummary}
               messages={conversationMessages}
               activeRuntimeIsBusy={activeRuntimeIsBusy}
+              conversationPageSignal={activeRuntimeConversationPageSignal}
               hasMoreBefore={activeRuntime ? hasMoreBeforeByRuntime[activeRuntime.id] === true && conversationMessages.length > 0 : false}
               subagentRuns={activeRuntimeSubagentRuns}
               extensionUi={activeRuntimeExtensionUi}

@@ -22,11 +22,11 @@ export function mergeConversationSnapshot(currentMessages: ConversationMessage[]
 }
 
 export function prependConversationPage(currentMessages: ConversationMessage[], pageMessages: ConversationMessage[]): ConversationMessage[] {
-  if (pageMessages.length === 0) return currentMessages;
+  if (pageMessages.length === 0) return currentMessages.length === 0 ? currentMessages : [...currentMessages];
   if (currentMessages.length === 0) return pageMessages;
   const existingIds = new Set(currentMessages.map((message) => message.id));
   const prepended = pageMessages.filter((message) => !existingIds.has(message.id));
-  return prepended.length === 0 ? currentMessages : [...prepended, ...currentMessages];
+  return prepended.length === 0 ? [...currentMessages] : [...prepended, ...currentMessages];
 }
 
 export function evictInactiveRuntimeMessages(
@@ -47,10 +47,12 @@ export function rememberHydratedRuntime(current: string[], runtimeId: string, li
 
 export function upsertConversationMessage(messages: ConversationMessage[], message: ConversationMessage): ConversationMessage[] {
   const index = messages.findIndex((candidate) => candidate.id === message.id);
-  if (index === -1) return [...messages, message];
+  if (index === -1) return sortConversationMessages([...messages, message], messages);
+  const nextMessage = newerConversationMessage(messages[index]!, message);
+  if (nextMessage === messages[index]) return messages;
   const next = [...messages];
-  next[index] = message;
-  return next;
+  next[index] = nextMessage;
+  return sortConversationMessages(next, messages);
 }
 
 export function applyConversationDeltas(messages: ConversationMessage[], deltas: ConversationDelta[]): ConversationMessage[] {
@@ -62,6 +64,7 @@ export function applyConversationDeltas(messages: ConversationMessage[], deltas:
   for (const [index, message] of messages.entries()) indexById.set(message.id, index);
 
   let nextMessages = messages;
+  let insertedUnknownMessage = false;
   for (const delta of deltas) {
     const existingIndex = indexById.get(delta.messageId);
     const current = existingIndex === undefined ? fallbackConversationMessage(delta) : nextMessages[existingIndex]!;
@@ -71,12 +74,13 @@ export function applyConversationDeltas(messages: ConversationMessage[], deltas:
     if (existingIndex === undefined) {
       indexById.set(delta.messageId, nextMessages.length);
       nextMessages.push(nextMessage);
+      insertedUnknownMessage = true;
     } else {
       nextMessages[existingIndex] = nextMessage;
     }
   }
 
-  return nextMessages;
+  return insertedUnknownMessage ? sortConversationMessages(nextMessages, messages) : nextMessages;
 }
 
 export function applyConversationDelta(messages: ConversationMessage[], delta: ConversationDelta): ConversationMessage[] {
@@ -121,12 +125,39 @@ function applyConversationDeltaToMessage(current: ConversationMessage, delta: Co
   };
 }
 
-function newerConversationMessage(current: ConversationMessage, snapshot: ConversationMessage): ConversationMessage {
+function newerConversationMessage(current: ConversationMessage, next: ConversationMessage): ConversationMessage {
   const currentUpdatedAt = current.updatedAt ?? current.timestamp ?? 0;
-  const snapshotUpdatedAt = snapshot.updatedAt ?? snapshot.timestamp ?? 0;
-  if (currentUpdatedAt > snapshotUpdatedAt) return current;
-  if (currentUpdatedAt === snapshotUpdatedAt && current.isStreaming && snapshot.isStreaming && current.text.length > snapshot.text.length) return current;
-  return snapshot;
+  const nextUpdatedAt = next.updatedAt ?? next.timestamp ?? 0;
+  if (currentUpdatedAt > nextUpdatedAt) return current;
+  if (currentUpdatedAt === nextUpdatedAt && wouldLoseConversationContent(current, next)) return preserveVisibleContent(current, next);
+  return next;
+}
+
+function preserveVisibleContent(current: ConversationMessage, next: ConversationMessage): ConversationMessage {
+  return {
+    ...next,
+    text: regressesVisibleText(current.text, next.text) ? current.text : next.text,
+    thinking: regressesVisibleText(current.thinking, next.thinking) ? current.thinking : next.thinking,
+  };
+}
+
+function wouldLoseConversationContent(current: ConversationMessage, next: ConversationMessage): boolean {
+  return regressesVisibleText(current.text, next.text) || regressesVisibleText(current.thinking, next.thinking);
+}
+
+function regressesVisibleText(current: string | undefined, next: string | undefined): boolean {
+  const currentText = current ?? "";
+  const nextText = next ?? "";
+  return currentText.length > nextText.length && currentText.startsWith(nextText);
+}
+
+function sortConversationMessages(messages: ConversationMessage[], currentMessages: ConversationMessage[]): ConversationMessage[] {
+  const originalOrder = new Map<string, number>();
+  for (const message of currentMessages) originalOrder.set(message.id, originalOrder.size);
+  for (const message of messages) {
+    if (!originalOrder.has(message.id)) originalOrder.set(message.id, originalOrder.size);
+  }
+  return [...messages].sort((left, right) => compareConversationMessages(left, right, originalOrder));
 }
 
 function compareConversationMessages(left: ConversationMessage, right: ConversationMessage, originalOrder: Map<string, number>): number {
