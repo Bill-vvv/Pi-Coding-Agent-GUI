@@ -31,7 +31,7 @@ export function TuiProcessBlock({ block, actions }: { block: Extract<Conversatio
 function ThinkingDetail({ text, streaming }: { text: string; streaming: boolean }) {
   return (
     <ScrollableContent className="tui-thinking-content">
-      <MarkdownMessage text={text || "Thinking ..."} streaming={streaming} />
+      <MarkdownMessage text={text || "Thinking ..."} streaming={streaming} source="thinking" />
     </ScrollableContent>
   );
 }

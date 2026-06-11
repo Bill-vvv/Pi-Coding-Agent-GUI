@@ -47,7 +47,7 @@ function SubagentCurrentProcess({ child, run }: { child?: SubagentRun["runs"][nu
         <span className="process-current-status">{child ? subagentStatusLabel(child.status) : subagentStatusLabel(run.status)}</span>
       </div>
       <ScrollableContent className="process-current-content">
-        <MarkdownMessage text={content || "等待子代理输出…"} />
+        <MarkdownMessage text={content || "等待子代理输出…"} source="subagent" />
       </ScrollableContent>
     </section>
   );
@@ -68,7 +68,7 @@ function SubagentChildProcessList({ children }: { children: SubagentRun["runs"] 
                 <span className="tool-group-item-summary">{subagentChildPreview(child, 160)}</span>
               </summary>
               <div className="tool-group-item-detail">
-                <MarkdownMessage text={subagentChildPreview(child, 1200)} streaming={child.status === "running" || child.status === "pending"} />
+                <MarkdownMessage text={subagentChildPreview(child, 1200)} streaming={child.status === "running" || child.status === "pending"} source="subagent" />
               </div>
             </details>
           </li>
