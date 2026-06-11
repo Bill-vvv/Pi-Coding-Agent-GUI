@@ -273,6 +273,7 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
             checkpointJumpsByProject: mergeCheckpointJumpsByProject(state.checkpointJumpsByProject, event.checkpointJumps),
           };
       }
+      return state;
     }
     case "project.list": {
       const nextProjectId = event.projects.some((project) => project.id === state.selectedProjectId) ? state.selectedProjectId : event.projects[0]?.id;
@@ -472,6 +473,8 @@ function applyServerEvent(state: AppState, event: ServerEvent, fallbackModelKey?
     case "gui.event":
       return applyGuiEvent(state, event.event);
   }
+
+  return state;
 }
 
 function replayGapNotice(event: Extract<ServerEvent, { type: "event.replay.gap" }>): string {
