@@ -1,5 +1,5 @@
-import type { DirectoryEntry, ExtensionUiRequest, ExtensionUiResponse, ResolvedPath } from "@pi-gui/shared";
-import { ExtensionUiDialog } from "./ExtensionUiDialog";
+import type { DirectoryEntry, ExtensionUiResponse, ResolvedPath } from "@pi-gui/shared";
+import { ExtensionUiDialog, type ExtensionUiDialogRequest } from "./ExtensionUiDialog";
 import { PathPickerModal } from "./PathPickerModal";
 
 type PathPickerState = {
@@ -21,7 +21,7 @@ type PathPickerState = {
 };
 
 type AppModalsProps = {
-  extensionUiRequest?: ExtensionUiRequest;
+  extensionUiRequest?: ExtensionUiDialogRequest;
   onRespondExtensionUi: (response: ExtensionUiResponse) => void;
   pathPicker: PathPickerState;
   onChoosePickerCwd: () => void | Promise<void>;

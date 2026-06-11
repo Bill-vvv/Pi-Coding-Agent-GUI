@@ -47,6 +47,19 @@
   display: none;
 }
 
+.app-shell.settings-open {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell.settings-open .left-sidebar,
+.app-shell.settings-open .sidebar-compact-backdrop {
+  display: none;
+}
+
+.app-shell.settings-open .main-chat {
+  grid-column: 1 / -1;
+}
+
 .main-chat {
   --composer-measured-clearance: 0px;
   --composer-clearance: max(var(--composer-reserved-space), var(--composer-measured-clearance));

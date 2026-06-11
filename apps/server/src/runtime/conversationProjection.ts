@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ConversationContextUsage, ConversationDelta, ConversationMessage, Runtime, ServerEvent } from "@pi-gui/shared";
+import type { ConversationContextUsage, ConversationDelta, ConversationMessage, ConversationToolDetails, Runtime, ServerEvent } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
 import { ConversationMessageCache } from "./conversation/conversationMessageCache.js";
 import { mergeConversationMessages, snapshotDuplicateSignature, isSyntheticSnapshotMessageId } from "./conversation/conversationSnapshotMerge.js";
@@ -11,6 +11,7 @@ import { toolStatusLabel, type ToolStatus } from "./conversation/toolStatus.js";
 
 type Broadcast = (event: ServerEvent) => void;
 export type RuntimeProvider = () => Runtime | undefined;
+export type ConversationUserMessageObserver = (message: ConversationMessage) => void;
 
 const SYNTHETIC_USER_INPUT_DEDUPE_MS = 5000;
 
@@ -26,6 +27,7 @@ export class ConversationProjection {
     private readonly db: AppDatabase,
     private readonly getRuntime: RuntimeProvider,
     private readonly broadcast: Broadcast,
+    private readonly onUserMessage?: ConversationUserMessageObserver,
   ) {}
 
   snapshot(limit = 100): ServerEvent | undefined {
@@ -73,7 +75,7 @@ export class ConversationProjection {
   }
 
   handlePiPayload(payload: unknown): void {
-    const normalizedEvents = normalizePiPayload(payload, { currentContextWindow: this.currentContextWindow() });
+    const normalizedEvents = normalizePiPayload(payload, { currentContextWindow: this.currentContextWindow(), db: this.db });
     if (normalizedEvents.length > 0) {
       for (const event of normalizedEvents) this.handleNormalizedEvent(event);
       return;
@@ -185,7 +187,9 @@ export class ConversationProjection {
     if (message.role === "user") {
       const id = this.userMessageIdForPiMessage(message, this.currentUserMessageId);
       if (message.text || message.errorMessage) {
-        this.upsertMessage({ id, role: message.errorMessage ? "error" : "user", text: message.text || message.errorMessage || "", timestamp: message.timestamp, isStreaming: false });
+        const projected = { id, role: message.errorMessage ? "error" as const : "user" as const, text: message.text || message.errorMessage || "", timestamp: message.timestamp, isStreaming: false };
+        this.upsertMessage(projected);
+        if (!message.errorMessage) this.onUserMessage?.({ ...projected, runtimeId: this.requireRuntime().id, projectId: this.requireRuntime().projectId });
       }
       this.currentUserMessageId = undefined;
       return;
@@ -215,9 +219,10 @@ export class ConversationProjection {
 
   private handleRetryStart(attempt: number | undefined, maxAttempts: number | undefined, errorMessage: string | undefined): void {
     const id = this.lastAssistantErrorMessageId ?? this.activeRetryMessageId ?? `assistant-retry-${randomUUID()}`;
+    const existing = this.getMessage(id);
     this.activeRetryMessageId = id;
     this.lastAssistantErrorMessageId = undefined;
-    this.upsertMessage(buildRetryStartedMessage({ id, attempt, maxAttempts, errorMessage, timestamp: Date.now() }));
+    this.upsertMessage(buildRetryStartedMessage({ id, attempt, maxAttempts, errorMessage: retryErrorText(errorMessage, existing?.text), timestamp: Date.now() }));
   }
 
   private handleRetryFinished(success: boolean | undefined, finalError: string | undefined): void {
@@ -236,6 +241,7 @@ export class ConversationProjection {
   private upsertToolMessage(tool: NormalizedTool, status: ToolStatus): void {
     const id = this.toolMessageIds.get(tool.key) ?? `tool-${tool.key}`;
     this.toolMessageIds.set(tool.key, id);
+    const toolDetails = compactConversationToolDetails(tool.toolDetails);
     this.upsertMessage({
       id,
       role: "tool",
@@ -243,23 +249,28 @@ export class ConversationProjection {
       text: tool.text,
       timestamp: tool.timestamp,
       isStreaming: status === "running",
+      ...(toolDetails ? { toolDetails } : {}),
     });
   }
 
   private applyMessagesSnapshot(snapshotMessages: NormalizedSnapshotMessage[]): void {
     const runtime = this.requireRuntime();
-    const messages = this.normalizeSnapshotMessageIds(snapshotMessages.map((message): ConversationMessage => ({
-      id: message.id,
-      runtimeId: runtime.id,
-      projectId: runtime.projectId,
-      role: message.role,
-      text: compactText(message.text),
-      thinking: compactOptionalText(message.thinking),
-      title: message.title,
-      timestamp: message.timestamp,
-      updatedAt: Date.now(),
-      isStreaming: message.isStreaming ?? false,
-    })));
+    const messages = this.normalizeSnapshotMessageIds(snapshotMessages.map((message): ConversationMessage => {
+      const toolDetails = compactConversationToolDetails(message.toolDetails);
+      return {
+        id: message.id,
+        runtimeId: runtime.id,
+        projectId: runtime.projectId,
+        role: message.role,
+        text: compactText(message.text),
+        thinking: compactOptionalText(message.thinking),
+        title: message.title,
+        timestamp: message.timestamp,
+        updatedAt: Date.now(),
+        isStreaming: message.isStreaming ?? false,
+        ...(toolDetails ? { toolDetails } : {}),
+      };
+    }));
 
     if (messages.length === 0) return;
 
@@ -401,4 +412,27 @@ export class ConversationProjection {
     if (!runtime) throw new Error("Conversation runtime is unavailable");
     return runtime;
   }
+}
+
+function retryErrorText(errorMessage: string | undefined, previousText: string | undefined): string | undefined {
+  const retry = errorMessage?.trim();
+  const previous = previousText?.trim();
+  if (!retry) return previous;
+  if (!previous) return retry;
+  if (previous.includes(retry)) return previous;
+  if (retry.includes(previous)) return retry;
+  return `${retry}\n${previous}`;
+}
+
+function compactConversationToolDetails(details: ConversationToolDetails | undefined): ConversationToolDetails | undefined {
+  if (!details) return undefined;
+  const diff = compactOptionalText(details.diff);
+  const path = compactOptionalText(details.path);
+  const firstChangedLine = typeof details.firstChangedLine === "number" && Number.isFinite(details.firstChangedLine) ? details.firstChangedLine : undefined;
+  if (!diff && !path && firstChangedLine === undefined) return undefined;
+  return {
+    ...(path ? { path } : {}),
+    ...(diff ? { diff } : {}),
+    ...(firstChangedLine !== undefined ? { firstChangedLine } : {}),
+  };
 }

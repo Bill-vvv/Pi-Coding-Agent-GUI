@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { GuiSession, Project, Runtime, ServerEvent, SubagentRun } from "@pi-gui/shared";
+import type { GuiSession, Project, RewindCheckpointOperation, RewindCheckpointSummary, RewindGarbageCollectResult, RewindJumpHistoryEntry, RewindStorageHealth, Runtime, ServerEvent, SubagentRun } from "@pi-gui/shared";
 import { appReducer, initialAppState } from "../src/state/appReducer";
 
 function project(id: string): Project {
@@ -17,6 +17,46 @@ function hello(projects: Project[], runtimes: Runtime[]): ServerEvent {
 
 function session(id: string, piSessionFile = `/tmp/${id}.jsonl`): GuiSession {
   return { id, projectId: "project-1", piSessionFile, createdAt: 1, updatedAt: 1 };
+}
+
+function checkpoint(id: string, createdAt: number): RewindCheckpointSummary {
+  return {
+    id,
+    projectId: "project-1",
+    root: "/tmp/project-1",
+    createdAt,
+    capturedFiles: 1,
+    capturedSymlinks: 0,
+    deletedEntries: 0,
+    skipped: 0,
+    capturedBytes: 10,
+    newBytes: 10,
+  };
+}
+
+function checkpointOperation(id: number, kind: RewindCheckpointOperation["kind"], snapshotId: string): RewindCheckpointOperation {
+  return { id, projectId: "project-1", kind, snapshotId, createdAt: id, ok: true };
+}
+
+function checkpointJump(id: number, snapshotId: string): RewindJumpHistoryEntry {
+  return { id, projectId: "project-1", snapshotId, runtimeId: "runtime-1", targetEntryId: `entry-${id}`, createdAt: id, ok: true, resultEntryId: `result-${id}` };
+}
+
+function checkpointHealth(snapshotCount = 2): RewindStorageHealth {
+  return {
+    projectId: "project-1",
+    snapshotCount,
+    objectCount: 5,
+    manifestBytes: 128,
+    objectBytes: 2048,
+    referencedObjectCount: 4,
+    unreferencedObjectCount: 1,
+    unreferencedObjectBytes: 256,
+  };
+}
+
+function checkpointGcResult(): RewindGarbageCollectResult {
+  return { ...checkpointHealth(1), dryRun: false, deletedObjectCount: 1, deletedObjectBytes: 256, deletedSnapshotCount: 0 };
 }
 
 function subagentRun(sessionFile: string): SubagentRun {
@@ -44,6 +84,105 @@ test("hello selects an available runtime on fresh frontend load", () => {
   assert.equal(state.selectedProjectId, "project-1");
   assert.equal(state.selectedRuntimeId, "runtime-running");
   assert.equal(state.selectedRuntimeIdByProject["project-1"], "runtime-running");
+});
+
+test("hello stores the current execution host for host-aware session actions", () => {
+  const executionHost = { kind: "wsl" as const, id: "wsl:Ubuntu", label: "WSL (Ubuntu)" };
+  const state = appReducer(initialAppState, {
+    type: "server.event",
+    event: { ...hello([project("project-1")], []), executionHost },
+  });
+
+  assert.deepEqual(state.executionHost, executionHost);
+});
+
+test("hello seeds recent checkpoint operations and jumps for reconnect recovery", () => {
+  const operation = checkpointOperation(1, "restore", "snap-1");
+  const jump = checkpointJump(1, "snap-1");
+  const state = appReducer(initialAppState, {
+    type: "server.event",
+    event: { ...hello([project("project-1")], []), checkpointOperations: [operation], checkpointJumps: [jump] },
+  });
+
+  assert.deepEqual(state.checkpointOperations, [operation]);
+  assert.deepEqual(state.checkpointJumpsByProject["project-1"], [jump]);
+});
+
+test("checkpoint events update checkpoint reducer state", () => {
+  const withList = appReducer(initialAppState, {
+    type: "server.event",
+    event: { type: "checkpoint.list", projectId: "project-1", checkpoints: [checkpoint("old", 1)] },
+  });
+  const withCaptured = appReducer(withList, {
+    type: "server.event",
+    event: { type: "checkpoint.captured", projectId: "project-1", checkpoint: checkpoint("new", 2) },
+  });
+  const withPreview = appReducer(withCaptured, {
+    type: "server.event",
+    event: { type: "checkpoint.preview", projectId: "project-1", preview: { projectId: "project-1", snapshotId: "new", changes: [], summary: { add: 0, modify: 0, delete: 0, recreate: 0, overwrite: 0, unchanged: 0, skip: 0, conflict: 0 } } },
+  });
+  const withRestore = appReducer(withPreview, {
+    type: "server.event",
+    event: { type: "checkpoint.restored", projectId: "project-1", result: { projectId: "project-1", snapshotId: "new", ok: true, applied: [] } },
+  });
+  const withOperation = appReducer(withRestore, {
+    type: "server.event",
+    event: { type: "checkpoint.operation", operation: checkpointOperation(2, "capture", "new") },
+  });
+  const withJumps = appReducer(withOperation, {
+    type: "server.event",
+    event: { type: "checkpoint.jumps", projectId: "project-1", jumps: [checkpointJump(2, "new")] },
+  });
+  const withHealth = appReducer(withJumps, {
+    type: "server.event",
+    event: { type: "checkpoint.health", projectId: "project-1", health: checkpointHealth() },
+  });
+  const finalState = appReducer(withHealth, {
+    type: "server.event",
+    event: { type: "checkpoint.gc", projectId: "project-1", result: checkpointGcResult() },
+  });
+
+  assert.deepEqual(finalState.checkpointsByProject["project-1"]?.map((item) => item.id), ["new", "old"]);
+  assert.equal(finalState.checkpointPreviewsBySnapshot["new"]?.snapshotId, "new");
+  assert.equal(finalState.checkpointRestoreResultsBySnapshot["new"]?.ok, true);
+  assert.deepEqual(finalState.checkpointOperations.map((operation) => operation.id), [2]);
+  assert.deepEqual(finalState.checkpointJumpsByProject["project-1"]?.map((jump) => jump.id), [2]);
+  assert.equal(finalState.checkpointHealthByProject["project-1"]?.snapshotCount, 1);
+  assert.equal(finalState.checkpointGcResultsByProject["project-1"]?.deletedObjectCount, 1);
+  assert.match(finalState.notice ?? "", /已清理 Rewind 存储/);
+});
+
+test("event replay gap surfaces a recoverable notice", () => {
+  const state = appReducer(initialAppState, {
+    type: "server.event",
+    event: {
+      type: "event.replay.gap",
+      requestedSinceEventId: 10,
+      firstAvailableEventId: 20,
+      lastEventId: 30,
+      replayedEvents: 11,
+      reason: "pruned",
+    },
+  });
+
+  assert.match(state.notice ?? "", /较早事件已被清理/);
+  assert.match(state.notice ?? "", /最新快照恢复/);
+});
+
+test("event replay stale cursor gap explains snapshot recovery", () => {
+  const state = appReducer(initialAppState, {
+    type: "server.event",
+    event: {
+      type: "event.replay.gap",
+      requestedSinceEventId: 100,
+      lastEventId: 30,
+      replayedEvents: 0,
+      reason: "stale_cursor",
+    },
+  });
+
+  assert.match(state.notice ?? "", /回放游标已过期/);
+  assert.match(state.notice ?? "", /最新快照恢复/);
 });
 
 test("runtime.status selects the new runtime when the active project has no selection", () => {

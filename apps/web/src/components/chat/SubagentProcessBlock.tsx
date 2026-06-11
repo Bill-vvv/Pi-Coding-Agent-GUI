@@ -1,5 +1,5 @@
 import type { SubagentRun } from "@pi-gui/shared";
-import { subagentCopyText, subagentRunPreview, subagentStatusLabel } from "../../domain/subagents";
+import { subagentChildActivityPreview, subagentCopyText, subagentRunPreview, subagentStatusLabel } from "../../domain/subagents";
 import { IconButton } from "../ui";
 import { MarkdownMessage } from "../MarkdownMessage";
 import { ScrollableContent } from "./ScrollableContent";
@@ -79,7 +79,7 @@ function SubagentChildProcessList({ children }: { children: SubagentRun["runs"] 
 }
 
 function subagentChildPreview(child: SubagentRun["runs"][number], maxChars: number): string {
-  const text = child.finalText?.trim() || child.textTail?.trim() || child.thinkingTail?.trim() || child.errorMessage?.trim() || child.stderrTail?.trim();
+  const text = child.finalText?.trim() || subagentChildActivityPreview(child, maxChars) || child.textTail?.trim() || child.thinkingTail?.trim() || child.errorMessage?.trim() || child.stderrTail?.trim();
   if (text) return truncateText(text, maxChars);
   if (child.status === "running" || child.status === "pending") return "等待子代理输出…";
   return "暂无输出。";

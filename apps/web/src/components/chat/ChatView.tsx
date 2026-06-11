@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { Runtime, RuntimeConversationSummary, SubagentRun } from "@pi-gui/shared";
+import { DEFAULT_RUNTIME_PROFILE_ID, runtimeProfileById, type Runtime, type RuntimeConversationSummary, type SubagentRun } from "@pi-gui/shared";
 import type { ConversationMessage } from "../../types";
 import { isTransportConnectionError } from "../../domain/connection";
-import { buildConversationDisplayBlocks, type ConversationDisplayMode } from "../../domain/conversationDisplay";
+import { buildConversationDisplayBlocksCached, type ConversationDisplayBuildCache, type ConversationDisplayMode } from "../../domain/conversationDisplay";
 import type { RuntimeExtensionUiChrome } from "../../domain/extensionUiChrome";
 import { prependScrollTop } from "../../domain/virtualList";
 import { ExtensionUiStatusStrip } from "../ExtensionUiChrome";
@@ -10,7 +10,7 @@ import { ThinkingStatus } from "../ThinkingAnimation";
 import { VirtualConversationBlockList } from "./ConversationBlockList";
 import { ReplyNavigator } from "./ReplyNavigator";
 import { useStealthScrollbar } from "./ScrollableContent";
-import type { ConversationBlockLayoutMetrics } from "./replyNavigation";
+import { lastUserMessageScrollOffset, shouldDeferLastUserMessageScrollTarget, type ConversationBlockLayoutMetrics } from "./replyNavigation";
 
 type ChatViewProps = {
   operationError?: string;
@@ -25,10 +25,14 @@ type ChatViewProps = {
   extensionUi?: RuntimeExtensionUiChrome;
   displayMode?: ConversationDisplayMode;
   scrollToBottomSignal?: number;
+  scrollToLastUserMessageRequest?: { runtimeId: string; sequence: number };
+  onScrollToLastUserMessageRequestHandled?: (sequence: number) => void;
   bottomClearanceSignal?: number;
   onLoadOlderMessages?: () => void;
   onOpenSubagentRun?: (runId: string) => void;
   onCopySubagentOutput?: (run: SubagentRun) => void;
+  onOpenRuntimeProfileSettings?: () => void;
+  onOpenRewind?: () => void;
   onDismissOperationError?: (expectedError?: string) => void;
   onDismissNotice?: (expectedNotice?: string) => void;
 };
@@ -46,10 +50,14 @@ export const ChatView = memo(function ChatView({
   extensionUi,
   displayMode = "compact",
   scrollToBottomSignal,
+  scrollToLastUserMessageRequest,
+  onScrollToLastUserMessageRequestHandled,
   bottomClearanceSignal,
   onLoadOlderMessages,
   onOpenSubagentRun,
   onCopySubagentOutput,
+  onOpenRuntimeProfileSettings,
+  onOpenRewind,
   onDismissOperationError,
   onDismissNotice,
 }: ChatViewProps) {
@@ -63,7 +71,14 @@ export const ChatView = memo(function ChatView({
   const forcedAutoFollowFramesRef = useRef(0);
   const observedScrollToBottomSignalRef = useRef<number | undefined>(undefined);
   const observedBottomClearanceSignalRef = useRef<number | undefined>(undefined);
-  const blocks = useMemo(() => buildConversationDisplayBlocks(messages, displayMode, { activeRuntimeIsBusy, subagentRuns }), [activeRuntimeIsBusy, displayMode, messages, subagentRuns]);
+  const handledLastUserMessageScrollRequestRef = useRef(0);
+  const conversationDisplayCacheRef = useRef<ConversationDisplayBuildCache | undefined>(undefined);
+  const blocks = useMemo(() => {
+    const display = buildConversationDisplayBlocksCached(messages, displayMode, { activeRuntimeIsBusy, subagentRuns }, conversationDisplayCacheRef.current);
+    conversationDisplayCacheRef.current = display;
+    return display.blocks;
+  }, [activeRuntimeIsBusy, displayMode, messages, subagentRuns]);
+  const historicalCapabilityNotice = historicalCapabilityNoticeForRuntime(activeRuntime, subagentRuns);
   const transportError = isTransportConnectionError(operationError) ? operationError : undefined;
   const visibleOperationError = transportError ? undefined : operationError;
   const connectionStatusMessage = connectionWarning ?? transportError;
@@ -133,6 +148,15 @@ export const ChatView = memo(function ChatView({
   }, []);
 
   useLayoutEffect(() => {
+    // Only runtime changes force the existing bottom-follow behavior. Last-user
+    // request changes are handled by the dedicated one-shot effect below.
+    if (
+      activeRuntime?.id &&
+      scrollToLastUserMessageRequest?.runtimeId === activeRuntime.id &&
+      handledLastUserMessageScrollRequestRef.current !== scrollToLastUserMessageRequest.sequence
+    ) {
+      return;
+    }
     requestAutoFollowBottom({ force: true });
   }, [activeRuntime?.id, requestAutoFollowBottom]);
 
@@ -187,9 +211,9 @@ export const ChatView = memo(function ChatView({
     if (SCROLL_INTERACTION_KEYS.has(event.key)) handleConversationUserScrollIntent();
   }
 
-  const handleReplyNavigation = useCallback((offset: number) => {
+  const scrollConversationToOffset = useCallback((offset: number) => {
     const surface = surfaceRef.current;
-    if (!surface) return;
+    if (!surface) return false;
     shouldAutoFollowRef.current = false;
     forcedAutoFollowFramesRef.current = 0;
     if (followBottomFrameRef.current !== undefined) {
@@ -199,7 +223,44 @@ export const ChatView = memo(function ChatView({
     surface.scrollTop = Math.max(0, offset);
     surface.dispatchEvent(new Event("scroll"));
     setNavigationOverscanSignal((value) => value + 1);
+    return true;
   }, []);
+
+  const handleReplyNavigation = useCallback((offset: number) => {
+    scrollConversationToOffset(offset);
+  }, [scrollConversationToOffset]);
+
+  useLayoutEffect(() => {
+    const request = scrollToLastUserMessageRequest;
+    if (!request?.runtimeId || request.sequence <= 0) return;
+    if (handledLastUserMessageScrollRequestRef.current === request.sequence) return;
+    if (activeRuntime?.id !== request.runtimeId) return;
+    if (
+      shouldDeferLastUserMessageScrollTarget({
+        loadedMessageCount: messages.length,
+        summaryMessageCount: conversationSummary?.messageCount,
+        runtimeHasSession: Boolean(activeRuntime?.sessionId),
+      })
+    ) {
+      return;
+    }
+
+    if (blocks.length === 0) {
+      handledLastUserMessageScrollRequestRef.current = request.sequence;
+      onScrollToLastUserMessageRequestHandled?.(request.sequence);
+      return;
+    }
+
+    if (!blockLayoutMetrics || !layoutMetricsMatchBlocks(blockLayoutMetrics, blocks)) return;
+    handledLastUserMessageScrollRequestRef.current = request.sequence;
+    const offset = lastUserMessageScrollOffset(blocks, blockLayoutMetrics);
+    if (offset !== undefined) {
+      scrollConversationToOffset(offset);
+    } else {
+      requestAutoFollowBottom({ force: true });
+    }
+    onScrollToLastUserMessageRequestHandled?.(request.sequence);
+  }, [activeRuntime?.id, activeRuntime?.sessionId, blockLayoutMetrics, blocks, conversationSummary?.messageCount, messages.length, onScrollToLastUserMessageRequestHandled, requestAutoFollowBottom, scrollConversationToOffset, scrollToLastUserMessageRequest]);
 
   const handleBlockLayoutMetricsChange = useCallback((metrics: ConversationBlockLayoutMetrics) => {
     setBlockLayoutMetrics((current) => (layoutMetricsEqual(current, metrics) ? current : metrics));
@@ -229,7 +290,10 @@ export const ChatView = memo(function ChatView({
                 {conversationSummary?.detail ? <small className="conversation-header-detail">{conversationSummary.detail}</small> : null}
                 {activeRuntime.sessionId ? <small className="conversation-header-session">Session {activeRuntime.sessionId.slice(0, 8)}</small> : null}
                 {activeRuntime.archivedAt ? <small>已归档</small> : null}
+                <RuntimeProfileIndicator runtime={activeRuntime} onOpenSettings={onOpenRuntimeProfileSettings} />
+                {historicalCapabilityNotice ? <small className="conversation-header-capability-note">{historicalCapabilityNotice}</small> : null}
                 <ExtensionUiStatusStrip chrome={extensionUi} />
+                {onOpenRewind ? <button className="conversation-header-profile" type="button" onClick={onOpenRewind} title="打开 Rewind checkpoints">Rewind</button> : null}
               </>
             ) : null}
             {connectionStatusMessage ? <small className="connection-status-warning">{connectionStatusMessage}</small> : null}
@@ -237,7 +301,7 @@ export const ChatView = memo(function ChatView({
         ) : null}
 
         <div
-          className={`conversation-surface stealth-scroll${conversationScrollbar.isVisible ? " is-scrolling" : ""}`}
+          className={`conversation-surface stealth-scroll mode-${displayMode}${conversationScrollbar.isVisible ? " is-scrolling" : ""}`}
           ref={surfaceRef}
           tabIndex={0}
           onKeyDown={handleConversationKeyDown}
@@ -276,6 +340,23 @@ export const ChatView = memo(function ChatView({
   );
 });
 
+function RuntimeProfileIndicator({ runtime, onOpenSettings }: { runtime: Runtime; onOpenSettings?: () => void }) {
+  const profile = runtimeProfileById(runtime.runtimeProfileId ?? DEFAULT_RUNTIME_PROFILE_ID);
+  const capabilityCount = runtime.enabledCapabilityIds?.length ?? 0;
+  const label = profile.label;
+  const detail = `${label} · ${capabilityCount} enabled capabilities`;
+
+  if (!onOpenSettings) {
+    return <small className="conversation-header-profile" title={detail}>{label}</small>;
+  }
+
+  return (
+    <button className="conversation-header-profile" type="button" title={`${detail} · 跳转到拓展设置`} onClick={onOpenSettings}>
+      {label}
+    </button>
+  );
+}
+
 function DismissibleBanner({ className, message, onDismiss }: { className: string; message: string; onDismiss?: () => void }) {
   return (
     <div className={className}>
@@ -294,6 +375,11 @@ const OPERATION_ERROR_AUTO_DISMISS_MS = 8000;
 const FORCED_AUTO_FOLLOW_SETTLE_FRAMES = 12;
 const SCROLL_INTERACTION_KEYS = new Set(["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "End", "Home", "PageDown", "PageUp", " "]);
 
+function historicalCapabilityNoticeForRuntime(runtime: Runtime | undefined, subagentRuns: SubagentRun[]): string | undefined {
+  if (!runtime?.enabledCapabilityIds || subagentRuns.length === 0) return undefined;
+  return runtime.enabledCapabilityIds.includes("trellis-subagent") ? undefined : "历史 Trellis 子代理记录（当前 profile 未启用）";
+}
+
 function isNearBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight < 96;
 }
@@ -301,6 +387,14 @@ function isNearBottom(element: HTMLElement): boolean {
 function scrollConversationToBottom(element: HTMLElement | null): void {
   if (!element) return;
   element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+}
+
+function layoutMetricsMatchBlocks(metrics: ConversationBlockLayoutMetrics, blocks: { id: string }[]): boolean {
+  if (metrics.blockIds.length !== blocks.length) return false;
+  for (let index = 0; index < blocks.length; index += 1) {
+    if (metrics.blockIds[index] !== blocks[index]?.id) return false;
+  }
+  return true;
 }
 
 function layoutMetricsEqual(left: ConversationBlockLayoutMetrics | undefined, right: ConversationBlockLayoutMetrics): boolean {

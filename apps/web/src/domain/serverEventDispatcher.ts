@@ -13,6 +13,7 @@ type ServerEventDispatcherContext = {
   handleSessionTreeForkServerEvent: (event: ServerEvent) => void;
   handleExtensionUiServerEvent: (event: ServerEvent) => void;
   handleComposerCommandServerEvent: (event: ServerEvent) => void;
+  handleCheckpointServerEvent: (event: ServerEvent) => void;
 };
 
 export function dispatchAppServerEvent({
@@ -27,6 +28,7 @@ export function dispatchAppServerEvent({
   handleSessionTreeForkServerEvent,
   handleExtensionUiServerEvent,
   handleComposerCommandServerEvent,
+  handleCheckpointServerEvent,
 }: ServerEventDispatcherContext): void {
   if (performanceFixtureMode) return;
   if (event.type === "conversation.delta") {
@@ -42,4 +44,5 @@ export function dispatchAppServerEvent({
   handleSessionTreeForkServerEvent(event);
   handleExtensionUiServerEvent(event);
   handleComposerCommandServerEvent(event);
+  handleCheckpointServerEvent(event);
 }

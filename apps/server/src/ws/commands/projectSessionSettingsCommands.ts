@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
-import type { ClientCommand } from "@pi-gui/shared";
+import type { ClientCommand, ExecutionHostRef, GuiSession } from "@pi-gui/shared";
 import { indexKnownPiSessions } from "../../services/sessionIndexService.js";
 import type { WsClient } from "../wsHub.js";
 import { sendCommandResult, type CommandHandlerContext } from "./types.js";
@@ -22,6 +22,7 @@ export async function handleProjectCreate(context: CommandHandlerContext, socket
     name: command.name?.trim() || basename(cwd) || cwd,
     cwd,
     defaultModel: command.defaultModel?.trim() || undefined,
+    defaultRuntimeProfileId: command.defaultRuntimeProfileId,
     lastOpenedAt: Date.now(),
   });
   context.broadcast({ type: "project.created", project });
@@ -29,16 +30,43 @@ export async function handleProjectCreate(context: CommandHandlerContext, socket
   sendCommandResult(context, socket, command, true, { project });
 }
 
+export async function handleProjectConfigure(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"project.configure">): Promise<void> {
+  const project = context.db.updateProjectRuntimeProfile(command.projectId, command.defaultRuntimeProfileId ?? null);
+  if (!project) throw new Error(`Project not found: ${command.projectId}`);
+  context.broadcast({ type: "project.list", projects: context.db.listProjects() });
+  sendCommandResult(context, socket, command, true, { project });
+}
+
 export async function handleSessionList(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"session.list">): Promise<void> {
   indexKnownPiSessions(context.db);
-  const sessions = context.db.listSessions(command.projectId);
-  context.send(socket, { type: "session.list", sessions, projectId: command.projectId });
-  sendCommandResult(context, socket, command, true, { sessions });
+  const page = context.db.listSessionsPage(command.projectId, command.limit, command.cursor);
+  context.send(socket, {
+    type: "session.list",
+    sessions: page.sessions,
+    projectId: command.projectId,
+    hasMore: page.hasMore,
+    nextCursor: page.nextCursor,
+    cursor: command.cursor,
+  });
+  sendCommandResult(context, socket, command, true, { sessions: page.sessions, hasMore: page.hasMore, nextCursor: page.nextCursor });
 }
 
 export async function handleSessionResume(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"session.resume">): Promise<void> {
-  const runtime = context.supervisor.resumeSession(command.sessionId, { model: command.model, thinkingLevel: command.thinkingLevel, responseMode: command.responseMode });
+  const session = context.db.getSession(command.sessionId);
+  assertSessionBelongsToCurrentHost(session, context.db.getExecutionHost());
+  const runtime = context.supervisor.resumeSession(command.sessionId, { model: command.model, thinkingLevel: command.thinkingLevel, responseMode: command.responseMode, runtimeProfileId: command.runtimeProfileId });
   sendCommandResult(context, socket, command, true, { runtime });
+}
+
+function assertSessionBelongsToCurrentHost(session: GuiSession | undefined, currentHost: ExecutionHostRef | undefined): void {
+  if (!session?.host || !currentHost || sameExecutionHost(session.host, currentHost)) return;
+  const sessionHost = session.host.label ?? session.host.id;
+  const currentHostLabel = currentHost.label ?? currentHost.id;
+  throw new Error(`This session belongs to ${sessionHost}. Switch to that host before resuming it from ${currentHostLabel}.`);
+}
+
+function sameExecutionHost(left: ExecutionHostRef, right: ExecutionHostRef): boolean {
+  return left.kind === right.kind && left.id === right.id;
 }
 
 export async function handleSettingsGet(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"settings.get">): Promise<void> {

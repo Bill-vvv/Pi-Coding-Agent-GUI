@@ -2,7 +2,6 @@
 @import "./styles/shared.css";
 @import "./styles/layout.css";
 @import "./styles/sidebar.css";
-@import "./styles/pi-logo.css";
 @import "./styles/chat.css";
 @import "./styles/composer.css";
 @import "./styles/command-menu.css";
@@ -14,8 +13,10 @@
 @import "./styles/token-usage.css";
 @import "./styles/session-history.css";
 @import "./styles/session-tree.css";
+@import "./styles/checkpoint.css";
 @import "./styles/thinking-animation.css";
 @import "./styles/feedback.css";
 @import "./styles/path-picker.css";
 @import "./styles/runtime-logs.css";
 @import "./styles/responsive.css";
+@import "./styles/desktop-window.css";

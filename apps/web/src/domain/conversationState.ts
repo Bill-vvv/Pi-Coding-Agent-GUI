@@ -54,12 +54,50 @@ export function upsertConversationMessage(messages: ConversationMessage[], messa
 }
 
 export function applyConversationDeltas(messages: ConversationMessage[], deltas: ConversationDelta[]): ConversationMessage[] {
-  return deltas.reduce(applyConversationDelta, messages);
+  if (deltas.length === 0) return messages;
+  const tailApplied = applyTailConversationDeltas(messages, deltas);
+  if (tailApplied) return tailApplied;
+
+  const indexById = new Map<string, number>();
+  for (const [index, message] of messages.entries()) indexById.set(message.id, index);
+
+  let nextMessages = messages;
+  for (const delta of deltas) {
+    const existingIndex = indexById.get(delta.messageId);
+    const current = existingIndex === undefined ? fallbackConversationMessage(delta) : nextMessages[existingIndex]!;
+    const nextMessage = applyConversationDeltaToMessage(current, delta);
+
+    if (nextMessages === messages) nextMessages = [...messages];
+    if (existingIndex === undefined) {
+      indexById.set(delta.messageId, nextMessages.length);
+      nextMessages.push(nextMessage);
+    } else {
+      nextMessages[existingIndex] = nextMessage;
+    }
+  }
+
+  return nextMessages;
 }
 
 export function applyConversationDelta(messages: ConversationMessage[], delta: ConversationDelta): ConversationMessage[] {
-  const index = messages.findIndex((message) => message.id === delta.messageId);
-  const fallback: ConversationMessage = {
+  return applyConversationDeltas(messages, [delta]);
+}
+
+function applyTailConversationDeltas(messages: ConversationMessage[], deltas: ConversationDelta[]): ConversationMessage[] | undefined {
+  const firstDelta = deltas[0];
+  if (!firstDelta || !deltas.every((delta) => delta.messageId === firstDelta.messageId)) return undefined;
+
+  const lastMessage = messages.at(-1);
+  if (lastMessage && lastMessage.id !== firstDelta.messageId) return undefined;
+  if (!lastMessage && messages.length > 0) return undefined;
+
+  let nextMessage = lastMessage ?? fallbackConversationMessage(firstDelta);
+  for (const delta of deltas) nextMessage = applyConversationDeltaToMessage(nextMessage, delta);
+  return lastMessage ? [...messages.slice(0, -1), nextMessage] : [nextMessage];
+}
+
+function fallbackConversationMessage(delta: ConversationDelta): ConversationMessage {
+  return {
     id: delta.messageId,
     runtimeId: delta.runtimeId,
     projectId: delta.projectId,
@@ -69,8 +107,10 @@ export function applyConversationDelta(messages: ConversationMessage[], delta: C
     updatedAt: delta.timestamp,
     isStreaming: delta.isStreaming,
   };
-  const current = index === -1 ? fallback : messages[index];
-  const nextMessage: ConversationMessage = {
+}
+
+function applyConversationDeltaToMessage(current: ConversationMessage, delta: ConversationDelta): ConversationMessage {
+  return {
     ...current,
     role: delta.role ?? current.role,
     title: delta.title ?? current.title,
@@ -79,11 +119,6 @@ export function applyConversationDelta(messages: ConversationMessage[], delta: C
     isStreaming: delta.isStreaming ?? current.isStreaming,
     updatedAt: delta.timestamp,
   };
-
-  if (index === -1) return [...messages, nextMessage];
-  const next = [...messages];
-  next[index] = nextMessage;
-  return next;
 }
 
 function newerConversationMessage(current: ConversationMessage, snapshot: ConversationMessage): ConversationMessage {

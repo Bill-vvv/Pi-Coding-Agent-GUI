@@ -1,3 +1,5 @@
+import type { RuntimeProfileId } from "./capabilities.js";
+
 export type RuntimeStatus = "stopped" | "starting" | "running" | "crashed";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type ResponseMode = "normal" | "fast";
@@ -9,12 +11,22 @@ export function isServiceTier(value: unknown): value is ServiceTier {
   return typeof value === "string" && (SERVICE_TIERS as readonly string[]).includes(value);
 }
 
+export type ExecutionHostKind = "wsl" | "windows" | "unknown";
+
+export type ExecutionHostRef = {
+  kind: ExecutionHostKind;
+  id: string;
+  label?: string;
+};
+
 export type Project = {
   id: string;
   name: string;
   cwd: string;
   lastOpenedAt: number;
   defaultModel?: string;
+  defaultRuntimeProfileId?: RuntimeProfileId;
+  host?: ExecutionHostRef;
 };
 
 export type ResolvedPathSource = "linux" | "windows-drive" | "wsl-unc" | "ssh";
@@ -76,6 +88,7 @@ export type Runtime = {
   projectId: string;
   cwd: string;
   status: RuntimeStatus;
+  host?: ExecutionHostRef;
   pid?: number;
   sessionId?: string;
   startedAt?: number;
@@ -83,19 +96,22 @@ export type Runtime = {
   model?: string;
   thinkingLevel?: ThinkingLevel;
   responseMode?: ResponseMode;
+  runtimeProfileId?: RuntimeProfileId;
+  enabledCapabilityIds?: string[];
 };
 
 export type GuiSession = {
   id: string;
   projectId: string;
   piSessionFile: string;
+  host?: ExecutionHostRef;
   title?: string;
   createdAt: number;
   updatedAt: number;
   runtimeId?: string;
 };
 
-export type GuiEventKind = "pi_event" | "runtime_status" | "stderr" | "error";
+export type GuiEventKind = "pi_event" | "runtime_status" | "stderr" | "error" | "checkpoint";
 
 export type GuiEvent = {
   id: number;
@@ -104,6 +120,98 @@ export type GuiEvent = {
   timestamp: number;
   kind: GuiEventKind;
   payload: unknown;
+};
+
+export type CheckpointPreviewAction = "add" | "modify" | "delete" | "recreate" | "overwrite" | "unchanged" | "skip" | "conflict";
+
+export type RewindCheckpointCaptureSource = "prompt" | "manual" | "rollback";
+
+export type RewindCheckpointSummary = {
+  id: string;
+  projectId: string;
+  root: string;
+  createdAt: number;
+  capturedFiles: number;
+  capturedSymlinks: number;
+  deletedEntries: number;
+  skipped: number;
+  capturedBytes: number;
+  newBytes: number;
+  runtimeId?: string;
+  sessionId?: string;
+  targetEntryId?: string;
+  captureSource?: RewindCheckpointCaptureSource;
+};
+
+export type RewindCheckpointPreviewChange = {
+  action: CheckpointPreviewAction;
+  relativePath: string;
+  reason?: string;
+  currentHash?: string;
+  targetHash?: string;
+  size?: number;
+};
+
+export type RewindCheckpointPreview = {
+  projectId: string;
+  snapshotId: string;
+  changes: RewindCheckpointPreviewChange[];
+  summary: Record<CheckpointPreviewAction, number>;
+};
+
+export type RewindCheckpointRestoreResult = {
+  projectId: string;
+  snapshotId: string;
+  ok: boolean;
+  rollbackSnapshotId?: string;
+  applied: RewindCheckpointPreviewChange[];
+  error?: string;
+};
+
+export type RewindCheckpointOperationKind = "capture" | "restore" | "gc";
+
+export type RewindCheckpointOperation = {
+  id: number;
+  projectId: string;
+  kind: RewindCheckpointOperationKind;
+  snapshotId: string;
+  createdAt: number;
+  ok: boolean;
+  rollbackSnapshotId?: string;
+  error?: string;
+};
+
+export type RewindJumpHistoryEntry = {
+  id: number;
+  projectId: string;
+  snapshotId: string;
+  runtimeId: string;
+  sourceSessionId?: string;
+  targetEntryId: string;
+  resultSessionId?: string;
+  resultEntryId?: string;
+  createdAt: number;
+  ok: boolean;
+  rollbackSnapshotId?: string;
+  error?: string;
+};
+
+export type RewindStorageHealth = {
+  projectId: string;
+  snapshotCount: number;
+  objectCount: number;
+  manifestBytes: number;
+  objectBytes: number;
+  referencedObjectCount: number;
+  unreferencedObjectCount: number;
+  unreferencedObjectBytes: number;
+};
+
+export type RewindGarbageCollectResult = RewindStorageHealth & {
+  dryRun: boolean;
+  deletedObjectCount: number;
+  deletedObjectBytes: number;
+  deletedSnapshotCount: number;
 };
 
 export type ConversationRole = "user" | "assistant" | "tool" | "error" | "log";
@@ -144,6 +252,9 @@ export type SubagentChildRun = {
   startedAt?: number;
   finishedAt?: number;
   sessionFile?: string;
+  traceFile?: string;
+  activitySummary?: string;
+  lastAction?: string;
   finalText?: string;
   textTail?: string;
   thinkingTail?: string;
@@ -173,6 +284,12 @@ export type SubagentRun = {
   runs: SubagentChildRun[];
 };
 
+export type ConversationToolDetails = {
+  path?: string;
+  diff?: string;
+  firstChangedLine?: number;
+};
+
 export type ConversationMessage = {
   id: string;
   runtimeId: string;
@@ -184,6 +301,7 @@ export type ConversationMessage = {
   title?: string;
   isStreaming?: boolean;
   thinking?: string;
+  toolDetails?: ConversationToolDetails;
 };
 
 export type ConversationTokenUsage = {
@@ -222,33 +340,11 @@ export type PiRpcCommand = {
   [key: string]: unknown;
 };
 
-export type ExtensionUiAskBatchQuestionKind = "single" | "multi" | "confirm" | "text";
-
-export type ExtensionUiAskBatchOption = {
-  value: string;
-  label: string;
-  description?: string;
-};
-
-export type ExtensionUiAskBatchQuestion = {
-  id: string;
-  label?: string;
-  prompt: string;
-  situation?: string;
-  suggestion?: string;
-  kind?: ExtensionUiAskBatchQuestionKind;
-  options?: ExtensionUiAskBatchOption[];
-  allowOther?: boolean;
-  required?: boolean;
-  defaultValue?: string | string[] | boolean;
-};
-
 export type ExtensionUiRequest =
   | { type: "extension_ui_request"; id: string; method: "select"; title: string; options: string[]; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "confirm"; title: string; message: string; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "input"; title: string; placeholder?: string; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "editor"; title: string; prefill?: string }
-  | { type: "extension_ui_request"; id: string; method: "askBatch"; title?: string; context?: string; questions: ExtensionUiAskBatchQuestion[]; submitPolicy?: "require_all" | "allow_partial"; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "notify"; message: string; notifyType?: "info" | "warning" | "error" }
   | { type: "extension_ui_request"; id: string; method: "setStatus"; statusKey: string; statusText?: string }
   | { type: "extension_ui_request"; id: string; method: "setWidget"; widgetKey: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor" }
@@ -362,51 +458,13 @@ export type RemoteAccessRestartResponse = {
   status: RemoteAccessStatus;
 };
 
-export type VoiceInputMode = "disabled" | "externalService" | "managedProcess";
-export type VoiceInputCaptureMode = "browser" | "native";
-
-export type VoiceInputSettings = {
-  mode?: VoiceInputMode;
-  captureMode?: VoiceInputCaptureMode;
-  externalUrl?: string;
-  managedCommand?: string;
-  managedArgs?: string[];
-  managedCwd?: string;
-  modelPath?: string;
-  autoStart?: boolean;
-  startupTimeoutMs?: number;
-  transcriptionTimeoutMs?: number;
-  maxRecordingMs?: number;
-  maxUploadBytes?: number;
-};
-
-export type VoiceInputStatusState = "disabled" | "not_configured" | "starting" | "ready" | "error";
-
-export type VoiceInputStatus = {
-  available: boolean;
-  mode: VoiceInputMode;
-  state: VoiceInputStatusState;
-  message?: string;
-  maxRecordingMs: number;
-  maxUploadBytes: number;
-  transcriptionTimeoutMs: number;
-};
-
-export type VoiceTranscriptionResponse = {
-  text: string;
-  durationMs?: number;
-};
-
-export type VoiceRecordingStartResponse = {
-  recording: true;
-  startedAt: number;
-};
-
 export type AppSettings = {
   defaultModel?: string;
   defaultThinkingLevel?: ThinkingLevel;
   responseMode?: ResponseMode;
-  voiceInput?: VoiceInputSettings;
+  defaultRuntimeProfileId?: RuntimeProfileId;
+  customRuntimeCapabilityIds?: string[];
+  confirmedProjectExtensionIds?: string[];
 };
 
 export type ModelSummary = {
@@ -420,7 +478,7 @@ export type ModelSummary = {
   contextWindow?: number;
 };
 
-export type TokenUsageRange = "all" | "30d" | "7d";
+export type TokenUsageRange = "all" | "365d" | "30d" | "7d";
 export type TokenUsageQuality = "recorded" | "partial" | "empty";
 
 export type TokenUsageBreakdown = {

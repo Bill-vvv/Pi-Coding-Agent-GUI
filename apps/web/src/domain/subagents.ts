@@ -18,6 +18,8 @@ export function subagentRunPreview(run: SubagentRun, maxChars = 320): string {
   const final = run.finalText?.trim();
   if (final) return truncate(final, maxChars);
   const latest = latestChildRun(run);
+  const activity = latest ? subagentChildActivityPreview(latest, maxChars, false) : undefined;
+  if (activity) return activity;
   const liveText = latest?.textTail?.trim();
   if (liveText) return truncate(liveText, maxChars);
   const liveThinking = latest?.thinkingTail?.trim();
@@ -26,6 +28,15 @@ export function subagentRunPreview(run: SubagentRun, maxChars = 320): string {
   if (latestLog) return truncate(latestLog, maxChars);
   if (run.status === "running" || run.status === "pending") return "子代理正在处理，打开详情可查看实时过程。";
   return "暂无最终输出。";
+}
+
+export function subagentChildActivityPreview(child: SubagentChildRun, maxChars = 320, includeToolFallback = true): string | undefined {
+  const summary = child.activitySummary?.trim();
+  const action = child.lastAction?.trim() || (includeToolFallback ? latestToolAction(child) : undefined);
+  if (summary && action) return truncate(`${summary} · ${action}`, maxChars);
+  if (summary) return truncate(summary, maxChars);
+  if (action) return truncate(action, maxChars);
+  return undefined;
 }
 
 export function subagentCopyText(run: SubagentRun): string | undefined {
@@ -121,6 +132,33 @@ export function buildSubagentLiveConversationMessages(run: SubagentRun, child: S
   }
 
   return messages.sort((left, right) => (left.timestamp ?? 0) - (right.timestamp ?? 0));
+}
+
+function latestToolAction(child: SubagentChildRun): string | undefined {
+  const latestTool = [...(child.tools ?? [])].reverse().find((tool) => tool.status === "running") ?? child.tools?.at(-1);
+  if (!latestTool) return undefined;
+  const args = parseToolArgs(latestTool.args);
+  if (latestTool.name === "read") return `read: ${oneLine(args.path ?? args.file_path, 80)}`;
+  if (latestTool.name === "bash") return `bash: ${oneLine(args.command, 80)}`;
+  if (latestTool.name === "write") return `write: ${oneLine(args.path ?? args.file_path, 80)}`;
+  if (latestTool.name === "edit") return `edit: ${oneLine(args.path ?? args.file_path, 80)}`;
+  if (latestTool.name === "grep") return `grep: ${oneLine(args.pattern, 80)}`;
+  if (latestTool.name === "find") return `find: ${oneLine(args.pattern ?? "*", 80)}`;
+  return latestTool.name;
+}
+
+function parseToolArgs(value: string | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function oneLine(value: unknown, maxChars: number): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxChars) || "…";
 }
 
 function subagentToolStatusLabel(status: SubagentToolTrace["status"]): string {

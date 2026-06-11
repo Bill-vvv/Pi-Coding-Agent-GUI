@@ -11,6 +11,11 @@ export const THINKING_LEVELS: Array<{ value: ThinkingLevel; label: string }> = [
 
 const DEFAULT_REASONING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 
+// Non-authoritative GUI fallback catalog used only when Pi model discovery is
+// unavailable. Pi/provider remains the source of truth for model availability.
+// Non-authoritative GUI fallback catalog used when Pi model discovery is
+// unavailable. Pi/provider remains final authority when a selected model is sent
+// through runtime.start/configure.
 export const FALLBACK_MODELS: ModelSummary[] = [
   { provider: "openai-codex", id: "gpt-5.2", label: "openai-codex/GPT-5.2", supportsThinking: true, supportedThinkingLevels: DEFAULT_REASONING_LEVELS, supportsImages: true, supportsFast: true },
   { provider: "openai-codex", id: "gpt-5.3-codex", label: "openai-codex/GPT-5.3 Codex", supportsThinking: true, supportedThinkingLevels: DEFAULT_REASONING_LEVELS, supportsImages: true, supportsFast: true },
@@ -26,10 +31,14 @@ export function modelKey(model: ModelSummary): string {
 
 
 export function modelSummaryFromKey(key: string): ModelSummary | undefined {
+  // UI-only projection for stored/freeform keys. Capability flags are adapter
+  // hints for rendering controls, not provider validation.
   const separatorIndex = key.indexOf("/");
   if (separatorIndex <= 0 || separatorIndex === key.length - 1) return undefined;
   const provider = key.slice(0, separatorIndex);
   const id = key.slice(separatorIndex + 1);
+  // Fallback capability hint for display only; the provider/Pi request layer
+  // remains the authority on whether fast mode actually succeeds.
   const supportsFast = provider === "openai" || provider === "openai-codex";
   return {
     provider,

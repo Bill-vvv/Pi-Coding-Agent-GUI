@@ -1,15 +1,20 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import type { AppSettings } from "@pi-gui/shared";
 import { AppModals } from "./components/AppModals";
 import { ChatView } from "./components/ChatView";
 import { Composer } from "./components/Composer";
+import { DesktopWindowChrome } from "./components/DesktopWindowChrome";
+import { isExtensionUiDialogRequest } from "./components/ExtensionUiDialog";
 import { Sidebar } from "./components/Sidebar";
 import { ProviderAuthPanel } from "./components/ProviderAuthPanel";
 import { ScopedModelsPanel } from "./components/ScopedModelsPanel";
 import { SessionTreeForkPanel } from "./components/SessionTreeForkPanel";
+import { RewindPanel } from "./components/RewindPanel";
 
 import { useActiveRuntimeView } from "./hooks/useActiveRuntimeView";
 import { useAppModalState } from "./hooks/useAppModalState";
 import { useAppServerEvents, useAppServerEventSideEffects } from "./hooks/useAppServerEvents";
+import { useCheckpointControls } from "./hooks/useCheckpointControls";
 import { useCommandMenuHotkey } from "./hooks/useCommandMenuHotkey";
 import { useComposerBottomClearance } from "./hooks/useComposerBottomClearance";
 import { useComposerCommands } from "./hooks/useComposerCommands";
@@ -29,9 +34,14 @@ import { useSessionTreeForkControls } from "./hooks/useSessionTreeForkControls";
 import { useSubagentDrawer } from "./hooks/useSubagentDrawer";
 import { useUiPreferences } from "./hooks/useUiPreferences";
 import { shouldAutoArchiveBlankRuntime } from "./domain/blankRuntimeCleanup";
+import { desktopShellBridge } from "./domain/desktopShell";
+import { isRecoverableRuntimeInterruption } from "./domain/runtimeRecovery";
 import { performanceFixtureEvents } from "./domain/performanceFixtures";
+import { codexPetAnimationFromMood, countBackgroundPiPetActivity, derivePiPetDisplay, desktopPetStatusFromMood } from "./domain/piPet";
 import { modelsInGuiScope } from "./domain/scopedModels";
 import { appReducer, initialAppState } from "./state/appReducer";
+import "./styles/rewind.css";
+import "./styles/checkpoint.css";
 
 const SettingsPanel = lazy(() => import("./components/SettingsPanel").then((module) => ({ default: module.SettingsPanel })));
 const RuntimeLogDrawer = lazy(() => import("./components/RuntimeLogDrawer").then((module) => ({ default: module.RuntimeLogDrawer })));
@@ -43,18 +53,35 @@ function MainSurfaceFallback() {
   return <div className="empty-state">加载中…</div>;
 }
 
+type LastUserMessageScrollRequest = {
+  runtimeId?: string;
+  sequence: number;
+};
+
+type LastUserMessageScrollAction = { type: "request"; runtimeId: string } | { type: "clear" } | { type: "handled"; sequence: number };
+
+function lastUserMessageScrollRequestReducer(current: LastUserMessageScrollRequest, action: LastUserMessageScrollAction): LastUserMessageScrollRequest {
+  if (action.type === "clear") return current.runtimeId ? { sequence: current.sequence } : current;
+  if (action.type === "handled") return current.runtimeId && current.sequence === action.sequence ? { sequence: current.sequence } : current;
+  return { runtimeId: action.runtimeId, sequence: current.sequence + 1 };
+}
+
 export function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [scrollToBottomSignal, requestConversationScrollToBottom] = useReducer((value: number) => value + 1, 0);
+  const [lastUserMessageScrollRequest, updateLastUserMessageScrollRequest] = useReducer(lastUserMessageScrollRequestReducer, { sequence: 0 });
   const [composerClearanceSignal, requestComposerClearanceFollow] = useReducer((value: number) => value + 1, 0);
   const [composerFocusSignal, requestComposerFocus] = useReducer((value: number) => value + 1, 0);
   const mainChatRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const models = useModelCatalog();
   const { modelPickerOpen, setModelPickerOpen, settingsOpen, setSettingsOpen, toggleModelPicker, closeModelPicker, closeSettings } = useAppModalState();
+  const [settingsFocusTab, setSettingsFocusTab] = useState<"ui" | "function" | "extension" | undefined>();
+  const [settingsFocusCapabilityId, setSettingsFocusCapabilityId] = useState<string | undefined>();
   const { uiPreferences, setUiPreferences } = useUiPreferences();
   const [providerAuthAction, setProviderAuthAction] = useState<"login" | "logout" | undefined>();
   const [scopedModelsOpen, setScopedModelsOpen] = useState(false);
+  const [rewindOpen, setRewindOpen] = useState(false);
   const scopedModels = useMemo(() => modelsInGuiScope(models, uiPreferences.guiScopedModels), [models, uiPreferences.guiScopedModels]);
   const {
     compactSidebarExpanded,
@@ -66,12 +93,14 @@ export function App() {
     openUsageOverview: openMainUsageOverview,
   } = useMainSurfaceMode();
 
+  const desktopShell = desktopShellBridge();
+  const desktopPetAvailable = Boolean(desktopShell?.setDesktopPetVisible && desktopShell.updateDesktopPet);
   const performanceFixtureMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("fixture") === "performance";
 
   const closeCompactSidebarDrawer = useCallback(() => {
     collapseCompactSidebar();
     window.requestAnimationFrame(() => {
-      document.querySelector<HTMLButtonElement>(".left-sidebar .sidebar-logo-button")?.focus();
+      document.querySelector<HTMLButtonElement>(".left-sidebar .project-session-group.selected .project-select, .left-sidebar .project-select")?.focus();
     });
   }, [collapseCompactSidebar]);
 
@@ -106,6 +135,13 @@ export function App() {
     subagentRuns,
     subagentDetails,
     extensionUiByRuntime,
+    executionHost,
+    checkpointsByProject,
+    checkpointPreviewsBySnapshot,
+    checkpointRestoreResultsBySnapshot,
+    checkpointJumpsByProject,
+    checkpointHealthByProject,
+    checkpointGcResultsByProject,
   } = state;
 
   useEffect(() => {
@@ -126,6 +162,12 @@ export function App() {
     onError: (message) => dispatch({ type: "set.operationError", error: message }),
     onOpen: () => dispatch({ type: "clear.transportError" }),
   });
+  const updateAppSettings = useCallback((next: Partial<AppSettings>) => {
+    return send({ type: "settings.update", settings: { ...settings, ...next } });
+  }, [send, settings]);
+  const updateProjectRuntimeProfile = useCallback((projectId: string, defaultRuntimeProfileId: AppSettings["defaultRuntimeProfileId"] | null) => {
+    return send({ type: "project.configure", projectId, defaultRuntimeProfileId });
+  }, [send]);
   const {
     runtimeLogDrawerId,
     runtimeLogDrawerRuntime,
@@ -184,6 +226,7 @@ export function App() {
     defaultThinkingLevel,
     defaultResponseMode,
     send,
+    onRestoredRuntime: (runtimeId) => updateLastUserMessageScrollRequest({ type: "request", runtimeId }),
   });
   const sessionHistoryProject = sessionHistoryProjectId ? projects.find((project) => project.id === sessionHistoryProjectId) : undefined;
   const {
@@ -225,6 +268,29 @@ export function App() {
     projectCwd,
     createProjectOnly,
     dispatch,
+  });
+  const {
+    previewSnapshotId,
+    previewLoading,
+    loadingList: checkpointListLoading,
+    loadingHealth: checkpointHealthLoading,
+    loadingJumps: checkpointJumpsLoading,
+    pendingCapture: pendingCheckpointCapture,
+    pendingRestoreSnapshotId,
+    pendingGcMode,
+    refreshAllCheckpointData,
+    refreshCheckpointHealth,
+    refreshCheckpointJumps,
+    captureCheckpoint,
+    openPreview: openCheckpointPreview,
+    closePreview: closeCheckpointPreview,
+    restoreCheckpoint,
+    runCheckpointGc,
+    handleCheckpointServerEvent,
+  } = useCheckpointControls({
+    open: settingsOpen,
+    selectedProject,
+    send,
   });
   const { extensionUiDialog, handleExtensionUiServerEvent, sendExtensionUiResponse } = useExtensionUiRequests({
     send,
@@ -287,6 +353,7 @@ export function App() {
     [activeRuntime?.id, subagentRuns],
   );
   const activeRuntimeExtensionUi = activeRuntime ? extensionUiByRuntime[activeRuntime.id] : undefined;
+  const modalExtensionUiRequest = isExtensionUiDialogRequest(extensionUiDialog?.request) ? extensionUiDialog.request : undefined;
   const {
     selectedSubagentRun,
     selectedSubagentChildRunId,
@@ -296,19 +363,74 @@ export function App() {
     selectSubagentChildRun,
     copySubagentOutput,
   } = useSubagentDrawer({ subagentRuns, subagentDetails, send, dispatch });
+  const backgroundPetActivity = useMemo(
+    () => countBackgroundPiPetActivity(runtimes, busyByRuntime, activeRuntime?.id),
+    [activeRuntime?.id, busyByRuntime, runtimes],
+  );
+  const activeRuntimeRecoverableInterruption = useMemo(
+    () => isRecoverableRuntimeInterruption(activeRuntime, guiEvents),
+    [activeRuntime, guiEvents],
+  );
+  const piPetDisplay = useMemo(
+    () => derivePiPetDisplay({
+      activeRuntime,
+      activeRuntimeIsBusy,
+      messages: conversationMessages,
+      contextUsage: activeRuntimeContextUsage,
+      queue: activeRuntimeQueue,
+      waitingForInput: Boolean(activeRuntime && extensionUiDialog?.runtimeId === activeRuntime.id),
+      recoverableRuntimeInterruption: activeRuntimeRecoverableInterruption,
+      subagentRuns: activeRuntimeSubagentRuns,
+      backgroundBusyCount: backgroundPetActivity.busy,
+      backgroundAttentionCount: backgroundPetActivity.attention,
+    }),
+    [activeRuntime, activeRuntimeContextUsage, activeRuntimeIsBusy, activeRuntimeQueue, activeRuntimeRecoverableInterruption, activeRuntimeSubagentRuns, backgroundPetActivity.attention, backgroundPetActivity.busy, conversationMessages, extensionUiDialog],
+  );
+  useEffect(() => {
+    if (!desktopPetAvailable || !desktopShell?.setDesktopPetVisible || !desktopShell.updateDesktopPet) return;
+    if (!uiPreferences.desktopPetEnabled) {
+      void desktopShell.setDesktopPetVisible(false);
+      return;
+    }
+    void desktopShell.updateDesktopPet({
+      mood: piPetDisplay.mood,
+      tone: piPetDisplay.tone,
+      status: desktopPetStatusFromMood(piPetDisplay.mood),
+      animation: codexPetAnimationFromMood(piPetDisplay.mood),
+      title: piPetDisplay.title,
+      detail: piPetDisplay.detail,
+      badges: piPetDisplay.badges,
+      satelliteCount: piPetDisplay.satelliteCount,
+    });
+    void desktopShell.setDesktopPetVisible(true);
+  }, [desktopPetAvailable, desktopShell, piPetDisplay, uiPreferences.desktopPetEnabled]);
+  useEffect(() => {
+    if (!desktopShell?.onDesktopPetClosed) return undefined;
+    return desktopShell.onDesktopPetClosed(() => setUiPreferences((current) => ({ ...current, desktopPetEnabled: false })));
+  }, [desktopShell, setUiPreferences]);
   const openCommandMenuShortcut = useCallback(() => {
     closeSurfaces({ closeSettings, closeSessionHistory, closeRuntimeLogs, closeSubagentDrawer });
     closeModelPicker();
     closeSessionTreeForkControls();
     setProviderAuthAction(undefined);
     setScopedModelsOpen(false);
+    setRewindOpen(false);
     pathPicker.closePicker();
     if (extensionUiDialog) sendExtensionUiResponse({ cancelled: true });
   }, [closeModelPicker, closeRuntimeLogs, closeSessionHistory, closeSettings, closeSessionTreeForkControls, closeSubagentDrawer, closeSurfaces, extensionUiDialog, pathPicker, sendExtensionUiResponse]);
-  const openSettingsShortcut = useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
+  const openSettingsShortcut = useCallback(() => {
+    setSettingsFocusTab("ui");
+    setSettingsFocusCapabilityId(undefined);
+    setSettingsOpen(true);
+  }, [setSettingsOpen]);
+  const openRuntimeProfileSettings = useCallback(() => {
+    setSettingsFocusTab("extension");
+    setSettingsFocusCapabilityId(undefined);
+    setSettingsOpen(true);
+  }, [setSettingsOpen]);
   const commandMenuOpenSignal = useCommandMenuHotkey({ onOpenCommandMenu: openCommandMenuShortcut, onOpenSettings: openSettingsShortcut, keybindings: uiPreferences.keybindings });
 
-  const composerSurfaceVisible = !settingsOpen && !sessionHistoryProjectId && !usageOverviewOpen && !sessionTreeForkState.open && !providerAuthAction && !scopedModelsOpen && Boolean(activeRuntime);
+  const composerSurfaceVisible = !settingsOpen && !sessionHistoryProjectId && !usageOverviewOpen && !sessionTreeForkState.open && !providerAuthAction && !scopedModelsOpen && !rewindOpen && Boolean(activeRuntime);
 
   const closeEscapeSurface = useCallback((): boolean => {
     if (compactSidebarExpanded) {
@@ -351,6 +473,10 @@ export function App() {
       setScopedModelsOpen(false);
       return true;
     }
+    if (rewindOpen) {
+      setRewindOpen(false);
+      return true;
+    }
     if (usageOverviewOpen) {
       closeUsageOverview();
       return true;
@@ -377,6 +503,7 @@ export function App() {
     pathPicker.open,
     providerAuthAction,
     runtimeLogDrawerId,
+    rewindOpen,
     scopedModelsOpen,
     selectedSubagentRun,
     sendExtensionUiResponse,
@@ -415,6 +542,7 @@ export function App() {
     handleSessionTreeForkServerEvent,
     handleExtensionUiServerEvent,
     handleComposerCommandServerEvent,
+    handleCheckpointServerEvent,
   });
 
   useComposerBottomClearance({
@@ -443,12 +571,20 @@ export function App() {
   }
 
   function startNewRuntimeForProject(projectId: string) {
+    updateLastUserMessageScrollRequest({ type: "clear" });
     closeSurfaces({ closeSettings, closeSessionHistory });
     startRuntimeForSidebarProject(projectId);
     requestComposerFocus();
   }
 
+  function selectRuntimeFromSessionClick(projectId: string, runtimeId: string) {
+    closeSurfaces({ closeSettings, closeSessionHistory });
+    updateLastUserMessageScrollRequest({ type: "request", runtimeId });
+    dispatch({ type: "select.runtime", projectId, runtimeId });
+  }
+
   function openNotificationTarget(projectId: string, runtimeId: string) {
+    updateLastUserMessageScrollRequest({ type: "clear" });
     closeSurfaces({ closeSettings, closeSessionHistory, closeRuntimeLogs, closeSubagentDrawer });
     closeModelPicker();
     pathPicker.closePicker();
@@ -457,7 +593,9 @@ export function App() {
   }
 
   return (
-    <main className={`app-shell ${compactSidebarExpanded ? "sidebar-compact-expanded" : ""}`}>
+    <main className={`app-shell ${settingsOpen ? "settings-open" : ""} ${compactSidebarExpanded ? "sidebar-compact-expanded" : ""} ${desktopShell ? "desktop-shell" : ""}`}>
+      {desktopShell ? <DesktopWindowChrome bridge={desktopShell} /> : null}
+
       <Sidebar
         connection={connection}
         projects={projects}
@@ -471,6 +609,7 @@ export function App() {
         compactExpanded={compactSidebarExpanded}
         onToggleCompact={toggleCompactSidebar}
         onAddProject={() => {
+          updateLastUserMessageScrollRequest({ type: "clear" });
           closeSurfaces({ closeSessionHistory });
           void openPathPicker("addProject");
         }}
@@ -480,17 +619,17 @@ export function App() {
           openSessionHistory(projectId);
         }}
         onSelectProject={(projectId) => {
+          updateLastUserMessageScrollRequest({ type: "clear" });
           closeSurfaces({ closeSessionHistory });
           dispatch({ type: "select.project", projectId });
         }}
-        onSelectRuntime={(projectId, runtimeId) => {
-          closeSurfaces({ closeSettings, closeSessionHistory });
-          dispatch({ type: "select.runtime", projectId, runtimeId });
-        }}
+        onSelectRuntime={selectRuntimeFromSessionClick}
         onArchiveRuntime={archiveRuntime}
         onOpenRuntimeLogs={openRuntimeLogs}
         onOpenSettings={() => {
           closeSurfaces({ closeSessionHistory });
+          setSettingsFocusTab("ui");
+          setSettingsFocusCapabilityId(undefined);
           setSettingsOpen(true);
         }}
         conversationSummaries={conversationSummaries}
@@ -506,20 +645,43 @@ export function App() {
           <Suspense fallback={<MainSurfaceFallback />}>
             <SettingsPanel
               open={settingsOpen}
-              settings={settings}
               preferences={uiPreferences}
-              projects={projects}
-              sessions={sessions}
-              runtimes={runtimes}
-              conversationSummaries={conversationSummaries}
-              messagesByRuntime={messagesByRuntime}
+              settings={settings}
+              connection={connection}
+              selectedProject={selectedProject}
+              activeRuntime={activeRuntime}
+              checkpoints={selectedProject ? state.checkpointsByProject[selectedProject.id] ?? [] : []}
+              checkpointOperations={selectedProject ? state.checkpointOperations.filter((operation) => operation.projectId === selectedProject.id) : []}
+              checkpointJumps={selectedProject ? state.checkpointJumpsByProject[selectedProject.id] ?? [] : []}
+              checkpointHealth={selectedProject ? state.checkpointHealthByProject[selectedProject.id] : undefined}
+              checkpointGcResult={selectedProject ? state.checkpointGcResultsByProject[selectedProject.id] : undefined}
+              checkpointPreview={previewSnapshotId ? state.checkpointPreviewsBySnapshot[previewSnapshotId] : undefined}
+              checkpointRestoreResult={previewSnapshotId ? state.checkpointRestoreResultsBySnapshot[previewSnapshotId] : undefined}
+              checkpointPreviewSnapshotId={previewSnapshotId}
+              checkpointPreviewLoading={previewLoading}
+              checkpointListLoading={checkpointListLoading}
+              checkpointHealthLoading={checkpointHealthLoading}
+              checkpointJumpsLoading={checkpointJumpsLoading}
+              pendingCheckpointCapture={pendingCheckpointCapture}
+              pendingCheckpointRestoreSnapshotId={pendingRestoreSnapshotId}
+              pendingCheckpointGcMode={pendingGcMode}
+              onRefreshCheckpoints={refreshAllCheckpointData}
+              onRefreshCheckpointHealth={refreshCheckpointHealth}
+              onRefreshCheckpointJumps={refreshCheckpointJumps}
+              onCaptureCheckpoint={captureCheckpoint}
+              onOpenCheckpointPreview={openCheckpointPreview}
+              onCloseCheckpointPreview={closeCheckpointPreview}
+              onRestoreCheckpoint={restoreCheckpoint}
+              onRunCheckpointGc={runCheckpointGc}
               onClose={closeSettings}
               onChangePreferences={setUiPreferences}
-              onChangeSettings={(nextSettings) => send({ type: "settings.update", settings: nextSettings })}
-              onOpenArchivedRuntime={(runtimeId: string) => {
-                send({ type: "conversation.open", runtimeId, limit: 200 }, { notifyOnDisconnected: false });
-              }}
+              onChangeSettings={updateAppSettings}
+              onChangeProjectRuntimeProfile={updateProjectRuntimeProfile}
               onOpenUsageOverview={openUsageOverview}
+              focusTab={settingsFocusTab}
+              focusCapabilityId={settingsFocusCapabilityId}
+              desktopPetAvailable={desktopPetAvailable}
+              desktopShell={desktopShell}
             />
           </Suspense>
         ) : sessionHistoryProject ? (
@@ -529,14 +691,13 @@ export function App() {
               sessions={sessions}
               runtimes={runtimes}
               connection={connection}
+              currentHost={executionHost}
               pendingRestoreId={pendingHistoryRestoreId}
               onClose={closeSessionHistory}
               onResumeSession={(sessionId: string) => {
                 resumeSessionFromHistory(sessionId);
               }}
-              onSelectRuntime={(projectId: string, runtimeId: string) => {
-                dispatch({ type: "select.runtime", projectId, runtimeId });
-              }}
+              onSelectRuntime={selectRuntimeFromSessionClick}
             />
           </Suspense>
         ) : sessionTreeForkState.open ? (
@@ -560,6 +721,19 @@ export function App() {
             onChange={(guiScopedModels) => setUiPreferences({ ...uiPreferences, guiScopedModels })}
             onClose={() => setScopedModelsOpen(false)}
           />
+        ) : rewindOpen && selectedProject ? (
+          <RewindPanel
+            projectId={selectedProject.id}
+            runtime={activeRuntime}
+            checkpoints={checkpointsByProject[selectedProject.id] ?? []}
+            jumps={checkpointJumpsByProject[selectedProject.id] ?? []}
+            previewBySnapshot={checkpointPreviewsBySnapshot}
+            restoreResultsBySnapshot={checkpointRestoreResultsBySnapshot}
+            health={checkpointHealthByProject[selectedProject.id]}
+            gcResult={checkpointGcResultsByProject[selectedProject.id]}
+            send={send}
+            onClose={() => setRewindOpen(false)}
+          />
         ) : usageOverviewOpen || !activeRuntime ? (
           <Suspense fallback={<MainSurfaceFallback />}>
             <TokenUsageOverview projects={projects} />
@@ -579,10 +753,18 @@ export function App() {
               extensionUi={activeRuntimeExtensionUi}
               displayMode={uiPreferences.thinkingToolDisplayMode}
               scrollToBottomSignal={scrollToBottomSignal}
+              scrollToLastUserMessageRequest={
+                lastUserMessageScrollRequest.runtimeId
+                  ? { runtimeId: lastUserMessageScrollRequest.runtimeId, sequence: lastUserMessageScrollRequest.sequence }
+                  : undefined
+              }
+              onScrollToLastUserMessageRequestHandled={(sequence) => updateLastUserMessageScrollRequest({ type: "handled", sequence })}
               bottomClearanceSignal={composerClearanceSignal}
               onLoadOlderMessages={activeRuntime ? loadOlderActiveConversationMessages : undefined}
               onOpenSubagentRun={openSubagentRun}
               onCopySubagentOutput={copySubagentOutput}
+              onOpenRuntimeProfileSettings={openRuntimeProfileSettings}
+              onOpenRewind={() => setRewindOpen(true)}
               onDismissOperationError={dismissOperationError}
               onDismissNotice={dismissNotice}
             />
@@ -607,8 +789,6 @@ export function App() {
               connection={connection}
               activeRuntime={activeRuntime}
               activeRuntimeIsBusy={activeRuntimeIsBusy}
-              voiceInputSettings={settings.voiceInput}
-              keybindings={uiPreferences.keybindings}
               onSubmit={submitPromptAndFollowConversation}
               onPromptChange={setPrompt}
               onExecuteCommandInput={executeCommandInput}
@@ -624,6 +804,7 @@ export function App() {
             />
           </>
         )}
+
       </section>
 
       {runtimeLogDrawerRuntime ? (
@@ -658,7 +839,7 @@ export function App() {
       ) : null}
 
       <AppModals
-        extensionUiRequest={extensionUiDialog?.request}
+        extensionUiRequest={modalExtensionUiRequest}
         onRespondExtensionUi={sendExtensionUiResponse}
         pathPicker={pathPicker}
         onChoosePickerCwd={choosePickerCwd}

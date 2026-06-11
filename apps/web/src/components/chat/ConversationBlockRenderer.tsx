@@ -4,10 +4,13 @@ import type { ConversationMessage } from "../../types";
 import { MarkdownMessage } from "../MarkdownMessage";
 import { ScrollableContent, ScrollablePre } from "./ScrollableContent";
 import { ToolGroupBlock } from "./ToolGroupBlock";
+import { TuiProcessBlock } from "./TuiProcessBlock";
+import { ToolDiffView } from "./ToolDiffView";
 import type { ConversationBlockActions } from "./types";
 
 export function renderBlock(block: ConversationDisplayBlock, actions: ConversationBlockActions = {}) {
   if (block.type === "tool_group") return <ToolGroupBlock block={block} actions={actions} key={block.id} />;
+  if (block.type === "tui_process") return <TuiProcessBlock block={block} actions={actions} key={block.id} />;
 
   const message = block.message;
   const rendersInlineTool = block.displayKind === "plain" && isToolDisplayMessage(message);
@@ -46,7 +49,16 @@ function InlineToolMessage({ message }: { message: ConversationMessage }) {
         <span className="chat-message-tool-summary">{model.summary}</span>
       </summary>
       <div className="chat-message-tool-detail">
-        {model.detail ? <ScrollablePre>{model.detail}</ScrollablePre> : <p>暂无可展开内容</p>}
+        {model.toolDetails?.diff ? (
+          <div className="tool-group-item-diff-detail">
+            {model.detail ? <p className="tool-diff-result">{model.detail}</p> : null}
+            <ToolDiffView details={model.toolDetails} />
+          </div>
+        ) : model.detail ? (
+          <ScrollablePre>{model.detail}</ScrollablePre>
+        ) : (
+          <p>暂无可展开内容</p>
+        )}
       </div>
     </details>
   );

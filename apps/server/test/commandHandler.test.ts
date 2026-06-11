@@ -3,15 +3,15 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { ClientCommand, ServerEvent } from "@pi-gui/shared";
+import type { ClientCommand, ExecutionHostRef, ServerEvent } from "@pi-gui/shared";
 import { AppDatabase } from "../src/db.js";
 import type { RuntimeSupervisor } from "../src/runtime/runtimeSupervisor.js";
 import { createSocketMessageHandler } from "../src/ws/commandHandler.js";
 import type { WsClient } from "../src/ws/wsHub.js";
 
-function createHarness(supervisorOverrides: Partial<RuntimeSupervisor> = {}) {
+function createHarness(supervisorOverrides: Partial<RuntimeSupervisor> = {}, executionHost?: ExecutionHostRef) {
   const dir = mkdtempSync(join(tmpdir(), "pi-gui-command-"));
-  const db = new AppDatabase(join(dir, "pi-gui.sqlite"));
+  const db = new AppDatabase(join(dir, "pi-gui.sqlite"), executionHost);
   const sent: ServerEvent[] = [];
   const broadcasted: ServerEvent[] = [];
   const socket: WsClient = {
@@ -59,6 +59,20 @@ test("command handler creates projects only for valid directory cwd", async () =
   assert.equal(db.listProjects()[0]?.cwd, projectDir);
   assert.ok(broadcasted.some((event) => event.type === "project.created" && event.project.cwd === projectDir));
   assert.ok(broadcasted.some((event) => event.type === "project.list" && event.projects.length === 1));
+  db.close();
+});
+
+test("command handler configures project runtime profile override", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "pi-gui-project-profile-"));
+  const { db, sent, broadcasted, socket, handle } = createHarness();
+  const project = db.createProject({ id: "project-1", name: "Project", cwd: projectDir, lastOpenedAt: 1 });
+
+  await sendCommand(handle, socket, { type: "project.configure", requestId: "req-project-profile", projectId: project.id, defaultRuntimeProfileId: "trellis-workflow" });
+
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, true);
+  assert.equal(db.getProject(project.id)?.defaultRuntimeProfileId, "trellis-workflow");
+  assert.ok(broadcasted.some((event) => event.type === "project.list" && event.projects[0]?.defaultRuntimeProfileId === "trellis-workflow"));
   db.close();
 });
 
@@ -143,10 +157,42 @@ test("command handler delegates session.resume with model options", async () => 
     responseMode: "fast",
   });
 
-  assert.deepEqual(calls, [{ sessionId: "session-1", options: { model: "openai:gpt-5", thinkingLevel: "high", responseMode: "fast" } }]);
+  assert.deepEqual(calls, [{ sessionId: "session-1", options: { model: "openai:gpt-5", thinkingLevel: "high", responseMode: "fast", runtimeProfileId: undefined } }]);
   const result = sent.find((event) => event.type === "command.result");
   assert.equal(result?.success, true);
   assert.deepEqual(result?.data, { runtime });
+  db.close();
+});
+
+test("command handler rejects session.resume for a different execution host", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "pi-gui-session-host-project-"));
+  const calls: unknown[] = [];
+  const { db, sent, socket, handle } = createHarness(
+    {
+      resumeSession: (sessionId: string) => {
+        calls.push(sessionId);
+        return { id: "runtime-from-session", projectId: "project-1", cwd: projectDir, status: "running" as const };
+      },
+    } as Partial<RuntimeSupervisor>,
+    { kind: "wsl", id: "wsl:Ubuntu", label: "WSL (Ubuntu)" },
+  );
+  db.createProject({ id: "project-1", name: "Project", cwd: projectDir, lastOpenedAt: 1 });
+  db.upsertSession({
+    id: "session-1",
+    projectId: "project-1",
+    piSessionFile: "C:\\Users\\me\\.pi\\sessions\\session-1.jsonl",
+    host: { kind: "windows", id: "windows:local", label: "Windows native" },
+    createdAt: 1,
+    updatedAt: 2,
+  });
+
+  await sendCommand(handle, socket, { type: "session.resume", requestId: "req-host-mismatch", sessionId: "session-1" });
+
+  assert.deepEqual(calls, []);
+  const result = sent.find((event) => event.type === "command.result");
+  assert.equal(result?.success, false);
+  assert.equal(result?.requestId, "req-host-mismatch");
+  assert.match(result?.error ?? "", /belongs to Windows native/);
   db.close();
 });
 
@@ -169,7 +215,7 @@ test("command handler delegates runtime.restart with model options", async () =>
     responseMode: "fast",
   });
 
-  assert.deepEqual(calls, [{ runtimeId: "runtime-crashed", options: { model: "openai:gpt-5", thinkingLevel: "high", responseMode: "fast" } }]);
+  assert.deepEqual(calls, [{ runtimeId: "runtime-crashed", options: { model: "openai:gpt-5", thinkingLevel: "high", responseMode: "fast", runtimeProfileId: undefined } }]);
   const result = sent.find((event) => event.type === "command.result");
   assert.equal(result?.success, true);
   assert.deepEqual(result?.data, { runtime });
@@ -333,9 +379,10 @@ test("command handler delegates runtime.start with model options", async () => {
     model: "openai:gpt-5",
     thinkingLevel: "high",
     responseMode: "fast",
+    runtimeProfileId: "pi-gui-enhanced",
   });
 
-  assert.deepEqual(calls, [{ projectId: "project-1", options: { model: "openai:gpt-5", thinkingLevel: "high", responseMode: "fast" } }]);
+  assert.deepEqual(calls, [{ projectId: "project-1", options: { model: "openai:gpt-5", thinkingLevel: "high", responseMode: "fast", runtimeProfileId: "pi-gui-enhanced" } }]);
   const result = sent.find((event) => event.type === "command.result");
   assert.equal(result?.success, true);
   assert.deepEqual(result?.data, { runtime });

@@ -10,6 +10,7 @@ type AppServerEventSideEffectHandlers = {
   handleSessionTreeForkServerEvent: (event: ServerEvent) => void;
   handleExtensionUiServerEvent: (event: ServerEvent) => void;
   handleComposerCommandServerEvent: (event: ServerEvent) => void;
+  handleCheckpointServerEvent: (event: ServerEvent) => void;
 };
 
 type UseAppServerEventsOptions = {
@@ -30,6 +31,7 @@ const noopSideEffectHandlers: AppServerEventSideEffectHandlers = {
   handleSessionTreeForkServerEvent: () => undefined,
   handleExtensionUiServerEvent: () => undefined,
   handleComposerCommandServerEvent: () => undefined,
+  handleCheckpointServerEvent: () => undefined,
 };
 
 export function useAppServerEvents({
@@ -69,6 +71,7 @@ export function useAppServerEventSideEffects({
   handleSessionTreeForkServerEvent,
   handleExtensionUiServerEvent,
   handleComposerCommandServerEvent,
+  handleCheckpointServerEvent,
 }: UseAppServerEventSideEffectsOptions): void {
   useLayoutEffect(() => {
     setServerEventSideEffectHandlers({
@@ -78,6 +81,7 @@ export function useAppServerEventSideEffects({
       handleSessionTreeForkServerEvent,
       handleExtensionUiServerEvent,
       handleComposerCommandServerEvent,
+      handleCheckpointServerEvent,
     });
   }, [
     setServerEventSideEffectHandlers,
@@ -87,5 +91,6 @@ export function useAppServerEventSideEffects({
     handleSessionTreeForkServerEvent,
     handleExtensionUiServerEvent,
     handleComposerCommandServerEvent,
+    handleCheckpointServerEvent,
   ]);
 }

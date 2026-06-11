@@ -132,16 +132,27 @@ function mergeDayModel(models: TokenUsageDay["models"], model: string, provider:
 }
 
 function filteredDays(days: Map<string, TokenUsageDay>, range: TokenUsageRange, generatedAt: number): TokenUsageDay[] {
-  if (range === "all") return [...days.values()].sort((left, right) => left.day.localeCompare(right.day));
-  const count = range === "7d" ? 7 : 30;
   const end = startOfLocalDay(generatedAt);
+  if (range === "all") {
+    const firstDay = [...days.keys()].sort()[0];
+    if (!firstDay) return [];
+    return denseDays(days, parseLocalDayKey(firstDay), end);
+  }
+  const count = range === "7d" ? 7 : range === "365d" ? 365 : 30;
+  const start = new Date(end);
+  start.setDate(start.getDate() - (count - 1));
+  return denseDays(days, start.getTime(), end);
+}
+
+function denseDays(days: Map<string, TokenUsageDay>, start: number, end: number): TokenUsageDay[] {
   const result: TokenUsageDay[] = [];
-  for (let index = count - 1; index >= 0; index -= 1) {
-    const date = new Date(end);
-    date.setDate(date.getDate() - index);
-    const key = localDayKey(date.getTime());
+  for (let timestamp = startOfLocalDay(start); timestamp <= end; ) {
+    const key = localDayKey(timestamp);
     const day = days.get(key);
     result.push(day ? { ...day, tokens: { ...day.tokens }, models: day.models.map((model) => ({ ...model })) } : { day: key, tokens: { total: 0 }, sessions: 0, assistantMessages: 0, models: [] });
+    const date = new Date(timestamp);
+    date.setDate(date.getDate() + 1);
+    timestamp = date.getTime();
   }
   return result;
 }
@@ -215,4 +226,9 @@ function startOfLocalDay(timestamp: number): number {
   const date = new Date(timestamp);
   date.setHours(0, 0, 0, 0);
   return date.getTime();
+}
+
+function parseLocalDayKey(value: string): number {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day).getTime();
 }

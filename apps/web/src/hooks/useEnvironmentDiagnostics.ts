@@ -11,8 +11,15 @@ type EnvironmentDiagnosticsState = {
   refresh: () => Promise<void>;
 };
 
+const ENVIRONMENT_DIAGNOSTICS_CACHE_TTL_MS = 30_000;
+let environmentDiagnosticsCache: { diagnostics: EnvironmentDiagnostics; expiresAt: number } | undefined;
+let environmentDiagnosticsInFlight: Promise<EnvironmentDiagnostics> | undefined;
+
 export function useEnvironmentDiagnostics(enabled: boolean): EnvironmentDiagnosticsState {
-  const [diagnostics, setDiagnostics] = useState<EnvironmentDiagnostics | undefined>();
+  const [diagnostics, setDiagnostics] = useState<EnvironmentDiagnostics | undefined>(() => {
+    const cached = environmentDiagnosticsCache;
+    return cached && cached.expiresAt > Date.now() ? cached.diagnostics : undefined;
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
@@ -21,14 +28,13 @@ export function useEnvironmentDiagnostics(enabled: boolean): EnvironmentDiagnost
     setLoading(true);
     setError(undefined);
     try {
-      const response = await fetch(apiUrl("/api/environment"), { headers: authHeaders() });
-      const data = (await response.json().catch(() => undefined)) as unknown;
-      if (!response.ok) throw new Error(errorMessageFromResponse(data) ?? `环境诊断读取失败 (${response.status})`);
-      if (!isRecord(data) || !isEnvironmentDiagnostics(data.environment)) throw new Error("环境诊断响应无效");
-      setDiagnostics(data.environment);
+      const diagnostics = await (environmentDiagnosticsInFlight ?? fetchEnvironmentDiagnostics());
+      environmentDiagnosticsCache = { diagnostics, expiresAt: Date.now() + ENVIRONMENT_DIAGNOSTICS_CACHE_TTL_MS };
+      setDiagnostics(diagnostics);
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
     } finally {
+      environmentDiagnosticsInFlight = undefined;
       setLoading(false);
     }
   }, [enabled]);
@@ -39,6 +45,20 @@ export function useEnvironmentDiagnostics(enabled: boolean): EnvironmentDiagnost
   }, [diagnostics, enabled, error, loading, refresh]);
 
   return { diagnostics, loading, error, refresh };
+}
+
+async function fetchEnvironmentDiagnostics(): Promise<EnvironmentDiagnostics> {
+  environmentDiagnosticsInFlight = fetch(apiUrl("/api/environment"), { headers: authHeaders() })
+    .then(async (response) => {
+      const data = (await response.json().catch(() => undefined)) as unknown;
+      if (!response.ok) throw new Error(errorMessageFromResponse(data) ?? `环境诊断读取失败 (${response.status})`);
+      if (!isRecord(data) || !isEnvironmentDiagnostics(data.environment)) throw new Error("环境诊断响应无效");
+      return data.environment;
+    })
+    .finally(() => {
+      environmentDiagnosticsInFlight = undefined;
+    });
+  return environmentDiagnosticsInFlight;
 }
 
 function isEnvironmentDiagnostics(value: unknown): value is EnvironmentDiagnostics {

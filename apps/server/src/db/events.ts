@@ -6,11 +6,33 @@ import type { EventRow } from "./rows.js";
 export class EventLogStore {
   private eventsSincePrune = 0;
   private readonly maxEventRows = boundedIntegerEnv("PI_GUI_EVENT_LOG_MAX_ROWS", 20_000, 1_000, 1_000_000);
+  private readonly lastEventIdStatement: Database.Statement;
+  private readonly firstEventIdStatement: Database.Statement;
+  private readonly insertEventStatement: Database.Statement;
+  private readonly pruneEventLogStatement: Database.Statement;
 
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database.Database) {
+    this.lastEventIdStatement = this.db.prepare("select coalesce(max(id), 0) as id from events");
+    this.firstEventIdStatement = this.db.prepare("select coalesce(min(id), 0) as id from events");
+    this.insertEventStatement = this.db.prepare(
+      `insert into events (runtime_id, project_id, timestamp, kind, payload)
+       values (?, ?, ?, ?, ?)`,
+    );
+    this.pruneEventLogStatement = this.db.prepare(
+      `delete from events
+       where id in (
+         select id from events order by id desc limit -1 offset ?
+       )`,
+    );
+  }
 
   lastEventId(): number {
-    const row = this.db.prepare("select coalesce(max(id), 0) as id from events").get() as { id: number };
+    const row = this.lastEventIdStatement.get() as { id: number };
+    return row.id;
+  }
+
+  firstEventId(): number {
+    const row = this.firstEventIdStatement.get() as { id: number };
     return row.id;
   }
 
@@ -21,12 +43,7 @@ export class EventLogStore {
       throw new Error("Event payload must be JSON-serializable");
     }
 
-    const result = this.db
-      .prepare(
-        `insert into events (runtime_id, project_id, timestamp, kind, payload)
-         values (?, ?, ?, ?, ?)`,
-      )
-      .run(input.runtimeId, input.projectId, timestamp, input.kind, payload);
+    const result = this.insertEventStatement.run(input.runtimeId, input.projectId, timestamp, input.kind, payload);
     this.pruneEventLogEventually();
 
     return {
@@ -60,24 +77,22 @@ export class EventLogStore {
     return rows.reverse().map(eventFromRow);
   }
 
+  listEventsBudgeted(afterEventId = 0, limit = 500, maxPayloadBytes?: number, filters: { projectId?: string; runtimeId?: string; kinds?: GuiEventKind[] } = {}): { events: GuiEvent[]; truncated: boolean } {
+    const boundedLimit = Math.max(1, Math.min(limit, 2000));
+    const { conditions, params } = eventFilterQuery("id > ?", [afterEventId], filters);
+    const rows = this.db
+      .prepare(`select * from events where ${conditions.join(" and ")} order by id asc limit ?`)
+      .all(...params, boundedLimit) as EventRow[];
+    const selectedRows = rowsWithinPayloadBudget(rows, maxPayloadBytes);
+    return { events: selectedRows.map(eventFromRow), truncated: selectedRows.length < rows.length };
+  }
+
   recentEvents(limit = 200, maxPayloadBytes?: number): GuiEvent[] {
     const rows = this.db
       .prepare("select * from events order by id desc limit ?")
       .all(Math.max(1, limit)) as EventRow[];
 
-    const selectedRows: EventRow[] = [];
-    let selectedPayloadBytes = 0;
-    const byteBudget = maxPayloadBytes && maxPayloadBytes > 0 ? maxPayloadBytes : undefined;
-
-    for (const row of rows) {
-      const rowPayloadBytes = Buffer.byteLength(row.payload, "utf8");
-      if (byteBudget !== undefined && selectedRows.length > 0 && selectedPayloadBytes + rowPayloadBytes > byteBudget) break;
-      selectedRows.push(row);
-      selectedPayloadBytes += rowPayloadBytes;
-      if (byteBudget !== undefined && selectedPayloadBytes >= byteBudget) break;
-    }
-
-    return selectedRows.reverse().map(eventFromRow);
+    return rowsWithinPayloadBudget(rows, maxPayloadBytes).reverse().map(eventFromRow);
   }
 
   private pruneEventLogEventually(): void {
@@ -88,14 +103,7 @@ export class EventLogStore {
   }
 
   private pruneEventLog(): void {
-    this.db
-      .prepare(
-        `delete from events
-         where id in (
-           select id from events order by id desc limit -1 offset ?
-         )`,
-      )
-      .run(this.maxEventRows);
+    this.pruneEventLogStatement.run(this.maxEventRows);
   }
 }
 
@@ -122,6 +130,22 @@ function eventFilterQuery(
   }
 
   return { conditions, params };
+}
+
+function rowsWithinPayloadBudget(rows: EventRow[], maxPayloadBytes: number | undefined): EventRow[] {
+  const byteBudget = maxPayloadBytes && maxPayloadBytes > 0 ? maxPayloadBytes : undefined;
+  if (byteBudget === undefined) return rows;
+
+  const selectedRows: EventRow[] = [];
+  let selectedPayloadBytes = 0;
+  for (const row of rows) {
+    const rowPayloadBytes = Buffer.byteLength(row.payload, "utf8");
+    if (selectedRows.length > 0 && selectedPayloadBytes + rowPayloadBytes > byteBudget) break;
+    selectedRows.push(row);
+    selectedPayloadBytes += rowPayloadBytes;
+    if (selectedPayloadBytes >= byteBudget) break;
+  }
+  return selectedRows;
 }
 
 function boundedIntegerEnv(name: string, fallback: number, min: number, max: number): number {

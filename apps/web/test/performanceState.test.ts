@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConversationMessage } from "@pi-gui/shared";
+import { mergeConversationSummaries, mergeConversationSummariesCached } from "../src/domain/conversationSummary";
 import { prependConversationPage, evictInactiveRuntimeMessages, rememberHydratedRuntime, applyConversationDeltas } from "../src/domain/conversationState";
-import { performanceFixtureEvents } from "../src/domain/performanceFixtures";
+import { performanceFixtureEvents, performanceFixtureMessages } from "../src/domain/performanceFixtures";
 import { estimateVirtualRange, prependScrollTop } from "../src/domain/virtualList";
 
 function message(id: string, runtimeId = "runtime-1"): ConversationMessage {
@@ -41,6 +42,19 @@ test("virtual range computes visible window and prepend scroll anchor", () => {
   assert.equal(range.startIndex <= 5, true);
   assert.equal(range.endIndex >= 9, true);
   assert.equal(prependScrollTop(200, 1000, 1400), 600);
+});
+
+test("cached conversation summaries match full summaries for tail updates", () => {
+  const runtime = { id: "runtime-1", projectId: "project-1", cwd: "/tmp", status: "running" as const, startedAt: 1 };
+  const messages = performanceFixtureMessages(runtime, 200, 1000);
+  const initialMessagesByRuntime = { [runtime.id]: messages };
+  const initial = mergeConversationSummariesCached({}, initialMessagesByRuntime);
+  const last = messages[messages.length - 1]!;
+  const updatedMessages = [...messages.slice(0, -1), { ...last, text: `${last.text} streamed`, updatedAt: 2000 }];
+  const updatedMessagesByRuntime = { [runtime.id]: updatedMessages };
+  const cached = mergeConversationSummariesCached({}, updatedMessagesByRuntime, initial).summaries;
+
+  assert.deepEqual(cached, mergeConversationSummaries({}, updatedMessagesByRuntime));
 });
 
 test("performance fixture exposes long conversation and many runtime summaries", () => {

@@ -1,11 +1,17 @@
-import type { ConversationMessage, GuiEventKind, RuntimeStatus, SubagentRunMode, SubagentRunStatus } from "@pi-gui/shared";
+import type { ConversationMessage, ExecutionHostKind, GuiEventKind, RuntimeProfileId, RuntimeStatus, SubagentRunMode, SubagentRunStatus } from "@pi-gui/shared";
 
 export type ProjectRow = {
   id: string;
   name: string;
   cwd: string;
+  cwd_wsl: string | null;
+  cwd_windows: string | null;
   last_opened_at: number;
   default_model: string | null;
+  default_runtime_profile_id: RuntimeProfileId | null;
+  host_kind: ExecutionHostKind | null;
+  host_id: string | null;
+  host_label: string | null;
 };
 
 export type RuntimeRow = {
@@ -20,6 +26,11 @@ export type RuntimeRow = {
   model: string | null;
   thinking_level: string | null;
   response_mode: string | null;
+  host_kind: ExecutionHostKind | null;
+  host_id: string | null;
+  host_label: string | null;
+  runtime_profile_id: RuntimeProfileId | null;
+  enabled_capability_ids_json: string | null;
 };
 
 export type SessionRow = {
@@ -30,6 +41,9 @@ export type SessionRow = {
   created_at: number;
   updated_at: number;
   runtime_id: string | null;
+  host_kind: ExecutionHostKind | null;
+  host_id: string | null;
+  host_label: string | null;
 };
 
 export type EventRow = {
@@ -50,6 +64,7 @@ export type ConversationMessageRow = {
   thinking: string | null;
   title: string | null;
   is_streaming: number;
+  tool_details_json: string | null;
   timestamp: number | null;
   created_at: number;
   updated_at: number;

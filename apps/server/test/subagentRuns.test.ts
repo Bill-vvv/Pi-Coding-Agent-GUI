@@ -288,6 +288,9 @@ test("SubagentRunProjection normalizes trellis_subagent progress details", () =>
             finishedAt: 190,
             finalText: "child final",
             sessionFile: "/tmp/child.jsonl",
+            traceFile: "/tmp/child-trace.jsonl",
+            activitySummary: "Inspecting current code state",
+            lastAction: "read: README.md",
             tools: [{ id: "tool-1", name: "read", args: "README.md", status: "succeeded", startedAt: 120, finishedAt: 130 }],
             usage: { input: 1, output: 2, turns: 1 },
           },
@@ -304,6 +307,9 @@ test("SubagentRunProjection normalizes trellis_subagent progress details", () =>
   assert.equal(run?.parentToolMessageId, "tool-subagent-1");
   assert.equal(run?.finalText, "final report");
   assert.equal(run?.runs[0]?.finalText, "child final");
+  assert.equal(run?.runs[0]?.traceFile, "/tmp/child-trace.jsonl");
+  assert.equal(run?.runs[0]?.activitySummary, "Inspecting current code state");
+  assert.equal(run?.runs[0]?.lastAction, "read: README.md");
   assert.equal(run?.runs[0]?.tools?.[0]?.name, "read");
   assert.ok(events.some((event) => event.type === "subagent.run" && event.run.status === "running"));
   assert.ok(events.some((event) => event.type === "subagent.run" && event.run.status === "succeeded"));
@@ -339,6 +345,47 @@ test("parseSubagentChildSession reads child Pi session JSONL into conversation m
   assert.equal(detail.messages[1]?.text, "README.md");
   assert.equal(detail.messages[2]?.thinking, "分析");
   assert.equal(detail.messages[2]?.text, "检查完成");
+  db.close();
+});
+
+test("parseSubagentChildSession falls back to child trace JSONL when no session file is available", () => {
+  const { dir, db } = createDb();
+  const traceFile = join(dir, "child-trace.jsonl");
+  writeFileSync(
+    traceFile,
+    [
+      JSON.stringify({ type: "message", message: { id: "user-1", role: "user", content: "检查 trace", timestamp: 100 } }),
+      JSON.stringify({ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "npm test" } }),
+      JSON.stringify({ type: "tool_execution_end", toolCallId: "bash-1", toolName: "bash", result: "ok", timestamp: 101 }),
+      JSON.stringify({ type: "subagent_stderr", text: "warning\n", timestamp: 102 }),
+      JSON.stringify({ type: "message", message: { id: "assistant-1", role: "assistant", content: "trace 完成", timestamp: 103 } }),
+    ].join("\n"),
+    "utf8",
+  );
+
+  const detail = parseSubagentChildSession(
+    subagentRun({
+      runs: [{ id: "trellis-check-1", agent: "trellis-check", status: "succeeded", traceFile, finalText: "trace 完成" }],
+    }),
+    "trellis-check-1",
+  );
+
+  assert.equal(detail.error, undefined);
+  assert.deepEqual(detail.messages.map((message) => message.role), ["user", "tool", "log", "assistant"]);
+  assert.equal(detail.messages[2]?.title, "stderr");
+  assert.equal(detail.messages[3]?.text, "trace 完成");
+  db.close();
+});
+
+test("parseSubagentChildSession reports unavailable detail source explicitly", () => {
+  const { db } = createDb();
+  const detail = parseSubagentChildSession(
+    subagentRun({ runs: [{ id: "child-1", agent: "trellis-check", status: "running" }] }),
+    "child-1",
+  );
+
+  assert.equal(detail.messages.length, 0);
+  assert.match(detail.error ?? "", /session or trace file is not available/);
   db.close();
 });
 

@@ -6,7 +6,6 @@ import { mediaQueryMatches, subscribeMediaQuery } from "../domain/mediaQuery";
 import { isRecoverableRuntimeInterruption } from "../domain/runtimeRecovery";
 import { sidebarSessionDetail, sidebarSessionTitle } from "../domain/sidebarSessions";
 import { IconButton } from "./ui";
-import { PiLogo } from "./PiLogo";
 import { completedAssistantReplyAt, sessionDotState, sessionDotTitle, useSidebarDragReorder, useSidebarOrdering } from "./sidebar";
 
 const SESSION_DOT_BREATHE_DURATION_MS = 1350;
@@ -65,6 +64,14 @@ export function Sidebar({
   const mobileSidebarInteractions = isCompactViewport || isCoarsePointer;
   const sidebarScrollHideTimerRef = useRef<number | undefined>(undefined);
   const sessionById = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
+  const visibleRuntimesByProject = useMemo(
+    () => groupVisibleRuntimesByProject(runtimes, sessionById, conversationSummaries, messagesByRuntime),
+    [conversationSummaries, messagesByRuntime, runtimes, sessionById],
+  );
+  const recoverableInterruptionByRuntimeId = useMemo(
+    () => new Map(runtimes.map((runtime) => [runtime.id, isRecoverableRuntimeInterruption(runtime, guiEvents)])),
+    [guiEvents, runtimes],
+  );
   const {
     collapsedProjectIds,
     orderedProjects,
@@ -139,35 +146,31 @@ export function Sidebar({
   return (
     <aside className={sidebarClassName}>
       <div className={`sidebar-content ${sidebarScrolling ? "is-scrolling" : ""}`} onScroll={handleSidebarScroll}>
-        <div className="brand sidebar-brand">
-          <PiLogo compactMode={isCompactViewport} compactExpanded={compactExpanded} onToggleCompact={onToggleCompact} />
-          <div className="brand-actions">
-            <IconButton className="global-new-chat" icon="plus" label="添加项目" onClick={onAddProject} disabled={connection !== "open"} />
-          </div>
-        </div>
-
         <section className="sidebar-section project-list-section" aria-label="项目">
-          {projects.length === 0 ? <p className="muted">暂无项目。</p> : null}
+          {projects.length === 0 ? (
+            <div className="empty-project-actions">
+              <p className="muted">暂无项目。</p>
+              <IconButton className="empty-project-add" icon="plus" label="添加项目" title="添加项目" onClick={onAddProject} disabled={connection !== "open"} />
+            </div>
+          ) : null}
           {orderedProjects.map((project) => {
             const collapsed = collapsedProjectIds.has(project.id);
             const selected = project.id === selectedProject?.id;
-            const projectRuntimes = orderedRuntimesForProject(
-              project.id,
-              runtimes.filter((runtime) => {
-                if (runtime.projectId !== project.id || runtime.archivedAt) return false;
-                if (runtime.status === "running" || runtime.status === "starting" || runtime.status === "crashed") return true;
-                return runtimeHasVisibleConversationContent({
-                  runtime,
-                  session: runtime.sessionId ? sessionById.get(runtime.sessionId) : undefined,
-                  summary: conversationSummaries[runtime.id],
-                  messages: messagesByRuntime[runtime.id],
-                });
-              }),
-            );
-            const projectSessions = sessions.filter((session) => session.projectId === project.id && session.title);
+            const projectRuntimes = orderedRuntimesForProject(project.id, visibleRuntimesByProject.get(project.id) ?? EMPTY_RUNTIMES);
+            const canExpandProject = projectRuntimes.length > 0;
+            const projectExpanded = canExpandProject && !collapsed;
+            const projectSelectTitle = mobileSidebarInteractions
+              ? canExpandProject
+                ? "点击选择项目"
+                : "点击选择项目，暂无对话可展开"
+              : canExpandProject
+                ? collapsed
+                  ? "点击选择并展开对话，拖动排序"
+                  : "点击选择并收起对话，拖动排序"
+                : "点击选择项目，暂无对话可展开，拖动排序";
             return (
               <article
-                className={`project-session-group ${selected ? "selected" : ""} ${collapsed ? "collapsed" : ""} ${draggingProjectId === project.id ? "dragging" : ""} ${projectDropClass(project.id)}`}
+                className={`project-session-group ${selected ? "selected" : ""} ${projectExpanded ? "" : "collapsed"} ${draggingProjectId === project.id ? "dragging" : ""} ${projectDropClass(project.id)}`}
                 key={project.id}
                 ref={(element) => registerRowElement(`project:${project.id}`, element)}
                 onDragOver={(event) => handleProjectDragOver(event, project.id)}
@@ -182,27 +185,33 @@ export function Sidebar({
                   <button
                     className="project-select"
                     type="button"
-                    title={mobileSidebarInteractions ? "点击选择项目" : collapsed ? "点击选择并展开对话，拖动排序" : "点击选择并收起对话，拖动排序"}
-                    aria-expanded={mobileSidebarInteractions ? undefined : !collapsed}
+                    title={projectSelectTitle}
+                    aria-expanded={mobileSidebarInteractions || !canExpandProject ? undefined : projectExpanded}
                     onClick={(event) => {
                       if (consumePointerDragClick()) return;
                       if (event.detail > 1) return;
                       onSelectProject(project.id);
-                      if (!mobileSidebarInteractions) toggleProjectCollapsed(project.id);
+                      if (isCompactViewport && !compactExpanded) {
+                        onToggleCompact();
+                        return;
+                      }
+                      if (!mobileSidebarInteractions && canExpandProject) toggleProjectCollapsed(project.id);
                     }}
                     onPointerDown={mobileSidebarInteractions ? (event) => handleProjectPointerDown(event, project.id) : undefined}
                   >
                     <strong>{project.name}</strong>
                     <small>{project.cwd}</small>
                   </button>
-                  <IconButton
-                    className="project-collapse-toggle"
-                    icon="arrow-right"
-                    label={collapsed ? `展开 ${project.name} 的对话` : `收起 ${project.name} 的对话`}
-                    title={collapsed ? "展开对话" : "收起对话"}
-                    aria-expanded={!collapsed}
-                    onClick={() => toggleProjectCollapsed(project.id)}
-                  />
+                  {canExpandProject ? (
+                    <IconButton
+                      className="project-collapse-toggle"
+                      icon="arrow-right"
+                      label={collapsed ? `展开 ${project.name} 的对话` : `收起 ${project.name} 的对话`}
+                      title={collapsed ? "展开对话" : "收起对话"}
+                      aria-expanded={projectExpanded}
+                      onClick={() => toggleProjectCollapsed(project.id)}
+                    />
+                  ) : null}
                   <IconButton
                     className="project-new-chat"
                     icon="plus"
@@ -211,7 +220,7 @@ export function Sidebar({
                     disabled={connection !== "open"}
                   />
                 </div>
-                {!collapsed ? (
+                {projectExpanded ? (
                   <div className="session-list">
                     {projectRuntimes.map((runtime) => {
                       const summary = conversationSummaries[runtime.id];
@@ -220,7 +229,7 @@ export function Sidebar({
                       const detail = sidebarSessionDetail(runtime, summary, linkedSession);
                       const completedAt = completedAssistantReplyAt(summary, messagesByRuntime[runtime.id]);
                       const hasUnreadReply = Boolean(completedAt && completedAt > (readTimestampsByRuntime[runtime.id] ?? 0));
-                      const recoverableInterruption = isRecoverableRuntimeInterruption(runtime, guiEvents);
+                      const recoverableInterruption = recoverableInterruptionByRuntimeId.get(runtime.id) ?? false;
                       const dotState = sessionDotState(runtime, busyByRuntime[runtime.id] ?? false, hasUnreadReply, recoverableInterruption);
                       return (
                         <div
@@ -273,18 +282,6 @@ export function Sidebar({
                         </div>
                       );
                     })}
-                    {projectSessions.length > 0 ? (
-                      <button
-                        className="session-history-link"
-                        type="button"
-                        title={`查看 ${project.name} 的历史对话`}
-                        aria-label={`查看 ${project.name} 的历史对话`}
-                        onClick={() => onOpenSessionHistory(project.id)}
-                      >
-                        <span>查看历史对话…</span>
-                        <small>{projectSessions.length}</small>
-                      </button>
-                    ) : null}
                   </div>
                 ) : null}
               </article>
@@ -294,10 +291,46 @@ export function Sidebar({
 
       </div>
       <div className="sidebar-footer">
+        <IconButton className="add-project-entry" icon="plus" label="添加项目" title="添加项目" onClick={onAddProject} disabled={connection !== "open"} />
+        <IconButton
+          className="archive-entry"
+          icon="archive"
+          label={selectedProject ? `查看 ${selectedProject.name} 的归档对话` : "归档对话"}
+          title={selectedProject ? `查看 ${selectedProject.name} 的归档对话` : "请选择项目后查看归档对话"}
+          disabled={!selectedProject}
+          onClick={() => {
+            if (selectedProject) onOpenSessionHistory(selectedProject.id);
+          }}
+        />
         <IconButton className="settings-entry" icon="settings" label="设置" onClick={onOpenSettings} />
       </div>
     </aside>
   );
+}
+
+const EMPTY_RUNTIMES: Runtime[] = [];
+
+function groupVisibleRuntimesByProject(
+  runtimes: Runtime[],
+  sessionById: Map<string, GuiSession>,
+  conversationSummaries: Record<string, RuntimeConversationSummary>,
+  messagesByRuntime: Record<string, ConversationMessage[]>,
+): Map<string, Runtime[]> {
+  const grouped = new Map<string, Runtime[]>();
+  for (const runtime of runtimes) {
+    if (runtime.archivedAt) continue;
+    const visible = runtime.status === "running" || runtime.status === "starting" || runtime.status === "crashed" || runtimeHasVisibleConversationContent({
+      runtime,
+      session: runtime.sessionId ? sessionById.get(runtime.sessionId) : undefined,
+      summary: conversationSummaries[runtime.id],
+      messages: messagesByRuntime[runtime.id],
+    });
+    if (!visible) continue;
+    const items = grouped.get(runtime.projectId) ?? [];
+    items.push(runtime);
+    grouped.set(runtime.projectId, items);
+  }
+  return grouped;
 }
 
 function useCompactSidebarViewport(): boolean {

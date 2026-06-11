@@ -1,0 +1,190 @@
+:root[data-pi-gui-transparent-window="true"],
+:root[data-pi-gui-transparent-window="true"] body,
+:root[data-pi-gui-transparent-window="true"] #root {
+  background: transparent;
+}
+
+.app-shell.desktop-shell {
+  --app-shell-padding: 36px;
+  --desktop-titlebar-height: 34px;
+  --desktop-window-radius: 18px;
+  --desktop-window-edge: color-mix(in srgb, var(--color-border-panel) 72%, transparent);
+  --desktop-window-edge-soft: color-mix(in srgb, var(--color-border-subtle) 48%, transparent);
+  --desktop-window-edge-highlight: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+  grid-template-rows: minmax(0, 1fr);
+  border: 0;
+  background: var(--color-bg-app);
+  box-shadow: none;
+}
+
+:root[data-pi-gui-transparent-window="true"] .app-shell.desktop-shell {
+  border-radius: var(--desktop-window-radius);
+}
+
+:root[data-pi-gui-transparent-window="true"] .app-shell.desktop-shell:has(.desktop-window-control.restore) {
+  border-radius: 0;
+}
+
+.desktop-window-chrome {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: calc(var(--app-shell-padding) + var(--sidebar-width));
+  z-index: 5;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  height: var(--desktop-titlebar-height);
+  overflow: hidden;
+  border-bottom: 0;
+  background: transparent;
+  color: var(--color-text-soft);
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.desktop-window-drag-region {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  pointer-events: auto;
+  -webkit-app-region: drag;
+}
+
+.desktop-window-title,
+.desktop-window-chip {
+  display: none;
+}
+
+.desktop-window-controls {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-self: stretch;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.desktop-window-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  min-width: 46px;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-text-soft);
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.desktop-window-control:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--color-hover-subtle);
+  color: var(--color-text-primary);
+}
+
+.desktop-window-control:active:not(:disabled) {
+  transform: none;
+}
+
+.desktop-window-control:focus-visible {
+  outline: 2px solid var(--color-focus-outline);
+  outline-offset: -3px;
+}
+
+.desktop-window-control.close:hover:not(:disabled) {
+  background: var(--color-error-bg-subtle);
+  color: var(--color-error-text);
+}
+
+.desktop-window-control span {
+  position: relative;
+  width: 14px;
+  height: 14px;
+}
+
+.desktop-window-control.minimize span::before {
+  content: "";
+  position: absolute;
+  right: 1px;
+  bottom: 3px;
+  left: 1px;
+  height: 1.5px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
+
+.desktop-window-control.maximize span::before,
+.desktop-window-control.restore span::before,
+.desktop-window-control.restore span::after {
+  content: "";
+  position: absolute;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+}
+
+.desktop-window-control.maximize span::before {
+  inset: 1px;
+}
+
+.desktop-window-control.restore span::before {
+  inset: 4px 1px 1px 4px;
+  background: color-mix(in srgb, var(--color-bg-app) 68%, transparent);
+}
+
+.desktop-window-control.restore span::after {
+  inset: 1px 4px 4px 1px;
+}
+
+.desktop-window-control.close span::before,
+.desktop-window-control.close span::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 1px;
+  left: 1px;
+  height: 1.7px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
+
+.desktop-window-control.close span::before {
+  transform: rotate(45deg);
+}
+
+.desktop-window-control.close span::after {
+  transform: rotate(-45deg);
+}
+
+.app-shell.desktop-shell .left-sidebar {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.app-shell.desktop-shell .main-chat {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.app-shell.desktop-shell.settings-open {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell.desktop-shell.settings-open .left-sidebar {
+  display: none;
+}
+
+.app-shell.desktop-shell.settings-open .main-chat {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}

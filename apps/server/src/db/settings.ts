@@ -1,6 +1,5 @@
 import type Database from "better-sqlite3";
-import type { AppSettings } from "@pi-gui/shared";
-import { normalizeVoiceInputSettings } from "@pi-gui/shared";
+import { isRuntimeProfileId, type AppSettings } from "@pi-gui/shared";
 import { parseThinkingLevel } from "./mappers.js";
 
 export class SettingsStore {
@@ -13,7 +12,9 @@ export class SettingsStore {
       if (row.key === "defaultModel") settings.defaultModel = row.value;
       if (row.key === "defaultThinkingLevel") settings.defaultThinkingLevel = parseThinkingLevel(row.value);
       if (row.key === "responseMode") settings.responseMode = row.value === "fast" ? "fast" : "normal";
-      if (row.key === "voiceInput") settings.voiceInput = parseVoiceInputSetting(row.value);
+      if (row.key === "defaultRuntimeProfileId" && isRuntimeProfileId(row.value)) settings.defaultRuntimeProfileId = row.value;
+      if (row.key === "customRuntimeCapabilityIds") settings.customRuntimeCapabilityIds = parseStringArray(row.value);
+      if (row.key === "confirmedProjectExtensionIds") settings.confirmedProjectExtensionIds = parseStringArray(row.value);
     }
     return settings;
   }
@@ -29,9 +30,14 @@ export class SettingsStore {
     if (settings.responseMode !== undefined) {
       this.upsertSetting("responseMode", settings.responseMode, now);
     }
-    if (settings.voiceInput !== undefined) {
-      const normalized = normalizeVoiceInputSettings(settings.voiceInput);
-      this.upsertSetting("voiceInput", normalized ? JSON.stringify(normalized) : "", now);
+    if (settings.defaultRuntimeProfileId !== undefined) {
+      this.upsertSetting("defaultRuntimeProfileId", settings.defaultRuntimeProfileId, now);
+    }
+    if (settings.customRuntimeCapabilityIds !== undefined) {
+      this.upsertSetting("customRuntimeCapabilityIds", JSON.stringify([...new Set(settings.customRuntimeCapabilityIds)].sort()), now);
+    }
+    if (settings.confirmedProjectExtensionIds !== undefined) {
+      this.upsertSetting("confirmedProjectExtensionIds", JSON.stringify([...new Set(settings.confirmedProjectExtensionIds)].sort()), now);
     }
     return this.getSettings();
   }
@@ -60,10 +66,12 @@ export class SettingsStore {
   }
 }
 
-function parseVoiceInputSetting(value: string): AppSettings["voiceInput"] {
+function parseStringArray(value: string): string[] {
   try {
-    return normalizeVoiceInputSettings(JSON.parse(value));
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return [...new Set(parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()))].sort();
   } catch {
-    return undefined;
+    return [];
   }
 }

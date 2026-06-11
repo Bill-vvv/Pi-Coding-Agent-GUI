@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { diagnoseEnvironment } from "../src/services/environmentService.js";
+import { diagnoseEnvironment, getCachedEnvironmentDiagnostics, resetEnvironmentDiagnosticsCacheForTest } from "../src/services/environmentService.js";
 
 type MockExec = (file: string, args: string[]) => { ok: boolean; stdout?: string; stderr?: string; error?: Error };
 
@@ -51,6 +51,31 @@ test("diagnoseEnvironment returns ready desktop diagnostics when WSL, npm, Pi, a
   assert.equal(diagnostics.pi.rpcSmoke?.ok, true);
   assert.equal(diagnostics.readiness?.status, "ready");
   assert.deepEqual(diagnostics.readiness?.issues, []);
+});
+
+test("getCachedEnvironmentDiagnostics deduplicates repeated diagnostics within the TTL", async () => {
+  resetEnvironmentDiagnosticsCacheForTest();
+  let execCalls = 0;
+  let smokeCalls = 0;
+  const dependencies = baseDependencies(
+    (file, args) => {
+      execCalls += 1;
+      if (file === "npm" && args[0] === "--version") return { ok: true, stdout: "10.8.0\n" };
+      if (file === "which") return { ok: true, stdout: "/usr/local/bin/pi\n" };
+      if (file === "pi") return { ok: true, stdout: "pi 1.2.3\n" };
+      return { ok: false, error: new Error("unexpected command") };
+    },
+    { rpcSmoke: async () => { smokeCalls += 1; return { ok: true, command: "get_available_models", durationMs: 12 }; } },
+  );
+
+  const first = await getCachedEnvironmentDiagnostics({ env: { WSL_DISTRO_NAME: "Ubuntu", WSL_INTEROP: "1" }, dependencies });
+  const second = await getCachedEnvironmentDiagnostics({ env: { WSL_DISTRO_NAME: "Ubuntu", WSL_INTEROP: "1" }, dependencies });
+
+  assert.equal(first.readiness?.status, "ready");
+  assert.equal(second.readiness?.status, "ready");
+  assert.equal(execCalls, 3);
+  assert.equal(smokeCalls, 1);
+  resetEnvironmentDiagnosticsCacheForTest();
 });
 
 test("diagnoseEnvironment reports missing Pi without running RPC smoke", async () => {

@@ -3,6 +3,8 @@ import type { GuiEvent } from "@pi-gui/shared";
 const MAX_EVENT_LOG_STRING_CHARS = 64_000;
 const MAX_EVENT_LOG_ARRAY_ITEMS = 200;
 const EVENT_LOG_COMPACTION_MARKER = "[omitted by Pi GUI event log compaction]";
+const BASE64_EVENT_LOG_COMPACTION_MARKER = "[omitted embedded image/base64 payload by Pi GUI event log compaction]";
+const MAX_EVENT_LOG_INLINE_DATA_CHARS = 1024;
 
 export function compactPayloadForEventLog(kind: GuiEvent["kind"], payload: unknown): unknown {
   return kind === "pi_event" ? compactPiPayload(payload) : compactValue(payload);
@@ -103,13 +105,13 @@ function compactAssistantMessageEvent(event: Record<string, unknown>): Record<st
   return compacted;
 }
 
-function compactValue(value: unknown, depth = 0): unknown {
-  if (typeof value === "string") return compactString(value);
+function compactValue(value: unknown, depth = 0, key?: string): unknown {
+  if (typeof value === "string") return compactString(value, key);
   if (typeof value !== "object" || value === null) return value;
   if (depth > 8) return EVENT_LOG_COMPACTION_MARKER;
 
   if (Array.isArray(value)) {
-    const compacted = value.slice(0, MAX_EVENT_LOG_ARRAY_ITEMS).map((item) => compactValue(item, depth + 1));
+    const compacted = value.slice(0, MAX_EVENT_LOG_ARRAY_ITEMS).map((item) => compactValue(item, depth + 1, key));
     if (value.length > MAX_EVENT_LOG_ARRAY_ITEMS) {
       compacted.push(`${EVENT_LOG_COMPACTION_MARKER}: ${value.length - MAX_EVENT_LOG_ARRAY_ITEMS} array item(s)`);
     }
@@ -122,14 +124,24 @@ function compactValue(value: unknown, depth = 0): unknown {
   const compacted: Record<string, unknown> = {};
   for (const [key, nestedValue] of Object.entries(record)) {
     if (key === "thinkingSignature" || key === "signature") continue;
-    compacted[key] = compactValue(nestedValue, depth + 1);
+    compacted[key] = compactValue(nestedValue, depth + 1, key);
   }
   return compacted;
 }
 
-function compactString(value: string): string {
+function compactString(value: string, key?: string): string {
+  if (isEmbeddedDataKey(key) && value.length > MAX_EVENT_LOG_INLINE_DATA_CHARS) {
+    return `${BASE64_EVENT_LOG_COMPACTION_MARKER}: ${value.length} chars`;
+  }
+  if (/^data:image\/(?:png|jpeg|jpg|gif|webp);base64,/i.test(value)) {
+    return `${BASE64_EVENT_LOG_COMPACTION_MARKER}: ${value.length} chars`;
+  }
   if (value.length <= MAX_EVENT_LOG_STRING_CHARS) return value;
   return `${value.slice(0, MAX_EVENT_LOG_STRING_CHARS)}\n…[truncated ${value.length - MAX_EVENT_LOG_STRING_CHARS} chars]`;
+}
+
+function isEmbeddedDataKey(key: string | undefined): boolean {
+  return key === "data" || key === "image" || key === "base64";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

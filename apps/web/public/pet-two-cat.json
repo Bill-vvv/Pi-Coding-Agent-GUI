@@ -1,0 +1,10 @@
+{
+  "id": "two-cat-pet",
+  "displayName": "素材宠物",
+  "description": "Imported spritesheet PET skin. Frames are rendered as a complete 8-column by 13-row spritesheet and mood rows are selected from Pi GUI runtime state.",
+  "spritesheetPath": "pet-two-cat-spritesheet.webp",
+  "frameWidth": 192,
+  "frameHeight": 144,
+  "columns": 8,
+  "rows": 13
+}

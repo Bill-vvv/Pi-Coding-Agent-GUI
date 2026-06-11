@@ -11,7 +11,7 @@
   transform: translateX(-50%);
   border: 1px solid var(--color-border-panel);
   border-radius: var(--radius-composer);
-  background: var(--color-surface-panel);
+  background: var(--color-composer-panel-bg);
   box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px);
   padding: 0.55rem;
@@ -203,10 +203,11 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.25rem;
   align-items: end;
-  border: 1px solid transparent;
+  border: 1px solid var(--color-border-input);
   border-radius: 20px;
+  background: var(--color-composer-input-bg);
   padding: 0.05rem;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
 }
 
 
@@ -223,7 +224,7 @@
   overscroll-behavior: contain;
   border: none;
   border-radius: 18px;
-  background: transparent;
+  background: var(--color-composer-input-bg);
   font-size: var(--text-body);
   line-height: var(--line-body);
   padding: 0.8rem 0.9rem;
@@ -262,7 +263,7 @@
 .composer textarea:focus::-webkit-scrollbar-thumb:hover { background-color: var(--color-scrollbar-thumb-hover); }
 
 .composer textarea:focus {
-  background: transparent;
+  background: var(--color-composer-input-bg);
   box-shadow: none;
 }
 
@@ -317,15 +318,6 @@
 
 .send-action:active:not(:disabled),
 .composer-attach-action:active:not(:disabled) { transform: none; }
-
-.composer-voice-action.is-recording {
-  color: var(--color-accent-primary);
-  opacity: 1;
-}
-
-.composer-voice-status.is-recording {
-  color: var(--color-accent-primary);
-}
 
 .abort-action {
   border-color: var(--color-border-subtle);

@@ -1,7 +1,12 @@
 node_modules/
 dist/
+apps/*/dist/
+packages/*/dist/
 .vite/
 .pi-gui/
+**/.pi-gui-desktop/
+**/.pi-gui-dev/
+**/.pi-gui-stable/
 .venv/
 __pycache__/
 *.py[cod]
@@ -9,7 +14,7 @@ __pycache__/
 .DS_Store
 .env
 .env.*
-.context-index-demo/
+.pi-gui-desktop.local.json
 /.pi/
 /.trellis/
 /AGENTS.md

@@ -21,6 +21,18 @@ type FileSearchResponse = {
   entries: FileSearchEntry[];
 };
 
+type FileSearchCacheEntry = {
+  expiresAt: number;
+  rootMtimeMs: number;
+  rootSize: number;
+  response: FileSearchResponse;
+};
+
+const FILE_SEARCH_CACHE_TTL_MS = 2_000;
+const FILE_SEARCH_CACHE_MAX_ENTRIES = 100;
+const fileSearchCache = new Map<string, FileSearchCacheEntry>();
+const fileSearchInFlight = new Map<string, Promise<FileSearchResponse>>();
+
 export async function registerFsRoutes(fastify: FastifyInstance, options: FsRouteOptions = {}): Promise<void> {
   const resolvePath = options.resolvePath ?? resolveProjectPath;
   fastify.post("/api/fs/resolve", async (request): Promise<ResolvedPath> => {
@@ -85,10 +97,60 @@ async function searchProjectFiles(rootPath: string, query: string, limit: number
   if (!rootStat.isDirectory()) throw new Error(`root is not a directory: ${root}`);
 
   const normalizedQuery = query.trim().toLowerCase().replace(/^@/, "");
+  const cacheKey = fileSearchCacheKey(root, query, normalizedQuery, limit);
+  const cached = fileSearchCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() && cached.rootMtimeMs === rootStat.mtimeMs && cached.rootSize === rootStat.size) {
+    return cloneFileSearchResponse(cached.response);
+  }
+
+  const inFlightKey = `${cacheKey}\0${rootStat.mtimeMs}\0${rootStat.size}`;
+  const inFlight = fileSearchInFlight.get(inFlightKey);
+  if (inFlight) return cloneFileSearchResponse(await inFlight);
+
+  const refresh = computeProjectFileSearch(root, query, normalizedQuery, limit)
+    .then((response) => {
+      fileSearchCache.set(cacheKey, {
+        expiresAt: Date.now() + FILE_SEARCH_CACHE_TTL_MS,
+        rootMtimeMs: rootStat.mtimeMs,
+        rootSize: rootStat.size,
+        response: cloneFileSearchResponse(response),
+      });
+      trimFileSearchCache();
+      return response;
+    })
+    .finally(() => {
+      fileSearchInFlight.delete(inFlightKey);
+    });
+  fileSearchInFlight.set(inFlightKey, refresh);
+  return cloneFileSearchResponse(await refresh);
+}
+
+async function computeProjectFileSearch(root: string, query: string, normalizedQuery: string, limit: number): Promise<FileSearchResponse> {
   const entries: FileSearchEntry[] = [];
   await walkSearch(root, root, normalizedQuery, entries, { limit, visited: 0, maxVisited: FILE_SEARCH_MAX_VISITED });
   entries.sort((left, right) => fileSearchRank(left.relativePath, normalizedQuery) - fileSearchRank(right.relativePath, normalizedQuery) || left.relativePath.localeCompare(right.relativePath));
   return { root, query, entries: entries.slice(0, limit) };
+}
+
+export function resetFileSearchCacheForTest(): void {
+  fileSearchCache.clear();
+  fileSearchInFlight.clear();
+}
+
+function fileSearchCacheKey(root: string, query: string, normalizedQuery: string, limit: number): string {
+  return `${root}\0${query}\0${normalizedQuery}\0${limit}`;
+}
+
+function cloneFileSearchResponse(response: FileSearchResponse): FileSearchResponse {
+  return { root: response.root, query: response.query, entries: response.entries.map((entry) => ({ ...entry })) };
+}
+
+function trimFileSearchCache(): void {
+  while (fileSearchCache.size > FILE_SEARCH_CACHE_MAX_ENTRIES) {
+    const oldestKey = fileSearchCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    fileSearchCache.delete(oldestKey);
+  }
 }
 
 async function walkSearch(root: string, cwd: string, query: string, entries: FileSearchEntry[], budget: { limit: number; visited: number; maxVisited: number }): Promise<void> {

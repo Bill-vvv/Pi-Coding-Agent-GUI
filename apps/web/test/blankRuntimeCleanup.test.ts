@@ -11,8 +11,11 @@ test("allows auto archiving a running blank runtime with no draft or local activ
   assert.equal(shouldAutoArchiveBlankRuntime({ runtime: runtime(), messageCount: 0, isBusy: false, hasLocalUserActivity: false, draftPrompt: "" }), true);
 });
 
+test("allows auto archiving blank runtimes even after Pi assigns a session id", () => {
+  assert.equal(shouldAutoArchiveBlankRuntime({ runtime: runtime({ sessionId: "session-1" }), messageCount: 0, isBusy: false, hasLocalUserActivity: false, draftPrompt: "" }), true);
+});
+
 test("blocks auto archiving contentful or in-flight runtimes", () => {
-  assert.equal(shouldAutoArchiveBlankRuntime({ runtime: runtime({ sessionId: "session-1" }), messageCount: 0, isBusy: false, hasLocalUserActivity: false, draftPrompt: "" }), false);
   assert.equal(shouldAutoArchiveBlankRuntime({ runtime: runtime(), messageCount: 1, isBusy: false, hasLocalUserActivity: false, draftPrompt: "" }), false);
   assert.equal(shouldAutoArchiveBlankRuntime({ runtime: runtime(), messageCount: 0, isBusy: true, hasLocalUserActivity: false, draftPrompt: "" }), false);
   assert.equal(shouldAutoArchiveBlankRuntime({ runtime: runtime(), messageCount: 0, isBusy: false, hasLocalUserActivity: true, draftPrompt: "" }), false);

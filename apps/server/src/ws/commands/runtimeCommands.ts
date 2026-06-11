@@ -7,17 +7,17 @@ type CommandOf<TType extends ClientCommand["type"]> = Extract<ClientCommand, { t
 const DEFAULT_RUNTIME_LOG_KINDS: GuiEventKind[] = ["runtime_status", "stderr", "error"];
 
 export async function handleRuntimeStart(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"runtime.start">): Promise<void> {
-  const runtime = context.supervisor.startRuntime(command.projectId, { model: command.model, thinkingLevel: command.thinkingLevel, responseMode: command.responseMode });
+  const runtime = context.supervisor.startRuntime(command.projectId, { model: command.model, thinkingLevel: command.thinkingLevel, responseMode: command.responseMode, runtimeProfileId: command.runtimeProfileId });
   sendCommandResult(context, socket, command, true, { runtime });
 }
 
 export async function handleRuntimeResume(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"runtime.resume">): Promise<void> {
-  const runtime = context.supervisor.resumeRuntime(command.runtimeId, { model: command.model, thinkingLevel: command.thinkingLevel, responseMode: command.responseMode });
+  const runtime = context.supervisor.resumeRuntime(command.runtimeId, { model: command.model, thinkingLevel: command.thinkingLevel, responseMode: command.responseMode, runtimeProfileId: command.runtimeProfileId });
   sendCommandResult(context, socket, command, true, { runtime });
 }
 
 export async function handleRuntimeRestart(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"runtime.restart">): Promise<void> {
-  const runtime = context.supervisor.restartRuntime(command.runtimeId, { model: command.model, thinkingLevel: command.thinkingLevel, responseMode: command.responseMode });
+  const runtime = context.supervisor.restartRuntime(command.runtimeId, { model: command.model, thinkingLevel: command.thinkingLevel, responseMode: command.responseMode, runtimeProfileId: command.runtimeProfileId });
   sendCommandResult(context, socket, command, true, { runtime });
 }
 
@@ -43,8 +43,8 @@ export async function handleRuntimeArchive(context: CommandHandlerContext, socke
 
 export async function handleRuntimeArchiveBlank(context: CommandHandlerContext, socket: WsClient, command: CommandOf<"runtime.archiveBlank">): Promise<void> {
   // Guarded cleanup for unused new conversations. archiveBlankRuntime returns
-  // the unchanged runtime when content, a session link, busy state, or status
-  // makes cleanup unsafe.
+  // the unchanged runtime when content, busy state, or status makes cleanup
+  // unsafe; an empty Pi session link alone is still blank.
   const runtime = context.supervisor.archiveBlankRuntime(command.runtimeId);
   sendCommandResult(context, socket, command, true, { runtime });
 }

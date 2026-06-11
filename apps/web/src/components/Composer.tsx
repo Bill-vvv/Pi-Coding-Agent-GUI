@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from "react";
-import type { ModelSummary, Project, ResponseMode, Runtime, RuntimeQueue, SlashCommand, ThinkingLevel, VoiceInputSettings } from "@pi-gui/shared";
+import type { ModelSummary, Project, ResponseMode, Runtime, RuntimeQueue, SlashCommand, ThinkingLevel } from "@pi-gui/shared";
 import {
   buildCommandOptions,
   buildComposerCompletions,
@@ -23,9 +23,7 @@ import { activeComposerReferenceToken, completeComposerReference, type ComposerF
 import { authHeaders } from "../domain/runtimeConfig";
 import { runtimeQueueOrderItems } from "../domain/runtimeQueueOrdering";
 import type { RuntimeExtensionUiChrome } from "../domain/extensionUiChrome";
-import { effectiveGuiKeybindings, eventMatchesKeyCombos, type GuiKeybindingMap } from "../domain/keybindings";
 import { mediaQueryMatches } from "../domain/mediaQuery";
-import { useVoiceInput } from "../hooks/useVoiceInput";
 import type { ConnectionState, ConversationContextUsage } from "../types";
 import { ContextIndicator } from "./ContextIndicator";
 import { ExtensionUiWidgetStack } from "./ExtensionUiChrome";
@@ -54,8 +52,6 @@ type ComposerProps = {
   connection: ConnectionState;
   activeRuntime?: Runtime;
   activeRuntimeIsBusy: boolean;
-  voiceInputSettings?: VoiceInputSettings;
-  keybindings?: GuiKeybindingMap;
   onSubmit: (streamingBehavior?: "steer" | "followUp") => void;
   onPromptChange: (prompt: string) => void;
   onExecuteCommandInput: (input: string, command?: ComposerCommandOption) => boolean;
@@ -89,8 +85,6 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
   connection,
   activeRuntime,
   activeRuntimeIsBusy,
-  voiceInputSettings,
-  keybindings,
   onSubmit,
   onPromptChange,
   onExecuteCommandInput,
@@ -127,15 +121,6 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
   );
   const referenceToken = useMemo(() => activeComposerReferenceToken(prompt, caretIndex), [caretIndex, prompt]);
   const referenceCompletionVisible = Boolean(referenceToken && referenceItems.length > 0 && !referenceMenuSuppressed && !commandCompletion.visible);
-  const { voiceInput, toggleRecording, dismissError: dismissVoiceInputError } = useVoiceInput({
-    connection,
-    settings: voiceInputSettings,
-    onTranscript: insertPromptFragment,
-  });
-  const effectiveKeybindings = useMemo(() => effectiveGuiKeybindings(keybindings), [keybindings]);
-  const voiceLabel =
-    voiceInput.state === "recording" ? "停止语音输入" : voiceInput.state === "processing" ? "正在识别语音" : voiceInput.state === "unavailable" ? voiceInput.status?.message ?? "语音输入不可用" : "语音输入";
-  const voiceTitle = `${voiceLabel}（${effectiveKeybindings["app.voice.toggle"].join(" / ")}）`;
 
   useEffect(() => {
     latestPromptRef.current = prompt;
@@ -184,19 +169,6 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
       });
     return () => controller.abort();
   }, [projectCwd, referenceMenuSuppressed, referenceToken, selectedProject?.cwd]);
-
-  useEffect(() => {
-    function handleVoiceInputShortcut(event: KeyboardEvent) {
-      if (!eventMatchesKeyCombos(event, effectiveKeybindings["app.voice.toggle"]) || event.repeat || event.defaultPrevented) return;
-      event.preventDefault();
-      if (connection !== "open" || voiceInput.state === "processing" || voiceInput.state === "unavailable") return;
-      void toggleRecording();
-      requestAnimationFrame(() => textareaRef.current?.focus());
-    }
-
-    window.addEventListener("keydown", handleVoiceInputShortcut);
-    return () => window.removeEventListener("keydown", handleVoiceInputShortcut);
-  }, [connection, effectiveKeybindings, toggleRecording, voiceInput.state]);
 
   useEffect(() => {
     function handleWindowDragOver(event: globalThis.DragEvent) {
@@ -334,7 +306,7 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
     await importPromptFiles(files, [], [], "剪贴板文件导入失败");
   }
 
-  async function importPromptFiles(files: File[], referencePaths: string[], unsupportedLabels: string[], errorPrefix: string) {
+  async function importPromptFiles(files: File[], referencePaths: readonly (string | undefined)[], unsupportedLabels: string[], errorPrefix: string) {
     setDropNotice(undefined);
     setDropState("reading");
     try {
@@ -377,17 +349,6 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
           <span>{dropState === "active" ? "松开即可导入文件到对话" : dropState === "reading" ? "正在导入拖拽文件…" : dropNotice}</span>
           {dropState === "idle" && dropNotice ? (
             <button className="composer-drop-status-dismiss" type="button" aria-label="关闭拖拽导入提示" onClick={() => setDropNotice(undefined)}>
-              ×
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
-      {voiceInput.state === "recording" || voiceInput.state === "processing" || voiceInput.error ? (
-        <div className={`composer-drop-status composer-voice-status is-${voiceInput.state}`} aria-live="polite">
-          <span>{voiceInput.state === "recording" ? "正在录音…再次点击麦克风结束" : voiceInput.state === "processing" ? "正在离线识别语音…" : voiceInput.error}</span>
-          {voiceInput.error ? (
-            <button className="composer-drop-status-dismiss" type="button" aria-label="关闭语音输入错误" onClick={dismissVoiceInputError}>
               ×
             </button>
           ) : null}
@@ -512,16 +473,6 @@ export const Composer = forwardRef<HTMLFormElement, ComposerProps>(function Comp
               disabled={dropState === "reading" || connection !== "open"}
             >
               <Icon name="attach" />
-            </button>
-            <button
-              className={`composer-attach-action composer-voice-action ${voiceInput.state === "recording" ? "is-recording" : ""}`}
-              type="button"
-              title={voiceTitle}
-              aria-label={voiceTitle}
-              onClick={() => void toggleRecording()}
-              disabled={connection !== "open" || voiceInput.state === "processing" || voiceInput.state === "unavailable"}
-            >
-              <Icon name="mic" />
             </button>
           </div>
           <div className="composer-submit-actions">

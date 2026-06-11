@@ -1,4 +1,5 @@
-import { isRecord } from "@pi-gui/shared";
+import { isRecord, type ConversationToolDetails } from "@pi-gui/shared";
+import type { AppDatabase } from "../../db.js";
 import { contextUsageFromSessionStats, numberOrUndefined } from "./contextUsage.js";
 import type { NormalizedConversationEvent, NormalizedSnapshotMessage } from "./normalizedEvents.js";
 import { extractPiMessageContent, textFromResult } from "./piMessageContent.js";
@@ -7,6 +8,7 @@ import { toolConversationIdFromPiMessage, toolKeyFromPayload, toolNameFromPayloa
 
 export type PiPayloadNormalizerOptions = {
   currentContextWindow?: number;
+  db?: AppDatabase;
 };
 
 export function normalizePiPayload(payload: unknown, options: PiPayloadNormalizerOptions = {}): NormalizedConversationEvent[] {
@@ -75,7 +77,7 @@ export function normalizePiPayload(payload: unknown, options: PiPayloadNormalize
   }
 
   if (command === "get_session_stats") {
-    const usage = contextUsageFromSessionStats(data, options.currentContextWindow);
+    const usage = contextUsageFromSessionStats(data, options.currentContextWindow, options.db);
     return usage ? [{ type: "context.usage", usage }] : [];
   }
 
@@ -102,7 +104,7 @@ function normalizeMessagesSnapshot(value: unknown): NormalizedSnapshotMessage[] 
 
     if (role === "user" || role === "assistant") {
       const content = extractPiMessageContent(item);
-      const errorMessage = typeof item.errorMessage === "string" ? item.errorMessage : undefined;
+      const errorMessage = errorMessageFromPiMessage(item);
       if (!content.text && !content.thinking && !errorMessage) return;
       messages.push({
         id: messageIdFromPiMessage(item) ?? `snapshot-${index}-${timestamp}`,
@@ -122,6 +124,7 @@ function normalizeMessagesSnapshot(value: unknown): NormalizedSnapshotMessage[] 
       const fallbackId = item.role === "bashExecution" ? `bash-${timestamp}-${index}` : `tool-snapshot-${index}-${timestamp}`;
       const id = toolConversationIdFromPiMessage(item) ?? fallbackId;
       if (!text && !toolName) return;
+      const toolDetails = toolDetailsFromRecord(item, toolName);
       messages.push({
         id,
         role: "tool",
@@ -129,6 +132,7 @@ function normalizeMessagesSnapshot(value: unknown): NormalizedSnapshotMessage[] 
         text,
         timestamp,
         isStreaming: false,
+        ...(toolDetails ? { toolDetails } : {}),
       });
     }
   });
@@ -143,7 +147,7 @@ function normalizeMessageLifecycle(payload: Record<string, unknown>): Normalized
   if (role !== "user" && role !== "assistant") return [];
 
   const content = extractPiMessageContent(message);
-  const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage : undefined;
+  const errorMessage = errorMessageFromPiMessage(message);
   return [
     {
       type: payload.type === "message_start" ? "message.started" : "message.finished",
@@ -198,9 +202,22 @@ function normalizeToolExecution(payload: Record<string, unknown>): NormalizedCon
   }
 
   if (payload.type === "tool_execution_update") {
-    return [{ type: "tool.updated", tool: { key, name, text: textFromResult(payload.partialResult) || textFromResult(payload.result), timestamp } }];
+    const toolDetails = toolDetailsFromRecord(payload, name);
+    return [
+      {
+        type: "tool.updated",
+        tool: {
+          key,
+          name,
+          text: textFromResult(payload.partialResult) || textFromResult(payload.result),
+          timestamp,
+          ...(toolDetails ? { toolDetails } : {}),
+        },
+      },
+    ];
   }
 
+  const toolDetails = toolDetailsFromRecord(payload, name);
   return [
     {
       type: "tool.finished",
@@ -210,9 +227,96 @@ function normalizeToolExecution(payload: Record<string, unknown>): NormalizedCon
         text: textFromResult(payload.result),
         timestamp,
         isError: payload.isError === true,
+        ...(toolDetails ? { toolDetails } : {}),
       },
     },
   ];
+}
+
+function toolDetailsFromRecord(record: Record<string, unknown>, toolName: string): ConversationToolDetails | undefined {
+  if (toolName.toLowerCase() !== "edit") return undefined;
+  const details = detailsRecord(record.result) ?? detailsRecord(record.partialResult) ?? detailsRecord(record.output) ?? detailsRecord(record.content) ?? detailsRecord(record);
+  const diff = typeof details?.diff === "string" && details.diff.trim() ? details.diff : undefined;
+  if (!diff) return undefined;
+
+  const path = toolPathFromRecord(record);
+  const firstChangedLine = numberOrUndefined(details?.firstChangedLine);
+  return {
+    ...(path ? { path } : {}),
+    diff,
+    ...(firstChangedLine !== undefined ? { firstChangedLine } : {}),
+  };
+}
+
+function detailsRecord(value: unknown): Record<string, unknown> | undefined {
+  if (Array.isArray(value)) {
+    return value.map(detailsRecord).find((item): item is Record<string, unknown> => Boolean(item));
+  }
+  if (!isRecord(value)) return undefined;
+  if (isRecord(value.details)) return value.details;
+  return detailsRecord(value.result) ?? detailsRecord(value.output) ?? detailsRecord(value.content);
+}
+
+function toolPathFromRecord(record: Record<string, unknown>): string | undefined {
+  const candidates = [record.args, record.arguments, record.input, record.toolCall, record];
+  for (const candidate of candidates) {
+    const path = toolPathFromCandidate(candidate);
+    if (path) return path;
+  }
+  return undefined;
+}
+
+function toolPathFromCandidate(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const path = typeof value.path === "string" ? value.path : typeof value.file_path === "string" ? value.file_path : undefined;
+  if (path?.trim()) return path;
+  return toolPathFromCandidate(value.args) ?? toolPathFromCandidate(value.arguments) ?? toolPathFromCandidate(value.input);
+}
+
+function errorMessageFromPiMessage(message: Record<string, unknown>): string | undefined {
+  const base = typeof message.errorMessage === "string" && message.errorMessage.trim() ? message.errorMessage.trim() : undefined;
+  const diagnostics = diagnosticsSummary(message.diagnostics);
+  if (!diagnostics) return base;
+  if (!base) return diagnostics;
+  if (diagnostics.includes(base)) return diagnostics;
+  if (base.includes(diagnostics)) return base;
+  return `${base}\n${diagnostics}`;
+}
+
+function diagnosticsSummary(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const summaries = value.map(diagnosticSummary).filter(Boolean);
+  return summaries.length ? summaries.join("\n").slice(0, 1200) : undefined;
+}
+
+function diagnosticSummary(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const type = typeof value.type === "string" ? value.type : "provider_diagnostic";
+  const error = isRecord(value.error) ? value.error : undefined;
+  const details = isRecord(value.details) ? value.details : undefined;
+  const message = typeof error?.message === "string" && error.message.trim() ? error.message.trim() : undefined;
+  const code = typeof error?.code === "number" || typeof error?.code === "string" ? `code ${String(error.code)}` : undefined;
+  const phase = typeof details?.phase === "string" ? `phase ${details.phase}` : undefined;
+  const requestBytes = typeof details?.requestBytes === "number" && Number.isFinite(details.requestBytes) ? `request ${formatBytes(details.requestBytes)}` : undefined;
+  const configuredTransport = typeof details?.configuredTransport === "string" ? details.configuredTransport : undefined;
+  const fallbackTransport = typeof details?.fallbackTransport === "string" ? details.fallbackTransport : undefined;
+  const transport = configuredTransport && fallbackTransport
+    ? `transport ${configuredTransport} → ${fallbackTransport}`
+    : configuredTransport
+      ? `transport ${configuredTransport}`
+      : fallbackTransport
+        ? `fallback transport ${fallbackTransport}`
+        : undefined;
+  const eventStatus = typeof details?.eventsEmitted === "boolean" ? (details.eventsEmitted ? "stream events emitted" : "no stream events before failure") : undefined;
+  const detailText = [code, requestBytes, phase, transport, eventStatus].filter(Boolean).join(", ");
+  if (message) return `Provider diagnostic (${type}): ${message}${detailText ? ` (${detailText})` : ""}`;
+  return detailText ? `Provider diagnostic (${type}): ${detailText}` : undefined;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${Math.floor(bytes)} B`;
 }
 
 function normalizeGetStateResponse(data: Record<string, unknown>): NormalizedConversationEvent[] {

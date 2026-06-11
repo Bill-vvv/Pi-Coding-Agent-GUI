@@ -4,6 +4,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import type { PluggableList } from "unified";
 
 const markdownSanitizeSchema = {
   ...defaultSchema,
@@ -14,6 +15,12 @@ const markdownSanitizeSchema = {
     span: [...(defaultSchema.attributes?.span ?? []), ["className", /^hljs-.*/]],
   },
 };
+
+const markdownRemarkPlugins: PluggableList = [remarkGfm];
+const markdownRehypePlugins: PluggableList = [
+  [rehypeHighlight, { ignoreMissing: true, plainText: ["text", "txt", "plain", "plaintext"] }],
+  [rehypeSanitize, markdownSanitizeSchema],
+];
 
 type MarkdownMessageProps = {
   text: string;
@@ -31,11 +38,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({ text, streaming =
   return (
     <div className="markdown-message">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[
-          [rehypeHighlight, { ignoreMissing: true }],
-          [rehypeSanitize, markdownSanitizeSchema],
-        ]}
+        remarkPlugins={markdownRemarkPlugins}
+        rehypePlugins={markdownRehypePlugins}
         components={markdownComponents}
       >
         {text}
@@ -206,9 +210,10 @@ function isSafeSvgCss(value: string): boolean {
 }
 
 function shouldDegradeMarkdownRender(text: string, streaming: boolean): boolean {
+  if (streaming && text.includes("```")) return true;
   if (streaming && text.length > STREAMING_LIGHTWEIGHT_RENDER_CHARS) return true;
   if (text.length > MARKDOWN_LIGHTWEIGHT_RENDER_CHARS) return true;
-  return fencedCodeBlocks(text).some((code) => code.length > CODE_BLOCK_LIGHTWEIGHT_RENDER_CHARS || lineCount(code) > CODE_BLOCK_LIGHTWEIGHT_RENDER_LINES);
+  return text.includes("```") && hasLargeFencedCodeBlock(text);
 }
 
 function previewText(text: string): string {
@@ -218,17 +223,26 @@ function previewText(text: string): string {
   return visible.length < text.length ? `${visible}\n\n…[完整内容可复制或手动完整渲染]` : visible;
 }
 
-function fencedCodeBlocks(text: string): string[] {
-  const blocks: string[] = [];
+function hasLargeFencedCodeBlock(text: string): boolean {
   const pattern = /```[^\n]*\n([\s\S]*?)```/g;
   let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text))) blocks.push(match[1] ?? "");
-  return blocks;
+  while ((match = pattern.exec(text))) {
+    const code = match[1] ?? "";
+    if (code.length > CODE_BLOCK_LIGHTWEIGHT_RENDER_CHARS || lineCountExceeds(code, CODE_BLOCK_LIGHTWEIGHT_RENDER_LINES)) return true;
+  }
+  return false;
 }
 
-function lineCount(text: string): number {
-  if (!text) return 0;
-  return text.split(/\r?\n/).length;
+function lineCountExceeds(text: string, maxLines: number): boolean {
+  if (!text) return false;
+  let lineCount = 1;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text.charCodeAt(index);
+    if (char !== 10) continue;
+    lineCount += 1;
+    if (lineCount > maxLines) return true;
+  }
+  return false;
 }
 
 function copyWithTemporaryTextarea(value: string) {

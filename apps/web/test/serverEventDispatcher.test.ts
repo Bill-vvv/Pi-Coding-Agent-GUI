@@ -45,6 +45,9 @@ function createContext(overrides: Partial<Parameters<typeof dispatchAppServerEve
       handleComposerCommandServerEvent: () => {
         calls.push("composerCommand");
       },
+      handleCheckpointServerEvent: () => {
+        calls.push("checkpoint");
+      },
       ...overrides,
     },
   };
@@ -84,6 +87,7 @@ test("non-delta events flush deltas before reducer dispatch and post-reducer sid
     "sessionTreeFork",
     "extensionUi",
     "composerCommand",
+    "checkpoint",
   ]);
   assert.deepEqual(actions, [{ type: "server.event", event }]);
 });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -94,6 +94,40 @@ test("readPiSessionConversationSummary scans beyond initial metadata lines and e
   assert.equal(summary?.detail, "这是 Pi 的最后一句回复");
   assert.equal(summary?.messageCount, 2);
   assert.equal(summary?.latestAssistantCompletedAt, Date.parse("2026-06-03T10:01:00.000Z"));
+});
+
+test("session summary cache persists across database instances and invalidates on file changes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-gui-session-summary-cache-"));
+  const dbPath = join(dir, "pi-gui.sqlite");
+  const sessionFile = join(dir, "session-cache.jsonl");
+  writeFileSync(
+    sessionFile,
+    [
+      JSON.stringify({ type: "session", id: "session-cache", cwd: dir }),
+      JSON.stringify({ type: "message", id: "user-1", timestamp: "2026-06-03T10:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "缓存前的问题" }] } }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
+
+  const firstDb = new AppDatabase(dbPath);
+  const first = readPiSessionConversationSummary(sessionFile, firstDb);
+  assert.equal(first?.title, "缓存前的问题");
+  firstDb.close();
+
+  const secondDb = new AppDatabase(dbPath);
+  const cached = readPiSessionConversationSummary(sessionFile, secondDb);
+  assert.equal(cached?.title, "缓存前的问题");
+
+  appendFileSync(
+    sessionFile,
+    `${JSON.stringify({ type: "message", id: "assistant-1", timestamp: "2026-06-03T10:01:00.000Z", message: { role: "assistant", content: [{ type: "text", text: "文件变化后的回答" }] } })}\n`,
+    "utf8",
+  );
+  const updated = readPiSessionConversationSummary(sessionFile, secondDb);
+  assert.equal(updated?.title, "缓存前的问题");
+  assert.equal(updated?.detail, "文件变化后的回答");
+  assert.equal(updated?.messageCount, 2);
+  secondDb.close();
 });
 
 test("findPiSessionFileById locates a session file by id", () => {

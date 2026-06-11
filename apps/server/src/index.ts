@@ -4,12 +4,13 @@ import { spawn } from "node:child_process";
 import Fastify, { type FastifyRequest } from "fastify";
 import { AppDatabase } from "./db.js";
 import { registerBuiltWebUiRoutes } from "./routes/builtWebRoutes.js";
+import { registerCapabilityRoutes } from "./routes/capabilityRoutes.js";
 import { registerEnvironmentRoutes } from "./routes/environmentRoutes.js";
 import { registerFsRoutes } from "./routes/fsRoutes.js";
 import { registerImportRoutes } from "./routes/importRoutes.js";
 import { registerRemoteAccessRoutes } from "./routes/remoteAccessRoutes.js";
 import { registerUsageRoutes } from "./routes/usageRoutes.js";
-import { registerVoiceRoutes } from "./routes/voiceRoutes.js";
+import { replayGapEventForReconnect, RECONNECT_REPLAY_LIMIT } from "./runtime/eventReplay.js";
 import { runtimeConversationBusyEvents } from "./runtime/runtimeConversationViews.js";
 import { RuntimeSupervisor } from "./runtime/runtimeSupervisor.js";
 import { isWebSocketRequestAuthorized, redactTokenInUrl, registerApiAuth } from "./services/authService.js";
@@ -17,7 +18,6 @@ import { listPiModels } from "./services/modelService.js";
 import { readPersistedRemoteAccessConfig, remoteAccessAuthToken, RemoteAccessService } from "./services/remoteAccessService.js";
 import { readServerRuntimeConfig } from "./services/serverConfig.js";
 import { indexKnownPiSessions } from "./services/sessionIndexService.js";
-import { VoiceTranscriptionService } from "./services/voiceInput/index.js";
 import { createSocketMessageHandler } from "./ws/commandHandler.js";
 import { WsHub, type WsClient } from "./ws/wsHub.js";
 
@@ -25,7 +25,6 @@ const db = new AppDatabase();
 const serverConfig = readServerRuntimeConfig(process.env, readPersistedRemoteAccessConfig(db));
 const { host, port } = serverConfig;
 const remoteAccessService = new RemoteAccessService(db, serverConfig);
-const voiceTranscriptionService = new VoiceTranscriptionService({ getSettings: () => db.getSettings() });
 const authProvider = {
   authRequired: () => serverConfig.authRequired,
   getAuthToken: () => remoteAccessAuthToken(db, serverConfig),
@@ -53,7 +52,16 @@ const fastify = Fastify({
   },
 });
 indexKnownPiSessions(db);
-const wsHub = new WsHub();
+const socketIds = new WeakMap<WsClient, number>();
+let nextSocketId = 1;
+const wsHub = new WsHub({
+  onClientClosed: ({ socket, reason, bufferedAmount, mode }) => {
+    fastify.log.warn(
+      { socketId: socketIds.get(socket), reason, bufferedAmount, closeMode: mode, activeSockets: wsHub.clientCount() },
+      "WebSocket client closed by hub",
+    );
+  },
+});
 const supervisor = new RuntimeSupervisor(db, (event) => wsHub.broadcast(event));
 const handleSocketMessage = createSocketMessageHandler({
   db,
@@ -64,18 +72,28 @@ const handleSocketMessage = createSocketMessageHandler({
 
 await fastify.register(cors, { origin: allowedCorsOrigins });
 registerApiAuth(fastify, authProvider);
-await fastify.register(websocket);
+await fastify.register(websocket, {
+  options: {
+    perMessageDeflate: {
+      threshold: 1024,
+    },
+  },
+});
 await registerFsRoutes(fastify);
 await registerImportRoutes(fastify);
 await registerRemoteAccessRoutes(fastify, remoteAccessService, { restartServer: restartCurrentServer });
 await registerEnvironmentRoutes(fastify);
 await registerUsageRoutes(fastify, { db });
-await registerVoiceRoutes(fastify, voiceTranscriptionService);
-fastify.addHook("onClose", async () => {
-  voiceTranscriptionService.stop();
-});
+await registerCapabilityRoutes(fastify, { db });
 
 fastify.get("/health", async () => ({ ok: true, time: Date.now() }));
+
+fastify.get("/api/desktop/ready", async () => ({
+  ok: serverConfig.mode === "desktop",
+  mode: serverConfig.mode,
+  launchId: serverConfig.desktopLaunchId,
+  time: Date.now(),
+}));
 
 fastify.get("/api/projects", async () => ({ projects: db.listProjects() }));
 
@@ -83,26 +101,47 @@ fastify.get("/api/models", async () => ({ models: await listPiModels() }));
 
 fastify.get("/ws", { websocket: true }, (socket: WsClient, request: FastifyRequest) => {
   if (!isWebSocketRequestAuthorized(request, authProvider)) {
+    fastify.log.warn({ remoteAddress: request.ip, remotePort: request.socket.remotePort }, "Rejected unauthorized WebSocket connection");
     closeUnauthorizedSocket(socket);
     return;
   }
 
+  const socketId = nextSocketId++;
+  const sinceEventId = parseSinceEventId(request);
+  socketIds.set(socket, socketId);
+  fastify.log.info(
+    { socketId, sinceEventId, activeSockets: wsHub.clientCount() + 1, remoteAddress: request.ip, remotePort: request.socket.remotePort },
+    "WebSocket connected",
+  );
+
   wsHub.add(socket);
+  const bootstrap = buildConnectionBootstrap();
   wsHub.send(socket, {
     type: "hello",
     serverTime: Date.now(),
     projects: db.listProjects(),
-    runtimes: supervisor.listRuntimes(),
+    runtimes: bootstrap.runtimes,
     settings: db.getSettings(),
     lastEventId: db.lastEventId(),
-    conversationSummaries: supervisor.listRuntimeConversationSummaries(),
-    sessions: db.listSessions(),
-    subagentRuns: supervisor.listSubagentRuns(undefined, 500),
+    executionHost: db.getExecutionHost(),
+    conversationSummaries: supervisor.listRuntimeConversationSummaries(100, bootstrap.runtimes),
+    sessions: bootstrap.sessions.sessions,
+    sessionsHasMore: bootstrap.sessions.hasMore,
+    sessionsNextCursor: bootstrap.sessions.nextCursor,
+    // Keep the connection bootstrap lightweight: active sub-agent runs are
+    // needed for refresh recovery, while historical per-runtime runs are sent
+    // by `conversation.open`. Sending hundreds of historical runs can bloat the
+    // initial `hello` enough to trip WebSocket backpressure before busy seeds
+    // reach the client, making sidebar dots look idle until a conversation is opened.
+    subagentRuns: supervisor.listActiveSubagentRuns(100),
+    checkpointOperations: db.listRecentRewindCheckpointOperations(20),
+    checkpointJumps: db.listRecentRewindJumpHistory(20),
   });
-  sendRuntimeBusyStates(socket);
+  sendRuntimeBusyStates(socket, bootstrap.runtimes);
   sendRuntimeQueues(socket);
   sendRuntimeCommands(socket);
-  replayEventsForConnection(socket, parseSinceEventId(request));
+  sendPendingExtensionUiRequests(socket);
+  replayEventsForConnection(socket, sinceEventId);
 
   socket.on("message", (data) => {
     void handleSocketMessage(socket, data).catch((error) => {
@@ -116,8 +155,21 @@ fastify.get("/ws", { websocket: true }, (socket: WsClient, request: FastifyReque
     });
   });
 
-  socket.on("close", () => wsHub.remove(socket));
-  socket.on("error", () => wsHub.remove(socket));
+  const lifecycleSocket = socket as WsClient & {
+    on(event: "close", listener: (code: number, reason: Buffer) => void): void;
+    on(event: "error", listener: (error: Error) => void): void;
+  };
+  lifecycleSocket.on("close", (code: number, reason: Buffer) => {
+    wsHub.remove(socket);
+    fastify.log.info(
+      { socketId, code, reason: reason?.toString("utf8") || undefined, activeSockets: wsHub.clientCount() },
+      "WebSocket closed",
+    );
+  });
+  lifecycleSocket.on("error", (error: Error) => {
+    wsHub.remove(socket);
+    fastify.log.warn({ socketId, error, activeSockets: wsHub.clientCount() }, "WebSocket error");
+  });
 });
 
 await registerBuiltWebUiRoutes(fastify, { remoteLan: serverConfig.remoteLan });
@@ -135,7 +187,6 @@ function logRemoteAccessStartupHint(): void {
 async function restartCurrentServer(): Promise<void> {
   fastify.log.warn("Remote Access requested Pi GUI server restart");
   await fastify.close();
-  voiceTranscriptionService.stop();
   db.close();
   const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
     cwd: process.cwd(),
@@ -170,11 +221,20 @@ function closeUnauthorizedSocket(socket: WsClient): void {
   closable.close?.(1008, "Unauthorized");
 }
 
-function sendRuntimeBusyStates(socket: WsClient): void {
+function buildConnectionBootstrap() {
+  const runtimes = supervisor.listRuntimes();
+  const childSessionFiles = db.listChildSessionFiles();
+  return {
+    runtimes,
+    sessions: db.listSessionsPage(undefined, 200, undefined, { childSessionFiles }),
+  };
+}
+
+function sendRuntimeBusyStates(socket: WsClient, runtimes = supervisor.listRuntimes()): void {
   // `hello` intentionally carries lightweight runtime metadata only. Seed the
   // conversation-busy projection separately so a fresh/reconnected frontend can
   // color sidebar status dots without fetching every background conversation.
-  for (const event of runtimeConversationBusyEvents(db, supervisor.listRuntimes())) {
+  for (const event of runtimeConversationBusyEvents(db, runtimes)) {
     wsHub.send(socket, event);
   }
 }
@@ -191,8 +251,28 @@ function sendRuntimeCommands(socket: WsClient): void {
   }
 }
 
+function sendPendingExtensionUiRequests(socket: WsClient): void {
+  for (const pending of supervisor.listPendingExtensionUiRequests()) {
+    wsHub.send(socket, { type: "extension.ui.request", ...pending });
+  }
+}
+
 function replayEventsForConnection(socket: WsClient, sinceEventId: number | undefined): void {
-  const events = sinceEventId !== undefined ? db.listEvents(sinceEventId, 1000) : db.recentEvents(300, 512 * 1024);
+  const replay = sinceEventId !== undefined
+    ? db.listEventsBudgeted(sinceEventId, RECONNECT_REPLAY_LIMIT, 512 * 1024)
+    : { events: db.recentEvents(300, 512 * 1024), truncated: false };
+  const events = replay.events;
+  if (sinceEventId !== undefined) {
+    const gap = replayGapEventForReconnect({
+      requestedSinceEventId: sinceEventId,
+      firstEventId: db.firstEventId(),
+      lastEventId: db.lastEventId(),
+      replayedEventCount: events.length,
+      lastReplayedEventId: events.at(-1)?.id,
+      truncated: replay.truncated,
+    });
+    if (gap) wsHub.send(socket, gap);
+  }
   for (const event of events) {
     wsHub.send(socket, { type: "gui.event", event });
   }

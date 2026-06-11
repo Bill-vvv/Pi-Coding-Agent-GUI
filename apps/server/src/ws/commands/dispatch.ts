@@ -1,7 +1,8 @@
 import type { ClientCommand } from "@pi-gui/shared";
 import type { WsClient } from "../wsHub.js";
+import { handleCheckpointCapture, handleCheckpointGc, handleCheckpointHealth, handleCheckpointJumps, handleCheckpointList, handleCheckpointPreview, handleCheckpointRestore } from "./checkpointCommands.js";
 import { handleConversationOpen, handleConversationPage, handleEventReplay, handleSubagentDetailOpen } from "./conversationCommands.js";
-import { handleProjectCreate, handleProjectList, handleSessionList, handleSessionResume, handleSettingsGet, handleSettingsUpdate } from "./projectSessionSettingsCommands.js";
+import { handleProjectConfigure, handleProjectCreate, handleProjectList, handleSessionList, handleSessionResume, handleSettingsGet, handleSettingsUpdate } from "./projectSessionSettingsCommands.js";
 import {
   handleExtensionUiRespond,
   handleRuntimeAbort,
@@ -28,6 +29,9 @@ export async function dispatchClientCommand(context: CommandHandlerContext, sock
       break;
     case "project.create":
       await handleProjectCreate(context, socket, command);
+      break;
+    case "project.configure":
+      await handleProjectConfigure(context, socket, command);
       break;
     case "session.list":
       await handleSessionList(context, socket, command);
@@ -91,6 +95,27 @@ export async function dispatchClientCommand(context: CommandHandlerContext, sock
       break;
     case "conversation.page":
       await handleConversationPage(context, socket, command);
+      break;
+    case "checkpoint.list":
+      await handleCheckpointList(context, socket, command);
+      break;
+    case "checkpoint.capture":
+      await handleCheckpointCapture(context, socket, command);
+      break;
+    case "checkpoint.preview":
+      await handleCheckpointPreview(context, socket, command);
+      break;
+    case "checkpoint.restore":
+      await handleCheckpointRestore(context, socket, command);
+      break;
+    case "checkpoint.jumps":
+      await handleCheckpointJumps(context, socket, command);
+      break;
+    case "checkpoint.health":
+      await handleCheckpointHealth(context, socket, command);
+      break;
+    case "checkpoint.gc":
+      await handleCheckpointGc(context, socket, command);
       break;
     case "subagent.detail.open":
       await handleSubagentDetailOpen(context, socket, command);

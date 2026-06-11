@@ -4,6 +4,9 @@ const MAX_RUN_FINAL_TEXT_CHARS = 12_000;
 const MAX_CHILD_FINAL_TEXT_CHARS = 12_000;
 const MAX_CHILD_TAIL_CHARS = 8_000;
 const MAX_PROMPT_CHARS = 2_000;
+const MAX_ACTIVITY_CHARS = 240;
+const MAX_LAST_ACTION_CHARS = 240;
+const MAX_PATH_CHARS = 2_000;
 const MAX_ERROR_CHARS = 4_000;
 const MAX_TOOL_ARGS_CHARS = 4_000;
 const MAX_CHILD_RUNS = 20;
@@ -27,6 +30,9 @@ function trimChildRuns(runs: SubagentChildRun[]): SubagentChildRun[] {
   return visibleRuns.map((run) => ({
     ...run,
     prompt: truncateText(run.prompt, MAX_PROMPT_CHARS),
+    traceFile: truncateText(run.traceFile, MAX_PATH_CHARS),
+    activitySummary: truncateText(run.activitySummary, MAX_ACTIVITY_CHARS),
+    lastAction: truncateText(run.lastAction, MAX_LAST_ACTION_CHARS),
     finalText: truncateText(run.finalText, MAX_CHILD_FINAL_TEXT_CHARS),
     textTail: truncateText(run.textTail, MAX_CHILD_TAIL_CHARS),
     thinkingTail: truncateText(run.thinkingTail, MAX_CHILD_TAIL_CHARS),

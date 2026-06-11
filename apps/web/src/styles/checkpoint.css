@@ -1,0 +1,368 @@
+.checkpoint-panel {
+  display: grid;
+  gap: 0.8rem;
+  border-top: 1px solid var(--color-border-divider);
+  padding-top: 0.78rem;
+}
+
+.checkpoint-panel-header,
+.checkpoint-storage-row,
+.checkpoint-actions-inline,
+.checkpoint-summary,
+.checkpoint-row-topline,
+.checkpoint-chip-row,
+.checkpoint-section-header,
+.checkpoint-restore-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.checkpoint-panel-header,
+.checkpoint-storage-row,
+.checkpoint-section-header,
+.checkpoint-restore-row {
+  justify-content: space-between;
+}
+
+.checkpoint-panel-title,
+.checkpoint-preview-title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.checkpoint-panel-title > span,
+.checkpoint-section-header > strong,
+.checkpoint-row-topline > strong,
+.checkpoint-metric-card > strong {
+  color: var(--color-text-primary);
+  font-size: var(--text-control);
+  font-weight: var(--weight-semibold);
+  line-height: var(--line-control);
+}
+
+.checkpoint-panel-title > small,
+.checkpoint-muted,
+.checkpoint-section-header > small,
+.checkpoint-row small,
+.checkpoint-metric-card > span,
+.checkpoint-metric-card > small,
+.checkpoint-change small,
+.checkpoint-gc-note,
+.checkpoint-success,
+.checkpoint-error {
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--line-copy-tight);
+}
+
+.checkpoint-actions-inline {
+  justify-content: flex-start;
+}
+
+.checkpoint-actions-inline button,
+.checkpoint-section-header > button,
+.checkpoint-restore-row > button {
+  min-height: 28px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-subtle-strong);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--text-caption);
+  line-height: 1.2;
+  padding: 0.25rem 0.65rem;
+}
+
+.checkpoint-actions-inline button:hover:not(:disabled),
+.checkpoint-section-header > button:hover:not(:disabled),
+.checkpoint-restore-row > button:hover:not(:disabled) {
+  border-color: var(--color-border-focus);
+  background: var(--color-hover-subtle);
+}
+
+.checkpoint-actions-inline button:disabled,
+.checkpoint-section-header > button:disabled,
+.checkpoint-restore-row > button:disabled,
+.checkpoint-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.checkpoint-actions-inline .danger,
+.checkpoint-restore-row .danger {
+  border-color: var(--color-error-border-subtle);
+  background: var(--color-error-bg-subtle);
+  color: var(--color-error-text);
+}
+
+.checkpoint-metrics-grid,
+.checkpoint-body-grid {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.checkpoint-metrics-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.checkpoint-body-grid {
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  align-items: start;
+}
+
+.checkpoint-metric-card,
+.checkpoint-timeline,
+.checkpoint-preview-box {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-subtle);
+}
+
+.checkpoint-metric-card {
+  display: grid;
+  gap: 0.14rem;
+  padding: 0.72rem 0.82rem;
+}
+
+.checkpoint-metric-card.warning {
+  border-color: var(--color-warning-border);
+}
+
+.checkpoint-list,
+.checkpoint-change-list,
+.checkpoint-warning-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.checkpoint-timeline,
+.checkpoint-preview-box {
+  display: grid;
+  gap: 0.7rem;
+  min-height: 0;
+  padding: 0.82rem 0.9rem;
+}
+
+.checkpoint-list {
+  max-height: 24rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.1rem;
+}
+
+.checkpoint-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.7rem;
+  align-items: start;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-surface-subtle) 85%, transparent);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  padding: 0.72rem 0.8rem;
+  text-align: left;
+}
+
+.checkpoint-row:hover:not(:disabled),
+.checkpoint-row.selected {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 46%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent-primary) 8%, var(--color-surface-subtle));
+}
+
+.checkpoint-row.selected {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 34%, transparent),
+    0 8px 22px color-mix(in srgb, var(--color-accent-primary) 12%, transparent);
+  transform: translateX(2px);
+}
+
+.checkpoint-row-rail {
+  position: relative;
+  display: block;
+  width: 0.75rem;
+  height: 100%;
+}
+
+.checkpoint-row-rail::before,
+.checkpoint-row-rail::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.checkpoint-row-rail::before {
+  top: 0;
+  bottom: -1rem;
+  width: 1px;
+  background: var(--color-border-divider);
+}
+
+.checkpoint-row-rail::after {
+  top: 0.18rem;
+  width: 0.52rem;
+  height: 0.52rem;
+  border-radius: 999px;
+  background: var(--color-accent-primary);
+  box-shadow: 0 0 0 0.22rem color-mix(in srgb, var(--color-accent-primary) 15%, transparent);
+}
+
+.checkpoint-row.selected .checkpoint-row-rail::after {
+  width: 0.68rem;
+  height: 0.68rem;
+  box-shadow: 0 0 0 0.28rem color-mix(in srgb, var(--color-accent-primary) 22%, transparent);
+}
+
+.checkpoint-list > :last-child .checkpoint-row-rail::before {
+  bottom: 0.18rem;
+}
+
+.checkpoint-row-main {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.checkpoint-row-topline {
+  justify-content: space-between;
+}
+
+.checkpoint-row-meta {
+  opacity: 0.86;
+}
+
+.checkpoint-chip,
+.checkpoint-summary span,
+.checkpoint-change span {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-size: var(--text-meta);
+  line-height: 1.2;
+  padding: 0.14rem 0.42rem;
+}
+
+.checkpoint-chip.accent {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 36%, var(--color-border-subtle));
+  color: var(--color-text-primary);
+}
+
+.checkpoint-chip.selected {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 52%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent-primary) 12%, transparent);
+  color: var(--color-text-primary);
+}
+
+.checkpoint-chip.warning,
+.checkpoint-warning,
+.checkpoint-change.action-conflict span {
+  border-color: var(--color-warning-border);
+  color: var(--color-warning-text);
+}
+
+.checkpoint-preview-box {
+  background: color-mix(in srgb, var(--color-surface-panel) 76%, transparent);
+}
+
+.checkpoint-summary {
+  justify-content: flex-start;
+}
+
+.checkpoint-warning-list {
+  gap: 0.35rem;
+}
+
+.checkpoint-warning {
+  display: block;
+  border: 1px solid var(--color-warning-border);
+  border-radius: 12px;
+  background: var(--color-warning-bg-subtle);
+  padding: 0.55rem 0.65rem;
+}
+
+.checkpoint-change-list {
+  max-height: 18rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.1rem;
+}
+
+.checkpoint-change {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.4rem 0.55rem;
+  align-items: start;
+  border-top: 1px solid var(--color-border-divider);
+  padding-top: 0.5rem;
+}
+
+.checkpoint-change:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.checkpoint-change code {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-control);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkpoint-change small {
+  grid-column: 2;
+}
+
+.checkpoint-success {
+  color: var(--color-status-success);
+}
+
+.checkpoint-error {
+  color: var(--color-error-text);
+}
+
+.checkpoint-preview-title > small {
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--line-copy-tight);
+}
+
+@media (max-width: 900px) {
+  .checkpoint-body-grid,
+  .checkpoint-metrics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .checkpoint-panel-header,
+  .checkpoint-storage-row,
+  .checkpoint-section-header,
+  .checkpoint-row-topline,
+  .checkpoint-restore-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .checkpoint-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .checkpoint-row.selected {
+    transform: none;
+  }
+
+  .checkpoint-timeline,
+  .checkpoint-preview-box {
+    padding: 0.75rem;
+  }
+}

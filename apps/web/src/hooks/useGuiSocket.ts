@@ -103,9 +103,7 @@ export function useGuiSocket({ onEvent, onError, onConnectionWarning, onOpen, on
         if (!isCurrentSocket()) return;
         try {
           const event = JSON.parse(message.data as string) as ServerEvent;
-          if (event.type === "gui.event") {
-            lastGuiEventIdRef.current = Math.max(lastGuiEventIdRef.current, event.event.id);
-          }
+          lastGuiEventIdRef.current = replayCursorAfterServerEvent(lastGuiEventIdRef.current, event);
           onEventRef.current(event);
         } catch (error) {
           onErrorRef.current((error as Error).message || "WebSocket 消息解析失败");
@@ -176,12 +174,40 @@ function reconnectDelayMs(attempt: number): number {
   return Math.min(RECONNECT_MAX_DELAY_MS, exponential + jitter);
 }
 
+export function replayCursorAfterServerEvent(currentEventId: number, event: ServerEvent): number {
+  if (event.type === "hello" && currentEventId > event.lastEventId) return event.lastEventId;
+  if (event.type === "gui.event") return Math.max(currentEventId, event.event.id);
+  if (event.type === "event.replay.gap") return event.lastEventId;
+  return currentEventId;
+}
+
 export function wsUrl(sinceEventId = 0): string {
   const config = piGuiRuntimeConfig();
-  const baseUrl = config.wsUrl || `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
+  const baseUrl = config.wsUrl || wsUrlFromApiBaseUrl(config.apiBaseUrl) || `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
   const url = new URL(baseUrl, window.location.href);
   const token = authToken();
   if (token) url.searchParams.set("token", token);
   if (sinceEventId > 0) url.searchParams.set("sinceEventId", String(sinceEventId));
   return url.toString();
+}
+
+function wsUrlFromApiBaseUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value, window.location.href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const basePath = stripTrailingApiPath(url.pathname).replace(/\/+$/, "");
+    url.pathname = `${basePath}/ws` || "/ws";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function stripTrailingApiPath(pathname: string): string {
+  if (pathname === "/api") return "";
+  return pathname.endsWith("/api") ? pathname.slice(0, -"/api".length) : pathname;
 }

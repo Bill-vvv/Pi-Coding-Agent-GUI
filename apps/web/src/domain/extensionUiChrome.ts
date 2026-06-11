@@ -12,6 +12,12 @@ export type RuntimeExtensionUiChrome = {
   widgets: Record<string, ExtensionUiWidget>;
 };
 
+export type ExtensionGoalWidgetView = {
+  title: string;
+  detail?: string;
+  status: "active" | "paused" | "done" | "unknown";
+};
+
 export type ExtensionUiChromeByRuntime = Record<string, RuntimeExtensionUiChrome>;
 
 export function applyExtensionUiChromeRequest(
@@ -56,6 +62,33 @@ export function extensionUiChromeRequestFromPayload(payload: unknown): Extension
   }
 
   return undefined;
+}
+
+export function extensionGoalWidgetView(key: string, widget: ExtensionUiWidget): ExtensionGoalWidgetView | undefined {
+  if (!isGoalChromeKey(key)) return undefined;
+  const title = widget.lines[0]?.trim();
+  if (!title || !/goal/i.test(title)) return undefined;
+  return {
+    title,
+    detail: widget.lines.find((line, index) => index > 0 && !isGoalControlLine(line))?.trim(),
+    status: goalStatusFromText(title),
+  };
+}
+
+export function isGoalChromeKey(key: string): boolean {
+  return key === "goal" || key.endsWith("-goal");
+}
+
+function goalStatusFromText(text: string): ExtensionGoalWidgetView["status"] {
+  const lower = text.toLowerCase();
+  if (text.includes("⏸") || lower.includes("paused")) return "paused";
+  if (text.includes("✓") || lower.includes("done")) return "done";
+  if (text.includes("⊙") || lower.includes("active")) return "active";
+  return "unknown";
+}
+
+function isGoalControlLine(line: string): boolean {
+  return /^\/goal\b/.test(line.trim());
 }
 
 function updateRuntimeChrome(

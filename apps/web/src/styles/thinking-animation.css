@@ -544,18 +544,6 @@
   animation: thinking-core-logo-lobe-b var(--thinking-duration) linear infinite;
 }
 
-.sidebar-logo.is-collapsing .thinking-core {
-  animation: thinking-core-logo-collapse 1180ms linear both;
-}
-
-.sidebar-logo.is-collapsing .thinking-core::before {
-  animation: thinking-core-logo-collapse-lobe-a 1180ms linear both;
-}
-
-.sidebar-logo.is-collapsing .thinking-core::after {
-  animation: thinking-core-logo-collapse-lobe-b 1180ms linear both;
-}
-
 .thinking-superslow .thinking-line,
 .thinking-superslow .thinking-rays,
 .thinking-superslow .thinking-ray,
@@ -945,76 +933,6 @@
     opacity: 0.36;
     border-radius: 58% 42% 62% 38% / 42% 58% 44% 56%;
     transform: translate(calc(var(--thinking-size) * 0.048), calc(var(--thinking-size) * -0.016)) scaleX(0.94) scaleY(1.02) rotate(6deg);
-  }
-}
-
-@keyframes thinking-core-logo-collapse {
-  0% {
-    opacity: 1;
-    width: calc(var(--thinking-size) * 0.66);
-    height: calc(var(--thinking-size) * 0.66);
-    border-radius: 47% 53% 52% 48% / 50% 52% 48% 50%;
-    transform: translate(-50%, -50%) scaleX(1.03) scaleY(0.97) rotate(-1deg);
-  }
-
-  58% {
-    opacity: 1;
-    width: calc(var(--thinking-size) * 0.62);
-    height: calc(var(--thinking-size) * 0.62);
-    border-radius: 34% 66% 40% 60% / 64% 32% 68% 36%;
-    transform: translate(-50%, -50%) scaleX(2.05) scaleY(0.065) skewX(-10deg) rotate(-2deg);
-  }
-
-  78% {
-    opacity: 1;
-    width: calc(var(--thinking-size) * 0.14);
-    height: calc(var(--thinking-size) * 0.085);
-    border-radius: 999px;
-    transform: translate(-50%, -50%) scaleX(1.22) scaleY(0.38) skewX(7deg);
-  }
-
-  100% {
-    opacity: 1;
-    width: calc(var(--thinking-size) * 0.095);
-    height: calc(var(--thinking-size) * 0.095);
-    border-radius: 999px;
-    transform: translate(-50%, -50%) scale(0.38);
-  }
-}
-
-@keyframes thinking-core-logo-collapse-lobe-a {
-  0% {
-    opacity: 0.34;
-    border-radius: 42% 58% 46% 54% / 58% 42% 56% 44%;
-    transform: translate(calc(var(--thinking-size) * -0.04), calc(var(--thinking-size) * 0.016)) scaleX(1.08) scaleY(0.88) rotate(-5deg);
-  }
-
-  58% {
-    opacity: 0.24;
-    transform: translate(calc(var(--thinking-size) * -0.072), calc(var(--thinking-size) * 0.012)) scaleX(1.58) scaleY(0.14) rotate(-9deg);
-  }
-
-  100% {
-    opacity: 0;
-    transform: translate(calc(var(--thinking-size) * -0.022), 0) scaleX(0.08) scaleY(0.03);
-  }
-}
-
-@keyframes thinking-core-logo-collapse-lobe-b {
-  0% {
-    opacity: 0.36;
-    border-radius: 58% 42% 62% 38% / 42% 58% 44% 56%;
-    transform: translate(calc(var(--thinking-size) * 0.048), calc(var(--thinking-size) * -0.016)) scaleX(0.94) scaleY(1.02) rotate(6deg);
-  }
-
-  60% {
-    opacity: 0.2;
-    transform: translate(calc(var(--thinking-size) * 0.074), calc(var(--thinking-size) * -0.004)) scaleX(1.18) scaleY(0.1) rotate(8deg);
-  }
-
-  100% {
-    opacity: 0;
-    transform: translate(calc(var(--thinking-size) * 0.018), 0) scaleX(0.06) scaleY(0.03);
   }
 }
 

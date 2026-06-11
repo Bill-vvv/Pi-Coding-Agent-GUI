@@ -23,6 +23,10 @@ test("server config enables auth only when PI_GUI_AUTH_TOKEN is set", () => {
   });
 
   assert.equal(readServerRuntimeConfig({ PI_GUI_HOST: "localhost", HOST: "0.0.0.0", PI_GUI_MODE: "desktop", PI_GUI_AUTH_TOKEN: "secret" }).host, "localhost");
+  assert.equal(
+    readServerRuntimeConfig({ PI_GUI_MODE: "desktop", PI_GUI_AUTH_TOKEN: "secret", PI_GUI_DESKTOP_LAUNCH_ID: " launch-1 " }).desktopLaunchId,
+    "launch-1",
+  );
 });
 
 test("server config rejects desktop or production-managed mode without a token", () => {
@@ -70,4 +74,25 @@ test("server config supports explicit and persisted remote-lan mode with require
   assert.equal(readServerRuntimeConfig({ PI_GUI_HOST: "192.168.1.10", HOST: "127.0.0.1" }, { enabled: true, authToken: "persisted-token" }).host, "192.168.1.10");
 
   assert.throws(() => readServerRuntimeConfig({ HOST: "0.0.0.0", PI_GUI_MODE: "desktop", PI_GUI_AUTH_TOKEN: "secret" }, { enabled: false }), /loopback address/);
+});
+
+test("persisted remote-lan does not override managed loopback modes", () => {
+  assert.deepEqual(
+    readServerRuntimeConfig({ PORT: "49863", PI_GUI_MODE: "desktop", PI_GUI_AUTH_TOKEN: "secret", PI_GUI_DESKTOP_LAUNCH_ID: "launch-1" }, { enabled: true, authToken: "persisted-token" }),
+    {
+      host: "127.0.0.1",
+      port: 49863,
+      mode: "desktop",
+      authToken: "secret",
+      authRequired: true,
+      remoteLan: false,
+      authTokenSource: "env",
+      desktopLaunchId: "launch-1",
+    },
+  );
+
+  assert.equal(
+    readServerRuntimeConfig({ NODE_ENV: "production", PI_GUI_AUTH_TOKEN: "secret" }, { enabled: true, authToken: "persisted-token" }).mode,
+    "production",
+  );
 });

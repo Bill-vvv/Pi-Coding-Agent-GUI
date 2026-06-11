@@ -1,0 +1,6 @@
+{
+  "id": "pi-default",
+  "displayName": "Pi Default",
+  "description": "Bundled Pi GUI CodexPet-compatible fallback pet.",
+  "spritesheetPath": "spritesheet.webp"
+}

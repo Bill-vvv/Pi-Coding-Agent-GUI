@@ -2,6 +2,7 @@ import type { ServerEvent } from "@pi-gui/shared";
 import type { AppDatabase } from "../db.js";
 import type { ManagedRuntime } from "./managedRuntime.js";
 import type { RuntimeEventSink } from "./runtimeEventSink.js";
+import { codexTransportUserErrorFromStderr } from "./piCodexTransportMonitor.js";
 import { handleRuntimeExit } from "./runtimeExitHandler.js";
 import type { RuntimeLiveState } from "./runtimeLiveState.js";
 import { handleRuntimePayload } from "./runtimePayloadHandler.js";
@@ -26,6 +27,11 @@ export function attachRuntimeClientEventHandlers(dependencies: RuntimeClientHand
   client.on("stderr", (chunk) => {
     events.publishGuiEvent(managed.runtime, "stderr", chunk);
     if (chunk.trim()) managed.projection.appendLog("log", chunk, "stderr");
+    const transportError = codexTransportUserErrorFromStderr(chunk);
+    if (transportError) {
+      events.publishGuiEvent(managed.runtime, "error", { message: transportError, code: "codex_transport_context_too_large" });
+      managed.projection.appendLog("error", transportError, "provider transport");
+    }
   });
   client.on("error", (error) => {
     events.publishGuiEvent(managed.runtime, "error", { message: error.message });

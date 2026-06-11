@@ -80,10 +80,6 @@
   padding: 1rem;
 }
 
-.extension-ui-dialog.ask-batch-dialog {
-  width: min(760px, 100%);
-}
-
 .extension-ui-dialog h2 { margin: 0 0 0.4rem; }
 .extension-ui-dialog p { color: var(--color-text-muted); }
 .extension-ui-dialog input,
@@ -92,84 +88,3 @@
 .extension-ui-options { display: flex; flex-direction: column; gap: 0.5rem; }
 .extension-ui-dialog footer { display: flex; justify-content: flex-end; gap: 0.55rem; margin-top: 1rem; }
 .extension-ui-dialog footer button:disabled { opacity: 0.45; cursor: not-allowed; }
-
-.ask-batch-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-  margin-top: 0.8rem;
-}
-
-.ask-batch-question {
-  border: 1px solid var(--color-border-subtle, var(--color-border-panel));
-  border-radius: 16px;
-  padding: 0.85rem;
-}
-
-.ask-batch-question legend {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0 0.35rem;
-  font-weight: 650;
-}
-
-.ask-batch-question legend em {
-  color: var(--color-text-muted);
-  font-size: 0.78rem;
-  font-style: normal;
-  font-weight: 500;
-}
-
-.ask-batch-prompt {
-  margin: 0.35rem 0 0.55rem;
-  color: var(--color-text);
-}
-
-.ask-batch-note {
-  margin: 0.35rem 0;
-  font-size: 0.9rem;
-}
-
-.ask-batch-note.suggestion {
-  color: var(--color-success, var(--color-text-muted));
-}
-
-.ask-batch-options {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  margin-top: 0.6rem;
-}
-
-.ask-batch-option {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.45rem 0.55rem;
-  align-items: start;
-  border-radius: 10px;
-  padding: 0.35rem 0.45rem;
-}
-
-.ask-batch-option:hover {
-  background: var(--color-surface-hover, rgba(255, 255, 255, 0.04));
-}
-
-.ask-batch-option input {
-  width: auto;
-  margin-top: 0.2rem;
-}
-
-.ask-batch-option small {
-  grid-column: 2;
-  color: var(--color-text-muted);
-}
-
-.ask-batch-other,
-.ask-batch-textarea {
-  margin-top: 0.4rem;
-}
-
-.ask-batch-textarea {
-  min-height: 96px;
-}

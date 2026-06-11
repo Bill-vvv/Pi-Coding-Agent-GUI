@@ -1,4 +1,4 @@
-import { useRef, useState, type Dispatch } from "react";
+import { useEffect, useRef, useState, type Dispatch } from "react";
 import type { Project, ResponseMode, Runtime, RuntimeQueue, ServerEvent, ThinkingLevel } from "@pi-gui/shared";
 import { isRecord } from "@pi-gui/shared";
 import { buildChatRuntimePromptCommand } from "../domain/composerCommands";
@@ -36,10 +36,13 @@ export function useProjectRuntimeActions({
   markRuntimeConversationStale,
 }: UseProjectRuntimeActionsOptions) {
   const pendingPromptRef = useRef<PendingPrompt | undefined>(undefined);
+  const pendingPromptHydrationTimerRef = useRef<number | undefined>(undefined);
   const pendingRuntimePromptRef = useRef(new Map<string, string>());
   const runtimeIdsWithLocalUserActivityRef = useRef(new Set<string>());
   const pendingProjectStartRef = useRef<PendingProjectStart | undefined>(undefined);
   const [prompt, setPrompt] = useState("");
+
+  useEffect(() => () => clearPendingPromptHydrationTimer(), []);
 
   function handleProjectRuntimeServerEvent(event: ServerEvent) {
     if (event.type === "hello") {
@@ -52,6 +55,11 @@ export function useProjectRuntimeActions({
       pendingProjectStartRef.current = undefined;
       dispatch({ type: "set.projectCwd", cwd: "" });
       if (!startRuntimeForProject(event.project.id, pending.message)) restorePendingMessage(pending.message);
+      return;
+    }
+
+    if (event.type === "conversation.snapshot") {
+      sendPendingPromptAfterConversationSnapshot(event.runtimeId);
       return;
     }
 
@@ -82,6 +90,7 @@ export function useProjectRuntimeActions({
       if (isRuntimeLaunchCommand(event.command) && pendingPromptRef.current && event.requestId === pendingPromptRef.current.requestId) {
         const pending = pendingPromptRef.current;
         pendingPromptRef.current = undefined;
+        clearPendingPromptHydrationTimer();
         restorePendingMessage(pending.message);
       }
       return;
@@ -105,14 +114,14 @@ export function useProjectRuntimeActions({
       if (projectId) dispatch({ type: "select.runtime", projectId, runtimeId });
       if (pendingPromptRef.current && event.requestId === pendingPromptRef.current.requestId && projectId === pendingPromptRef.current.projectId) {
         const pending = pendingPromptRef.current;
-        pendingPromptRef.current = undefined;
-        const requestId = createRequestId();
-        if (send(buildChatRuntimePromptCommand({ requestId, runtimeId, message: pending.message }))) {
-          pendingRuntimePromptRef.current.set(requestId, pending.message);
-          markRuntimeLocalUserActivity(runtimeId);
-        } else {
-          restorePendingMessage(pending.message);
+        if (pending.waitForConversationSnapshot) {
+          // Resume existing sessions first so history paints before the follow-up prompt starts streaming.
+          pendingPromptRef.current = { ...pending, runtimeId };
+          schedulePendingPromptHydrationFallback(runtimeId);
+          return;
         }
+        pendingPromptRef.current = undefined;
+        sendPendingRuntimePrompt(runtimeId, pending.message);
       }
     }
   }
@@ -120,6 +129,7 @@ export function useProjectRuntimeActions({
   function reconcilePendingActionsAfterReconnect(event: Extract<ServerEvent, { type: "hello" }>) {
     const pendingPrompt = pendingPromptRef.current;
     pendingPromptRef.current = undefined;
+    clearPendingPromptHydrationTimer();
     restorePendingMessage(pendingPrompt?.message);
     pendingRuntimePromptRef.current.clear();
 
@@ -139,6 +149,38 @@ export function useProjectRuntimeActions({
     const project = isRecord(data) && isRecord(data.project) ? data.project : undefined;
     if (!project || typeof project.id !== "string" || typeof project.cwd !== "string" || typeof project.name !== "string" || typeof project.lastOpenedAt !== "number") return undefined;
     return project as Project;
+  }
+
+  function clearPendingPromptHydrationTimer() {
+    if (pendingPromptHydrationTimerRef.current === undefined) return;
+    window.clearTimeout(pendingPromptHydrationTimerRef.current);
+    pendingPromptHydrationTimerRef.current = undefined;
+  }
+
+  function schedulePendingPromptHydrationFallback(runtimeId: string) {
+    clearPendingPromptHydrationTimer();
+    pendingPromptHydrationTimerRef.current = window.setTimeout(() => {
+      pendingPromptHydrationTimerRef.current = undefined;
+      sendPendingPromptAfterConversationSnapshot(runtimeId);
+    }, PENDING_PROMPT_HYDRATION_FALLBACK_MS);
+  }
+
+  function sendPendingPromptAfterConversationSnapshot(runtimeId: string) {
+    const pending = pendingPromptRef.current;
+    if (!pending || pending.runtimeId !== runtimeId) return;
+    pendingPromptRef.current = undefined;
+    clearPendingPromptHydrationTimer();
+    sendPendingRuntimePrompt(runtimeId, pending.message);
+  }
+
+  function sendPendingRuntimePrompt(runtimeId: string, message: string) {
+    const requestId = createRequestId();
+    if (send(buildChatRuntimePromptCommand({ requestId, runtimeId, message }))) {
+      pendingRuntimePromptRef.current.set(requestId, message);
+      markRuntimeLocalUserActivity(runtimeId);
+      return;
+    }
+    restorePendingMessage(message);
   }
 
   function restorePendingMessage(message?: string) {
@@ -207,7 +249,7 @@ export function useProjectRuntimeActions({
       runtimeId,
     });
     if (!sent) return false;
-    if (message?.trim()) pendingPromptRef.current = { projectId: runtime.projectId, message, requestId };
+    if (message?.trim()) pendingPromptRef.current = { projectId: runtime.projectId, message, requestId, waitForConversationSnapshot: true };
     dispatch({ type: "select.project", projectId: runtime.projectId });
     return true;
   }
@@ -325,6 +367,8 @@ function commandResultQueue(data: unknown): { steering: string[]; followUp: stri
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
+
+const PENDING_PROMPT_HYDRATION_FALLBACK_MS = 2500;
 
 function isRuntimeLaunchCommand(command: Extract<ServerEvent, { type: "command.result" }>["command"]): boolean {
   return command === "runtime.start" || command === "runtime.resume" || command === "runtime.restart" || command === "session.resume";

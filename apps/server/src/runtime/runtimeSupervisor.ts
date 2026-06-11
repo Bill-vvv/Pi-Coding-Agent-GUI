@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { PiRpcCommand, Runtime, RuntimeConversationSummary, RuntimeQueue, ServerEvent, SlashCommand, SubagentRun } from "@pi-gui/shared";
 import { AppDatabase } from "../db.js";
+import { inspectPiSessionFile } from "../services/piSessionHealth.js";
+import { RewindSnapshotStore, rewindSnapshotSummaryForWire } from "../services/rewind/index.js";
 import { findPiSessionFileById, readPiSessionConversationSummary } from "../services/sessionIndexService.js";
 import { parseSshProjectCwd } from "../services/sshProjectService.js";
 import type { ManagedRuntime, RuntimeConfigOptions } from "./managedRuntime.js";
@@ -10,6 +13,7 @@ import { buildRuntimeConversationSummaries, runtimeConversationPageBefore, runti
 import { RuntimeEventSink } from "./runtimeEventSink.js";
 import { RuntimeLauncher } from "./runtimeLauncher.js";
 import { RuntimeLiveState } from "./runtimeLiveState.js";
+import { requestRuntimeMessages, requestRuntimeState, requestSessionStats } from "./runtimeStateRequester.js";
 import { RuntimeSessionLinker } from "./runtimeSessionLinker.js";
 import { SubagentChildSessionCache } from "./subagent/childSessionParser.js";
 import { subagentRunsForWire } from "./subagent/subagentWire.js";
@@ -63,11 +67,18 @@ export class RuntimeSupervisor {
     return this.liveState.listCommands();
   }
 
-  listRuntimeConversationSummaries(limit = 100): RuntimeConversationSummary[] {
+  listPendingExtensionUiRequests(): Array<{ runtimeId: string; projectId: string; request: NonNullable<ManagedRuntime["pendingExtensionUiRequest"]> }> {
+    return Array.from(this.runtimes.values()).flatMap((managed) => {
+      const request = managed.pendingExtensionUiRequest;
+      return request ? [{ runtimeId: managed.runtime.id, projectId: managed.runtime.projectId, request }] : [];
+    });
+  }
+
+  listRuntimeConversationSummaries(limit = 100, orderedRuntimes = this.listRuntimes()): RuntimeConversationSummary[] {
     return buildRuntimeConversationSummaries({
       db: this.db,
       liveRuntimes: this.runtimes.values(),
-      orderedRuntimes: this.listRuntimes(),
+      orderedRuntimes,
       limit,
     });
   }
@@ -82,8 +93,16 @@ export class RuntimeSupervisor {
 
   startRuntime(projectId: string, options: RuntimeConfigOptions = {}): Runtime {
     const runtimes = this.listRuntimes();
-    const reusable = reusableNewRuntimeForProject(runtimes, projectId, (runtimeId) => this.runtimeHasConversationActivity(runtimeId));
-    for (const runtimeId of unhandledNewRuntimeIdsToArchive(runtimes, reusable?.id, (runtimeId) => this.runtimeHasConversationActivity(runtimeId))) {
+    const activityCache = new Map<string, boolean>();
+    const hasActivity = (runtimeId: string) => {
+      const cached = activityCache.get(runtimeId);
+      if (cached !== undefined) return cached;
+      const next = this.runtimeHasConversationActivity(runtimeId);
+      activityCache.set(runtimeId, next);
+      return next;
+    };
+    const reusable = reusableNewRuntimeForProject(runtimes, projectId, hasActivity);
+    for (const runtimeId of unhandledNewRuntimeIdsToArchive(runtimes, reusable?.id, hasActivity)) {
       this.archiveRuntime(runtimeId);
     }
     if (reusable) return this.runtimes.get(reusable.id)?.runtime ?? reusable;
@@ -132,6 +151,7 @@ export class RuntimeSupervisor {
       model: options.model ?? sourceRuntime.model,
       thinkingLevel: options.thinkingLevel ?? sourceRuntime.thinkingLevel,
       responseMode: options.responseMode ?? sourceRuntime.responseMode,
+      runtimeProfileId: options.runtimeProfileId ?? sourceRuntime.runtimeProfileId,
     });
   }
 
@@ -210,6 +230,17 @@ export class RuntimeSupervisor {
     const managed = this.requireManaged(runtimeId);
     const project = this.db.getProject(managed.runtime.projectId);
     if (!project) throw new Error(`Project not found for runtime: ${managed.runtime.projectId}`);
+    this.assertManagedRuntimeSessionHealthy(managed);
+    const checkpoint = await this.captureCheckpointBeforePrompt(managed, project.cwd);
+    if (checkpoint) {
+      managed.pendingRewindPromptCheckpoint = {
+        projectId: checkpoint.projectId,
+        snapshotId: checkpoint.id,
+        sessionId: managed.runtime.sessionId,
+        promptText: displayMessage ?? message,
+        createdAt: checkpoint.createdAt,
+      };
+    }
     appendDisplayUserInput(managed, displayMessage);
     managed.projection.markBusy(true);
     try {
@@ -241,21 +272,91 @@ export class RuntimeSupervisor {
     sendNativeRpcCommand(managed, command, label);
   }
 
+  async forkRuntime(runtimeId: string, entryId: string): Promise<{
+    runtimeId: string;
+    targetEntryId: string;
+    sourceSessionId?: string;
+    resultSessionId?: string;
+    resultEntryId?: string;
+  }> {
+    const managed = this.requireManaged(runtimeId);
+    const sourceSessionId = managed.runtime.sessionId;
+    const response = await managed.client.request({ id: `gui-${randomUUID()}`, type: "fork", entryId });
+    if (response.success !== true) throw new Error(typeof response.error === "string" ? response.error : "Pi fork failed");
+    const data = asRecord(response.data);
+    if (data?.cancelled === true) throw new Error("Pi fork was cancelled");
+    requestRuntimeState(managed, this.events);
+    requestRuntimeMessages(managed, this.events);
+    requestSessionStats(managed, this.events);
+    return {
+      runtimeId,
+      targetEntryId: entryId,
+      sourceSessionId,
+      resultSessionId: stringFromRecord(data, ["sessionId", "session_id", "forkSessionId", "fork_session_id"]) ?? sourceSessionId,
+      resultEntryId: stringFromRecord(data, ["entryId", "entry_id", "currentEntryId", "current_entry_id", "leafEntryId", "leaf_entry_id", "newEntryId", "new_entry_id"]),
+    };
+  }
+
   abort(runtimeId: string): void {
     sendAbort(this.requireManaged(runtimeId));
   }
 
   respondExtensionUi(runtimeId: string, responseId: string, response: Record<string, unknown>): void {
-    sendExtensionUiResponse(this.requireManaged(runtimeId), responseId, response);
+    const managed = this.requireManaged(runtimeId);
+    sendExtensionUiResponse(managed, responseId, response);
+    if (managed.pendingExtensionUiRequest?.id === responseId) {
+      managed.pendingExtensionUiRequest = undefined;
+    }
+  }
+
+  private async captureCheckpointBeforePrompt(managed: ManagedRuntime, cwd: string): Promise<ReturnType<typeof rewindSnapshotSummaryForWire> | undefined> {
+    if (parseSshProjectCwd(cwd)) return undefined;
+    const snapshot = await new RewindSnapshotStore({ root: cwd }).captureWorkspace();
+    const checkpoint = rewindSnapshotSummaryForWire(managed.runtime.projectId, snapshot);
+    this.db.upsertRewindCheckpoint(checkpoint);
+    this.db.upsertRewindCheckpointConversationLink({
+      projectId: checkpoint.projectId,
+      snapshotId: checkpoint.id,
+      runtimeId: managed.runtime.id,
+      sessionId: managed.runtime.sessionId,
+      captureSource: "prompt",
+      createdAt: checkpoint.createdAt,
+    });
+    this.broadcast({ type: "checkpoint.captured", projectId: managed.runtime.projectId, checkpoint });
+    this.events.publishGuiEvent(managed.runtime, "checkpoint", { action: "captured", checkpoint });
+    return checkpoint;
+  }
+
+  private assertManagedRuntimeSessionHealthy(managed: ManagedRuntime): void {
+    const sessionId = managed.runtime.sessionId;
+    if (!sessionId || parseSshProjectCwd(managed.runtime.cwd)) return;
+
+    const indexedSessionFile = this.db.getSession(sessionId)?.piSessionFile;
+    const sessionFile = indexedSessionFile && existsSync(indexedSessionFile) ? indexedSessionFile : findPiSessionFileById(sessionId, managed.runtime.cwd);
+    if (!sessionFile) return;
+
+    const issue = inspectPiSessionFile(sessionFile);
+    if (!issue) return;
+
+    this.events.publishGuiEvent(managed.runtime, "error", { message: issue.message, code: issue.code });
+    managed.projection.appendLog("error", issue.message, "session safety");
+    throw new Error(issue.message);
   }
 
   private assertLocalPiSessionAvailable(sessionId: string, cwd: string, directSessionFile?: string): void {
     if (parseSshProjectCwd(cwd) || (directSessionFile && parseSshProjectCwd(directSessionFile))) return;
 
     const indexedSessionFile = this.db.getSession(sessionId)?.piSessionFile;
-    if (directSessionFile && existsSync(directSessionFile)) return;
-    if (indexedSessionFile && existsSync(indexedSessionFile)) return;
-    if (findPiSessionFileById(sessionId, cwd)) return;
+    const sessionFile = directSessionFile && existsSync(directSessionFile)
+      ? directSessionFile
+      : indexedSessionFile && existsSync(indexedSessionFile)
+        ? indexedSessionFile
+        : findPiSessionFileById(sessionId, cwd);
+    if (sessionFile) {
+      const issue = inspectPiSessionFile(sessionFile);
+      if (issue) throw new Error(issue.message);
+      return;
+    }
 
     throw new Error(
       `Pi session file not found for '${sessionId}'. This can happen if the GUI server restarted before Pi persisted the session. Start a new conversation instead of resuming this runtime.`,
@@ -282,13 +383,13 @@ export class RuntimeSupervisor {
   }
 
   private runtimeHasConversationActivity(runtimeId: string): boolean {
-    if (this.db.listConversationMessages(runtimeId, 1).length > 0 || this.db.getConversationBusy(runtimeId)) return true;
+    if (this.db.hasConversationMessages(runtimeId) || this.db.getConversationBusy(runtimeId)) return true;
     const runtime = this.getRuntime(runtimeId);
     if (!runtime?.sessionId) return false;
     const session = this.db.getSession(runtime.sessionId);
     if (!session) return false;
     if (session.title?.trim()) return true;
-    return (readPiSessionConversationSummary(session.piSessionFile)?.messageCount ?? 0) > 0;
+    return (readPiSessionConversationSummary(session.piSessionFile, this.db)?.messageCount ?? 0) > 0;
   }
 
   private requireManaged(runtimeId: string): ManagedRuntime {
@@ -301,8 +402,20 @@ export class RuntimeSupervisor {
 
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
+}
+
+function stringFromRecord(record: Record<string, unknown> | undefined, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "string" && value.trim() !== "") return value;
+  }
+  return undefined;
+}
+
 function isBlankRuntimeSafeToArchive(runtime: Runtime, hasConversationActivity: (runtimeId: string) => boolean): boolean {
-  if (runtime.archivedAt || runtime.sessionId) return false;
+  if (runtime.archivedAt) return false;
   if (runtime.status !== "running" && runtime.status !== "starting") return false;
   return !hasConversationActivity(runtime.id);
 }

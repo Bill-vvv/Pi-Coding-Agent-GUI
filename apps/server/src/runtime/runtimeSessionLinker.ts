@@ -19,13 +19,14 @@ export class RuntimeSessionLinker {
     if (!sessionId || !sessionFile) return;
 
     const existing = this.db.getSession(sessionId);
-    const fileSummary = existing?.title ? undefined : readPiSessionConversationSummary(sessionFile);
+    const fileSummary = existing?.title ? undefined : readPiSessionConversationSummary(sessionFile, this.db);
     if (!existing && !fileSummary) return;
     const now = Date.now();
     const session: GuiSession = this.db.upsertSession({
       id: sessionId,
       projectId: managed.runtime.projectId,
       piSessionFile: sessionFile,
+      host: existing?.host ?? managed.runtime.host ?? this.db.getExecutionHost(),
       title: existing?.title ?? fileSummary?.title,
       createdAt: existing?.createdAt ?? managed.runtime.startedAt ?? now,
       updatedAt: now,

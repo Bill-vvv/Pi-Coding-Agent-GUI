@@ -1,4 +1,4 @@
-export type IconName = "archive" | "arrow-left" | "arrow-right" | "attach" | "copy" | "enter" | "folder" | "logs" | "mic" | "play" | "plus" | "refresh" | "settings" | "stop" | "x";
+export type IconName = "archive" | "arrow-left" | "arrow-right" | "attach" | "copy" | "enter" | "folder" | "logs" | "play" | "plus" | "refresh" | "settings" | "stop" | "x";
 
 export function Icon({ name }: { name: IconName }) {
   const common = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", xmlns: "http://www.w3.org/2000/svg", "aria-hidden": true };
@@ -54,14 +54,6 @@ export function Icon({ name }: { name: IconName }) {
           <path d="M8 11h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
           <path d="M8 14.5h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
           <path d="M8 18h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        </svg>
-      );
-    case "mic":
-      return (
-        <svg {...common}>
-          <rect x="8" y="3.75" width="8" height="11" rx="4" stroke="currentColor" strokeWidth="1.8" />
-          <path d="M5.75 11.5a6.25 6.25 0 0 0 12.5 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M12 17.75v2.5M8.75 20.25h6.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </svg>
       );
     case "play":

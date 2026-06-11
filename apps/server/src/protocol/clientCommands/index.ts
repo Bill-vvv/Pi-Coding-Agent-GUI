@@ -1,5 +1,6 @@
+export { parseCheckpointCapture, parseCheckpointGc, parseCheckpointHealth, parseCheckpointJumps, parseCheckpointList, parseCheckpointPreview, parseCheckpointRestore } from "./checkpoint.js";
 export { parseConversationOpen, parseConversationPage, parseEventReplay, parseExtensionUiRespond, parseSubagentDetailOpen } from "./extensionConversationReplay.js";
-export { parseProjectCreate, parseProjectList, parseSessionList, parseSessionResume, parseSettingsGet, parseSettingsUpdate } from "./projectSessionSettings.js";
+export { parseProjectConfigure, parseProjectCreate, parseProjectList, parseSessionList, parseSessionResume, parseSettingsGet, parseSettingsUpdate } from "./projectSessionSettings.js";
 export {
   parseRuntimeAbort,
   parseRuntimeArchive,
