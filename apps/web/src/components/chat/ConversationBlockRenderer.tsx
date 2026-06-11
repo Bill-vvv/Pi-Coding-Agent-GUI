@@ -21,7 +21,7 @@ export function renderBlock(block: ConversationDisplayBlock, actions: Conversati
         <details className="chat-message-thinking">
           <summary>{message.isStreaming ? "思考过程（进行中）" : "思考过程"}</summary>
           <ScrollableContent className="chat-message-thinking-content">
-            <MarkdownMessage text={message.thinking} streaming={message.isStreaming} />
+            <MarkdownMessage text={message.thinking} streaming={message.isStreaming} source="thinking" />
           </ScrollableContent>
         </details>
       ) : null}
@@ -33,7 +33,7 @@ export function renderBlock(block: ConversationDisplayBlock, actions: Conversati
 
 function renderMessageContent(message: ConversationMessage, displayKind: Extract<ConversationDisplayBlock, { type: "message" }>["displayKind"]) {
   if (!message.text) return null;
-  if (displayKind === "markdown") return <MarkdownMessage text={message.text} streaming={message.isStreaming} />;
+  if (displayKind === "markdown") return <MarkdownMessage text={message.text} streaming={message.isStreaming} source="message" />;
   if (isToolDisplayMessage(message)) return <InlineToolMessage message={message} />;
   return <pre>{message.text}</pre>;
 }

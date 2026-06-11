@@ -42,7 +42,7 @@ function CurrentProcessDetail({ block, actions }: { block: Extract<ConversationD
             <span className="process-current-status">{current.statusLabel}</span>
           </div>
           <ScrollableContent className="process-current-content">
-            {current.kind === "thinking" || current.kind === "subagent" ? <MarkdownMessage text={current.content} streaming={current.status === "running"} /> : <pre>{current.content}</pre>}
+            {current.kind === "thinking" ? <MarkdownMessage text={current.content} streaming={current.status === "running"} source="thinking" /> : current.kind === "subagent" ? <MarkdownMessage text={current.content} streaming={current.status === "running"} source="subagent" /> : <pre>{current.content}</pre>}
           </ScrollableContent>
         </section>
       ) : (
@@ -81,7 +81,7 @@ function FullProcessDetail({ block, actions }: { block: Extract<ConversationDisp
         <section className="process-thinking-section">
           <div className="tool-message-detail-title">思考过程</div>
           <ScrollableContent className="process-thinking-content">
-            <MarkdownMessage text={formatThinkingText(model.thinking)} streaming={model.status === "running"} />
+            <MarkdownMessage text={formatThinkingText(model.thinking)} streaming={model.status === "running"} source="thinking" />
           </ScrollableContent>
         </section>
       ) : null}

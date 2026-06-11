@@ -90,7 +90,7 @@ export function SubagentDetailDrawer({ run, selectedChildRunId, detail, onClose,
               <small>聚合</small>
             </summary>
             <div className="subagent-final-output subagent-scroll-area" tabIndex={0}>
-              <MarkdownMessage text={groupFinalText || "暂无任务组最终输出。"} />
+              <MarkdownMessage text={groupFinalText || "暂无任务组最终输出。"} source="subagent" />
             </div>
           </details>
         ) : null}
@@ -101,7 +101,7 @@ export function SubagentDetailDrawer({ run, selectedChildRunId, detail, onClose,
             {selectedChild ? <small>{subagentStatusLabel(selectedChild.status)}</small> : null}
           </div>
           <div className={`subagent-final-output subagent-scroll-area${primaryFinalText ? "" : " empty"}`} tabIndex={0}>
-            <MarkdownMessage text={primaryOutputText} />
+            <MarkdownMessage text={primaryOutputText} source="subagent" />
           </div>
         </section>
 
