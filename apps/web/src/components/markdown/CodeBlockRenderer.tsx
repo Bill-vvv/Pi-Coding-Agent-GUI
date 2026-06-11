@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import hljs from "highlight.js";
-import { copyWithTemporaryTextarea } from "./clipboard";
+import { CopyIconButton } from "./CopyIconButton";
 
 type CodeBlockRendererProps = {
   blockId: string;
@@ -17,7 +17,6 @@ type SvgPreviewState =
 const highlightCache = new Map<string, string>();
 
 export function CodeBlockRenderer({ blockId, code, language, closed, streaming }: CodeBlockRendererProps) {
-  const [copied, setCopied] = useState(false);
   const [highlightedHtml, setHighlightedHtml] = useState<string | undefined>();
   const svgPreview = useSvgPreview(language, code, closed);
   const highlightKey = useMemo(() => `${blockId}:${language ?? "plain"}:${code}`, [blockId, code, language]);
@@ -45,25 +44,11 @@ export function CodeBlockRenderer({ blockId, code, language, closed, streaming }
     };
   }, [closed, code, highlightKey, language, streaming]);
 
-  async function copyCode() {
-    if (!code) return;
-    try {
-      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(code);
-      else copyWithTemporaryTextarea(code);
-    } catch {
-      copyWithTemporaryTextarea(code);
-    }
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1400);
-  }
-
   return (
     <div className="markdown-code-block" data-code-block-id={blockId}>
       <div className="markdown-code-header">
         <span>{language ?? "code"}</span>
-        <button type="button" onClick={copyCode} disabled={!code}>
-          {copied ? "已复制" : "复制"}
-        </button>
+        <CopyIconButton value={code} label="复制代码" disabled={!code} />
       </div>
       {svgPreview ? <SvgPreview preview={svgPreview} /> : null}
       <pre>

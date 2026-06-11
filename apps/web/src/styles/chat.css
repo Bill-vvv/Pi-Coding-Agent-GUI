@@ -495,7 +495,7 @@ body.reply-navigator-dragging * {
   flex-wrap: wrap;
 }
 
-.large-markdown-preview-actions button {
+.large-markdown-preview-actions button:not(.markdown-copy-button) {
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-pill);
   background: var(--color-surface-subtle-strong);
@@ -505,9 +505,37 @@ body.reply-navigator-dragging * {
   cursor: pointer;
 }
 
-.large-markdown-preview-actions button:hover {
+.large-markdown-preview-actions button:not(.markdown-copy-button):hover {
   color: var(--color-text-primary);
   border-color: var(--color-border-strong);
+}
+
+.large-markdown-preview-actions .markdown-copy-button,
+.markdown-code-header .markdown-copy-button {
+  flex: none;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.large-markdown-preview-actions .markdown-copy-button:hover:not(:disabled),
+.large-markdown-preview-actions .markdown-copy-button:focus-visible,
+.markdown-code-header .markdown-copy-button:hover:not(:disabled),
+.markdown-code-header .markdown-copy-button:focus-visible,
+.large-markdown-preview-actions .markdown-copy-button.is-copied,
+.markdown-code-header .markdown-copy-button.is-copied {
+  border-color: var(--color-border-subtle);
+  background: var(--color-hover-subtle);
+  color: var(--color-text-primary);
+}
+
+.large-markdown-preview-actions .markdown-copy-button:disabled,
+.markdown-code-header .markdown-copy-button:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .chat-message {
@@ -1524,17 +1552,6 @@ body.reply-navigator-dragging * {
   color: var(--color-text-muted);
   cursor: pointer;
   font: inherit;
-  padding: 0.18rem 0.42rem;
-}
-
-.markdown-code-header button:hover:not(:disabled) {
-  border-color: var(--color-border-subtle);
-  color: var(--color-text-primary);
-}
-
-.markdown-code-header button:disabled {
-  cursor: default;
-  opacity: 0.5;
 }
 
 .markdown-svg-preview {
